@@ -18,16 +18,29 @@ A self-hosted package and shipment management system for tracking incoming packa
 
 ## Quick Start
 
-### Prerequisites
-- Python 3.11+
-- SQLite (included with Python)
+### One-Line Install (Debian/Ubuntu)
 
-### Installation
+```bash
+curl -sSL https://raw.githubusercontent.com/gcbtech/RSCP/main/install.sh | sudo bash
+```
+
+This script automatically:
+- Installs Python 3, pip, and dependencies
+- Creates a dedicated `rscp` user
+- Sets up a Python virtual environment
+- Configures systemd service
+- Provides next-step instructions
+
+Visit `http://IP_ADDRESS:5000` and complete the setup wizard.
+
+### Manual Installation
+
+**Prerequisites:** Python 3.11+, pip
 
 ```bash
 # Clone the repository
 git clone https://github.com/gcbtech/RSCP.git
-cd rscp
+cd RSCP
 
 # Install dependencies
 pip install -r requirements.txt
@@ -36,7 +49,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Visit `http://localhost:5000` and complete the setup wizard.
+Visit `http://IP_ADDRESS:5000` and complete the setup wizard.
 
 ### Production Deployment (Gunicorn)
 
@@ -95,5 +108,3 @@ MIT License - See LICENSE file for details.
 ## Version History
 
 - **1.15.0** - First public release with security hardening
-
-
