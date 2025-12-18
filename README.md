@@ -1,6 +1,6 @@
 # RSCP - Receiving Station Control Panel
 
-A self-hosted warehouse management system (WMS) for tracking IT equipment, packages, and returns.
+A self-hosted package and shipment management system for tracking incoming packages, deliveries, returns, and more.
 
 ![Version](https://img.shields.io/badge/version-1.15.0-blue)
 ![Python](https://img.shields.io/badge/python-3.11+-green)
@@ -95,3 +95,4 @@ MIT License - See LICENSE file for details.
 ## Version History
 
 - **1.15.0** - First public release with security hardening
+
