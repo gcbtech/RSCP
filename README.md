@@ -1,4 +1,4 @@
-# RSCP - Receiving Station Control Panel
+# RSCP - Receive, Scan, Check, Process
 
 A self-hosted package and shipment management system for tracking incoming packages, deliveries, returns, and more.
 
@@ -95,4 +95,5 @@ MIT License - See LICENSE file for details.
 ## Version History
 
 - **1.15.0** - First public release with security hardening
+
 
