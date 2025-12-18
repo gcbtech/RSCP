@@ -1,0 +1,107 @@
+<style>
+    /* Default: Sidebar Hidden (Mobile/Portrait) */
+    #quickSidebar {
+        display: none;
+    }
+
+    /* Landscape & Large Screen: Show Sidebar */
+    @media (min-width: 768px) and (orientation: landscape) {
+        body {
+            padding-left: 300px !important;
+            /* Shift content + 20px gap */
+        }
+
+        #quickSidebar {
+            display: flex !important;
+            flex-direction: column;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 250px;
+            height: 100vh;
+            background-color: #212529;
+            /* Dark format */
+            color: white;
+            padding: 20px;
+            z-index: 1050;
+            /* Above regular content */
+            box-shadow: 2px 0 5px rgba(0, 0, 0, 0.2);
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        #quickSidebar .nav-brand {
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 30px;
+            color: #ffc107;
+            /* eBay Yellowish */
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+        }
+
+        #quickSidebar .nav-link {
+            color: rgba(255, 255, 255, 0.8);
+            padding: 12px 15px;
+            border-radius: 8px;
+            margin-bottom: 5px;
+            text-decoration: none;
+            font-size: 1.1rem;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+        }
+
+        #quickSidebar .nav-link:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+
+        #quickSidebar .nav-link.active {
+            background-color: #0d6efd;
+            /* Bootstrap Primary */
+            color: white;
+            font-weight: 600;
+        }
+
+        #quickSidebar .nav-icon {
+            margin-right: 10px;
+            width: 24px;
+            text-align: center;
+        }
+
+        /* Dark Mode Adjustments if body is dark */
+        body.dark-mode #quickSidebar {
+            background-color: #1e1e1e;
+            border-right: 1px solid #333;
+        }
+    }
+</style>
+
+<nav id="quickSidebar">
+    <a href="/" class="nav-brand">
+        <span>📦 RSCP</span>
+    </a>
+
+    <a href="/" class="nav-link {% if request.path == '/' %}active{% endif %}">
+        <span class="nav-icon">🏠</span> Dashboard
+    </a>
+
+    <a href="/scan" class="nav-link {% if '/scan' in request.path %}active{% endif %}">
+        <span class="nav-icon">📷</span> Scan Mode
+    </a>
+
+    <a href="/history" class="nav-link {% if '/history' in request.path %}active{% endif %}">
+        <span class="nav-icon">📋</span> History
+    </a>
+
+    <a href="/admin/" class="nav-link {% if '/admin' in request.path %}active{% endif %}">
+        <span class="nav-icon">⚙️</span> Admin Panel
+    </a>
+
+    <div style="margin-top: auto; padding-top: 20px; border-top: 1px solid rgba(255,255,255,0.1);">
+        <small class="text-muted d-block mb-2">Logged in as:</small>
+        <div class="fw-bold">{{ session.get('user', 'Guest') }}</div>
+        <a href="/logout" class="btn btn-outline-danger btn-sm w-100 mt-2">Log Out</a>
+    </div>
+</nav>

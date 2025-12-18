@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            padding: 20px;
+            background: #f8f9fa;
+            max-width: 500px;
+            margin: auto;
+            text-align: center;
+        }
+
+        .user-btn {
+            width: 100%;
+            margin-bottom: 10px;
+            padding: 15px;
+            font-size: 1.2rem;
+            text-align: left;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            color: #333;
+        }
+
+        .user-btn:hover {
+            background: #eee;
+        }
+
+        .pin-pad {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .pin-btn {
+            padding: 20px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            border-radius: 10px;
+        }
+
+        body.dark-mode {
+            background: #121212;
+            color: white;
+        }
+
+        body.dark-mode .user-btn {
+            background: #333;
+            color: white;
+            border-color: #555;
+        }
+
+        .mode-section {
+            display: none;
+        }
+
+        .mode-active {
+            display: block;
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+
+            to {
+                opacity: 1;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    {% with messages = get_flashed_messages() %}
+    {% if messages %}<div class="alert alert-danger">{{ messages[0] }}</div>{% endif %}
+    {% endwith %}
+
+    {% if set_local_user %}
+    <h3>Logging in...</h3>
+    <script>
+        localStorage.setItem('dockops_user', "{{ set_local_user }}");
+        window.location.href = "/";
+    </script>
+
+    {% elif prompt_pin_for %}
+    <h3 class="mb-3">
+        {{ prompt_pin_for }}<br>
+        <small class="text-muted">Enter PIN</small>
+    </h3>
+
+    <form method="POST">
+        <input type="hidden" name="pin_user" value="{{ prompt_pin_for }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="verify">
+        <input type="password" name="pin" id="pinDisplay" class="form-control form-control-lg text-center mb-3" readonly
+            style="font-size: 2rem;">
+
+        <div class="pin-pad">
+            {% for i in range(1, 10) %}
+            <button type="button" class="btn btn-light pin-btn border" onclick="addPin('{{ i }}')">{{ i }}</button>
+            {% endfor %}
+            <button type="button" class="btn btn-danger pin-btn" onclick="clearPin()">C</button>
+            <button type="button" class="btn btn-light pin-btn border" onclick="addPin(0)">0</button>
+            <button type="submit" class="btn btn-success pin-btn">OK</button>
+        </div>
+    </form>
+    <a href="/login" class="btn btn-link mt-3">Cancel</a>
+
+    {% else %}
+
+    <div id="adminSection" class="mode-section {% if mode == 'admin' %}mode-active{% endif %}">
+        <h2 class="mb-4">Admin Access</h2>
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="password" name="password" class="form-control form-control-lg mb-3"
+                placeholder="Enter Admin Password" autofocus>
+            <button type="submit" class="btn btn-dark w-100 btn-lg">Login</button>
+        </form>
+        <a href="/login?mode=user" class="btn btn-link mt-3">← Back to User Selection</a>
+    </div>
+
+    <div id="userSection" class="mode-section {% if mode != 'admin' %}mode-active{% endif %}">
+        <h2 class="mb-4">Select User</h2>
+        <form method="POST" id="userForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="pin_user" id="selectedUser">
+            <input type="hidden" name="action" value="verify">
+
+            {% for name, data in users.items() %}
+            {% if not data.is_admin %}
+            <div class="user-btn" onclick="selectUser('{{ name }}')">
+                {{ name }}
+                {% if data.pin_hash %}<span class="float-end">🔒</span>{% endif %}
+            </div>
+            {% endif %}
+            {% endfor %}
+        </form>
+
+    </div>
+
+    {% endif %}
+
+    <script>
+        if (localStorage.getItem('rscp_darkmode') === 'true') document.body.classList.add('dark-mode');
+
+        function selectUser(name) {
+            document.getElementById('selectedUser').value = name;
+            document.getElementById('userForm').submit();
+        }
+
+        function addPin(num) {
+            const d = document.getElementById('pinDisplay');
+            if (d.value.length < 4) d.value += num;
+        }
+        function clearPin() { document.getElementById('pinDisplay').value = ''; }
+    </script>
+</body>
+
+</html>

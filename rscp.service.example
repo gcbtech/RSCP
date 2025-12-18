@@ -1,0 +1,30 @@
+# RSCP Production Systemd Service
+# ================================
+# Copy this file to: /etc/systemd/system/rscp.service
+# Then run:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable rscp
+#   sudo systemctl start rscp
+#
+# Prerequisites:
+#   pip install gunicorn
+
+[Unit]
+Description=RSCP Package Tracking Application
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/opt/ebay_receiver
+Environment="PATH=/usr/local/bin:/usr/bin"
+
+# Gunicorn command:
+# -c gunicorn.conf.py = use config file (auto-calculates workers based on CPU)
+# Workers are automatically set to: min(max((2 * CPU_CORES) + 1, 2), 8)
+ExecStart=/usr/local/bin/gunicorn -c gunicorn.conf.py wsgi:app
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

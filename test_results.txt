@@ -1,0 +1,22 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.2, pytest-7.2.1, pluggy-1.0.0+repack -- /usr/bin/python3
+cachedir: .pytest_cache
+rootdir: /opt/ebay_receiver
+plugins: anyio-3.6.2
+collecting ... collected 13 items
+
+tests/test_security.py::TestCSRFProtection::test_post_without_csrf_blocked PASSED [  7%]
+tests/test_security.py::TestCSRFProtection::test_get_requests_allowed_without_csrf PASSED [ 15%]
+tests/test_security.py::TestFileUploadLimit::test_large_file_rejected PASSED [ 23%]
+tests/test_security.py::TestSecurityHeaders::test_x_frame_options_present PASSED [ 30%]
+tests/test_security.py::TestSecurityHeaders::test_x_content_type_options_present PASSED [ 38%]
+tests/test_security.py::TestSQLInjectionPrevention::test_malicious_tracking_number PASSED [ 46%]
+tests/test_security.py::TestAuthenticationRequired::test_admin_panel_requires_auth PASSED [ 53%]
+tests/test_security.py::TestAuthenticationRequired::test_delete_package_blocked_for_unauthenticated PASSED [ 61%]
+tests/test_security.py::TestStateChangingRoutesArePOST::test_delete_package_rejects_get PASSED [ 69%]
+tests/test_security.py::TestStateChangingRoutesArePOST::test_toggle_priority_rejects_get PASSED [ 76%]
+tests/test_security.py::TestStateChangingRoutesArePOST::test_delete_user_rejects_get PASSED [ 84%]
+tests/test_security.py::TestStateChangingRoutesArePOST::test_clear_history_rejects_get PASSED [ 92%]
+tests/test_security.py::TestEnvironmentVariables::test_env_var_override_works PASSED [100%]
+
+============================== 13 passed in 1.30s ==============================

@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Admin Panel</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            padding: 20px;
+        }
+
+        .table td {
+            vertical-align: middle;
+        }
+
+        body.dark-mode {
+            background: #121212;
+            color: #eee;
+        }
+
+        body.dark-mode .card {
+            background: #1e1e1e;
+            border-color: #444;
+        }
+
+        body.dark-mode .table {
+            color: #eee;
+        }
+
+        .table-striped>tbody>tr:nth-of-type(odd)>* {
+            --bs-table-accent-bg: rgba(0, 0, 0, 0.05);
+        }
+
+        body.dark-mode .table-striped>tbody>tr:nth-of-type(odd)>* {
+            --bs-table-accent-bg: rgba(255, 255, 255, 0.05);
+        }
+
+        .sort-header {
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .sort-header:hover {
+            color: #0d6efd !important;
+            /* Bootstrap Primary Blue */
+        }
+
+        .bg-purple {
+            background-color: #6f42c1 !important;
+            color: white !important;
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>RSCP Admin</h2>
+        <a href="/logout" class="btn btn-outline-danger">Logout</a>
+    </div>
+
+    <a href="/" class="btn btn-secondary mb-4">← Back</a>
+
+    {% with messages = get_flashed_messages() %}
+    {% if messages %}<div class="alert alert-success">{{ messages[0] }}</div>{% endif %}
+    {% endwith %}
+
+    <!-- TABS -->
+    <ul class="nav nav-tabs mb-4" id="adminTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button class="nav-link active fw-bold" id="ops-tab" data-bs-toggle="tab" data-bs-target="#ops"
+                type="button" role="tab" aria-selected="true">Operations</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button class="nav-link fw-bold" id="maint-tab" data-bs-toggle="tab" data-bs-target="#maint" type="button"
+                role="tab" aria-selected="false">Maintenance & Settings</button>
+        </li>
+    </ul>
+
+    <div class="tab-content" id="adminTabContent">
+        <!-- OPERATIONS TAB -->
+        <div class="tab-pane fade show active" id="ops" role="tabpanel" aria-labelledby="ops-tab">
+
+            <div class="card mb-4 border-secondary">
+                <div class="card-header bg-secondary text-white fw-bold d-flex justify-content-between">
+                    <span>Package Database</span>
+                    <form action="/admin/toggle_trim" method="POST" class="d-flex align-items-center mb-0">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="form-check form-switch m-0">
+                            <input class="form-check-input" type="checkbox" name="trim_state"
+                                onchange="this.form.submit()" {% if trim_enabled %}checked{% endif %}>
+                            <label class="form-check-label text-white ms-2" style="font-size:0.8rem;">Auto-Trim
+                                (60d)</label>
+                        </div>
+                    </form>
+                </div>
+                <div class="card-body">
+                    <!-- Search & Toggles -->
+                    <div class="row g-2 align-items-center mb-3">
+                        <div class="col-md-8">
+                            <form method="GET" action="/admin" class="d-flex align-items-center">
+                                <input type="text" name="search" class="form-control me-2"
+                                    placeholder="Search Tracking, Name, or Status..." value="{{ search_query }}">
+                                {% if search_query %}
+                                <a href="/admin" class="btn btn-outline-secondary me-2">Clear</a>
+                                {% else %}
+                                <button type="submit" class="btn btn-outline-primary me-2">Search</button>
+                                {% endif %}
+
+                                {% if sort_by != 'recent' %}
+                                <a href="{{ url_for('admin.admin_panel', search=search_query) }}"
+                                    class="btn btn-sm btn-outline-dark text-nowrap" title="Reset to Recently Added">
+                                    Reset Sort (Recent) ✖
+                                </a>
+                                {% endif %}
+                            </form>
+                        </div>
+
+                        <div class="col-md-4 d-flex justify-content-end">
+                            <form action="/admin/toggle_date_format" method="POST" class="d-flex align-items-center">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <div class="form-check form-switch m-0 border px-2 py-1 rounded">
+                                    <input class="form-check-input" type="checkbox" onchange="this.form.submit()" {% if
+                                        date_format=='UK' %}checked{% endif %}>
+                                    <label class="form-check-label ms-2" style="font-size:0.8rem;">
+                                        {{ 'DD/MM/YYYY' if date_format == 'UK' else 'MM/DD/YYYY' }}
+                                    </label>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <form id="bulkForm" action="/admin/bulk_action" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="action_type" id="actionType" value="receive">
+
+                        <div class="mb-3">
+                            <button type="button" class="btn btn-sm btn-outline-success fw-bold me-1"
+                                onclick="submitBulk('mark_received')">Mark Received</button>
+                            <button type="button" class="btn btn-sm btn-outline-danger fw-bold me-1"
+                                onclick="submitBulk('mark_late')">Mark Late</button>
+                            <button type="button" class="btn btn-sm btn-outline-warning fw-bold me-1"
+                                onclick="submitBulk('unreceive')">Un-Receive</button>
+                            <button type="button" class="btn btn-sm btn-outline-danger fw-bold"
+                                onclick="submitBulk('delete')">Delete</button>
+                        </div>
+
+                        <div class="table-responsive">
+                            <table class="table table-sm table-striped align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th><input type="checkbox" onclick="toggleAll(this)"></th>
+                                        <th style="width: 60px;"></th>
+                                        <th>
+                                            <a href="{{ url_for('admin.admin_panel', sort_by='date', order='asc' if sort_by=='date' and order=='desc' else 'desc', search=search_query) }}"
+                                                class="sort-header text-dark text-decoration-none d-flex align-items-center">
+                                                Expected <span class="ms-1 small text-muted">{% if sort_by=='date' %}{{
+                                                    '▼'
+                                                    if order=='desc' else '▲' }}{% else %}↕{% endif %}</span>
+                                            </a>
+                                        </th>
+                                        <th>
+                                            <a href="{{ url_for('admin.admin_panel', sort_by='name', order='desc' if sort_by=='name' and order=='asc' else 'asc', search=search_query) }}"
+                                                class="sort-header text-dark text-decoration-none d-flex align-items-center">
+                                                Item Name <span class="ms-1 small text-muted">{% if sort_by=='name' %}{{
+                                                    '▼' if order=='desc' else '▲' }}{% else %}↕{% endif %}</span>
+                                            </a>
+                                        </th>
+                                        <th>Tracking</th>
+                                        <th>
+                                            <a href="{{ url_for('admin.admin_panel', sort_by='status', order='desc' if sort_by=='status' and order=='asc' else 'asc', search=search_query) }}"
+                                                class="sort-header text-dark text-decoration-none d-flex align-items-center">
+                                                Status <span class="ms-1 small text-muted">{% if sort_by=='status' %}{{
+                                                    '▼' if order=='desc' else '▲' }}{% else %}↕{% endif %}</span>
+                                            </a>
+                                        </th>
+                                        <th>
+                                            <a href="{{ url_for('admin.admin_panel', sort_by='priority', order='desc' if sort_by=='priority' and order=='asc' else 'asc', search=search_query) }}"
+                                                class="sort-header text-dark text-decoration-none d-flex align-items-center">
+                                                Priority <span class="ms-1 small text-muted">{% if sort_by=='priority'
+                                                    %}{{ '▼' if order=='desc' else '▲' }}{% else %}↕{% endif %}</span>
+                                            </a>
+                                        </th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="packagesBody">
+                                    {% include '_admin_table_rows.html' %}
+                                </tbody>
+
+
+                                <script>
+                                    // Live Update Logic
+                                    setInterval(function () {
+                                        // Construct URL with current params + partial=1
+                                        const url = new URL(window.location.href);
+                                        url.searchParams.set('partial', '1');
+
+                                        fetch(url)
+                                            .then(response => {
+                                                if (response.ok) return response.text();
+                                                throw new Error('Network response was not ok');
+                                            })
+                                            .then(html => {
+                                                const tbody = document.getElementById('packagesBody');
+                                                // Optimization: Only replace if content changed? 
+                                                // Or simple replacement (might flicker selection).
+                                                // To preserve checkbox state, we'd need complex logic.
+                                                // For now, simple replacement. User asked for live view.
+                                                // Note: This clears checked boxes! 
+                                                // Improvement: Check for active checkboxes. If user is selecting, maybe skip update?
+                                                const checkboxes = tbody.querySelectorAll('input[type="checkbox"]:checked');
+                                                if (checkboxes.length > 0) {
+                                                    // User is working, don't refresh
+                                                    console.log("Skipping update: user selection active");
+                                                    return;
+                                                }
+
+                                                tbody.innerHTML = html;
+                                            })
+                                            .catch(err => console.error('Live update failed:', err));
+                                    }, 5000); // 5 seconds
+                                </script>
+                            </table>
+                        </div>
+                    </form>
+
+                    <!-- PAGINATION -->
+                    {% if total_pages > 1 %}
+                    <nav aria-label="Page navigation" class="mt-3">
+                        <ul class="pagination justify-content-center">
+                            <li class="page-item {% if current_page == 1 %}disabled{% endif %}">
+                                <a class="page-link"
+                                    href="{{ url_for('admin.admin_panel', page=current_page-1, search=search_query, sort_by=sort_by, order=order) }}">Previous</a>
+                            </li>
+
+                            {% for p in range(1, total_pages + 1) %}
+                            <li class="page-item {% if p == current_page %}active{% endif %}">
+                                <a class="page-link"
+                                    href="{{ url_for('admin.admin_panel', page=p, search=search_query, sort_by=sort_by, order=order) }}">{{
+                                    p }}</a>
+                            </li>
+                            {% endfor %}
+
+                            <li class="page-item {% if current_page == total_pages %}disabled{% endif %}">
+                                <a class="page-link"
+                                    href="{{ url_for('admin.admin_panel', page=current_page+1, search=search_query, sort_by=sort_by, order=order) }}">Next</a>
+                            </li>
+                        </ul>
+                    </nav>
+                    {% endif %}
+                    <div class="text-center text-muted small mt-2">Page {{ current_page }} of {{ total_pages }}</div>
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="col-lg-6">
+                    <div class="card mb-4 border-warning">
+                        <div class="card-header bg-warning text-dark fw-bold">📂 Import Manifest Data</div>
+                        <div class="card-body">
+                            <form action="/admin/upload_file" method="POST" enctype="multipart/form-data">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <div class="row g-3 align-items-center">
+                                    <div class="col-md-12">
+                                        <input type="file" name="file" class="form-control mb-2" accept=".csv, .xlsx"
+                                            required>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <div class="btn-group w-100" role="group">
+                                            <input type="radio" class="btn-check" name="upload_mode" id="modeReplace"
+                                                value="replace">
+                                            <label class="btn btn-outline-dark" for="modeReplace">Replace All</label>
+                                            <input type="radio" class="btn-check" name="upload_mode" id="modeAppend"
+                                                value="append" checked>
+                                            <label class="btn btn-outline-dark" for="modeAppend">Append</label>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-12">
+                                        <button type="submit" class="btn btn-dark w-100">Process File</button>
+                                    </div>
+                                    <div class="col-12 mt-2">
+                                        <small class="text-muted d-block mb-1"
+                                            onclick="document.getElementById('manualOpts').style.display='flex'"
+                                            style="cursor:pointer; text-decoration:underline;">
+                                            Advanced Options (Column Mapping)
+                                        </small>
+                                        <div id="manualOpts" class="row g-2" style="display:none;">
+                                            <div class="col-md-4"><input type="text" name="col_tracking"
+                                                    class="form-control form-control-sm" placeholder="Tracking Column">
+                                            </div>
+                                            <div class="col-md-4"><input type="text" name="col_name"
+                                                    class="form-control form-control-sm" placeholder="Item Name Column">
+                                            </div>
+                                            <div class="col-md-4"><input type="text" name="col_date"
+                                                    class="form-control form-control-sm"
+                                                    placeholder="Expected Date Column">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-6">
+                    <div class="card mb-4 border-success">
+                        <div class="card-header bg-success text-white fw-bold">➕ Add Individual Item</div>
+                        <div class="card-body">
+                            <form action="/admin/add_manual_item" method="POST" class="row g-3">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <div class="col-md-12">
+                                    <input type="text" name="tracking" class="form-control"
+                                        placeholder="Scan/Type Tracking Number" required>
+                                </div>
+                                <div class="col-md-12">
+                                    <input type="text" name="name" class="form-control" placeholder="Item Name"
+                                        required>
+                                </div>
+                                <div class="col-md-6">
+                                    <input type="date" name="date" class="form-control"
+                                        title="Expected Date (Optional)">
+                                </div>
+                                <div class="col-md-6 d-flex align-items-center">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" name="priority"
+                                            id="manualPriority">
+                                        <label class="form-check-label" for="manualPriority">Priority?</label>
+                                    </div>
+                                </div>
+                                <div class="col-12 text-end">
+                                    <button type="submit" class="btn btn-outline-success w-100">Add to Manifest</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div> <!-- End Operations Tab -->
+
+        <!-- MAINTENANCE TAB -->
+        <div class="tab-pane fade" id="maint" role="tabpanel" aria-labelledby="maint-tab">
+            <div class="row">
+                <!-- LEFT COLUMN -->
+                <div class="col-lg-6">
+                    <!-- Manage Users -->
+                    <div class="card mb-4 border-info">
+                        <div class="card-header bg-info text-dark fw-bold">Manage Staff Users</div>
+                        <div class="card-body">
+                            <div class="row">
+                                <div class="col-md-12 mb-3">
+                                    <h5>Existing Users:</h5>
+                                    <ul class="list-group mb-3">
+                                        {% for name, data in users.items() %}
+                                        {% if not data.is_admin %}
+                                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                                            <span>
+                                                {{ name }}
+                                                {% if data.pin_set %}
+                                                <span class="badge bg-success ms-2" style="font-size: 0.7em;">PIN
+                                                    Set</span>
+                                                {% else %}
+                                                <span class="badge bg-secondary ms-2" style="font-size: 0.7em;">No
+                                                    PIN</span>
+                                                {% endif %}
+                                            </span>
+                                            <div>
+                                                <a href="/admin/reset_pin/{{ name }}"
+                                                    class="btn btn-sm btn-warning me-2">Reset PIN</a>
+                                                <form action="/admin/delete_user/{{ name }}" method="POST"
+                                                    style="display:inline;" onsubmit="return confirm('Remove user?');">
+                                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                    <button type="submit" class="btn btn-sm btn-danger">X</button>
+                                                </form>
+                                            </div>
+                                        </li>
+                                        {% endif %}
+                                        {% endfor %}
+                                    </ul>
+                                </div>
+                                <div class="col-md-12">
+                                    <h5>Add New User:</h5>
+                                    <form action="/admin/add_user" method="POST" class="d-flex flex-column">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="text" name="username" class="form-control mb-2" placeholder="Name"
+                                            required>
+
+                                        <div class="input-group">
+                                            <input type="text" name="pin" class="form-control"
+                                                placeholder="PIN (Optional)">
+                                            <button class="btn btn-primary" type="submit">Create User</button>
+                                        </div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Notifications -->
+                    <div class="card mb-4 border-info">
+                        <div class="card-header bg-info text-dark fw-bold">🔔 Notifications & Alerts</div>
+                        <div class="card-body">
+                            <form action="/admin/save_notifications" method="POST">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <p class="small text-muted mb-2">
+                                    <strong>Real-time Alerts:</strong> Send a message to Slack/Discord when a
+                                    <b>Priority</b> package arrives.
+                                </p>
+                                <div class="mb-3">
+                                    <label class="form-label small fw-bold">Webhook URL</label>
+                                    <input type="password" name="webhook_url" class="form-control form-control-sm"
+                                        placeholder="https://discord.com/api/webhooks/..."
+                                        value="{% if config.get('WEBHOOK_URL') %}********{% endif %}">
+                                    <div class="form-text small">Your URL is stored securely. Leave blank to keep
+                                        existing.</div>
+                                </div>
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" name="webhook_enabled"
+                                        id="webhookSwitch" {% if config.get('WEBHOOK_ENABLED') %}checked{% endif %}>
+                                    <label class="form-check-label" for="webhookSwitch">Enable Webhook Alerts</label>
+                                </div>
+                                <button class="btn btn-info w-100 fw-bold" type="submit">Save settings</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- System Logs (Moved for Balance) -->
+                    <div class="card mb-4 border-warning">
+                        <div class="card-header bg-warning text-dark fw-bold py-2">🐞 System Logs</div>
+                        <div class="card-body p-2">
+                            <a href="/admin/logs" class="btn btn-warning w-100 fw-bold btn-sm">View Error Logs</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RIGHT COLUMN -->
+                <div class="col-lg-6">
+                    <!-- Automation -->
+                    <div class="card mb-4 border-warning">
+                        <div class="card-header bg-warning text-dark fw-bold">🤖 Automation Settings</div>
+                        <div class="card-body">
+                            <form action="/admin/save_automation" method="POST">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <p class="small text-muted mb-2">
+                                    <strong>Auto-Ingest:</strong> Automatically checks email for shipping notifications
+                                    (Amazon) every 15 mins.
+                                </p>
+                                <div class="alert alert-secondary p-2 small">
+                                    <strong>Security Recommendation:</strong> Create a dedicated "Burner" account and
+                                    auto-forward Amazon notifications to it.
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label small fw-bold">IMAP Server</label>
+                                    <input type="text" name="imap_server" class="form-control form-control-sm"
+                                        placeholder="imap.gmail.com" value="{{ config.get('IMAP_SERVER', '') }}">
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label small fw-bold">Email Address</label>
+                                    <input type="email" name="email_user" class="form-control form-control-sm"
+                                        placeholder="burner@example.com" value="{{ config.get('EMAIL_USER', '') }}">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label small fw-bold">App Password</label>
+                                    <input type="password" name="email_pass" class="form-control form-control-sm"
+                                        placeholder="App Password (Leave blank to keep existing)">
+                                </div>
+                                <div class="form-check form-switch mb-3">
+                                    <input class="form-check-input" type="checkbox" name="ingest_enabled"
+                                        id="ingestSwitch" {% if config.get('EMAIL_INGEST_ENABLED') %}checked{% endif %}>
+                                    <label class="form-check-label" for="ingestSwitch">Enable Automatic Ingest</label>
+                                </div>
+                                <button class="btn btn-warning w-100 fw-bold" type="submit">Save settings</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Backup & Restore (Consolidated) -->
+                    <div class="card mb-4 border-secondary">
+                        <div class="card-header bg-secondary text-white fw-bold">💾 Data Management</div>
+                        <div class="card-body">
+                            <h6 class="fw-bold">Export Backup</h6>
+                            <p class="small text-muted mb-2">Download a full system backup (.zip) including database,
+                                config, and logs.</p>
+                            <a href="/admin/export_backup" class="btn btn-outline-dark w-100 mb-4">⬇️ Download Full
+                                Backup (.zip)</a>
+
+                            <hr>
+
+                            <h6 class="fw-bold text-danger">Restore Backup</h6>
+                            <p class="small text-danger mb-2">⚠️ This will OVERWRITE current data. Create a backup
+                                first!</p>
+                            <form action="/admin/import_backup" method="POST" enctype="multipart/form-data">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <div class="input-group mb-2">
+                                    <input type="file" name="backup_file" class="form-control" accept=".zip" required>
+                                    <button class="btn btn-danger" type="submit">Restore</button>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" name="force_restore" value="true"
+                                        id="forceRestore">
+                                    <label class="form-check-label small text-muted" for="forceRestore">
+                                        Force Restore (required if SECRET_KEY differs)
+                                    </label>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div> <!-- End Row -->
+        </div> <!-- End Maint Tab -->
+        <!-- Chart.js -->
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+        <div class="card mb-4 border-dark">
+            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">📊 Analytics & Volume (Last 14 Days)</h5>
+            </div>
+            <div class="card-body">
+                <canvas id="analyticsChart" style="max-height: 300px;"></canvas>
+            </div>
+        </div>
+        <script>
+            const ctx = document.getElementById('analyticsChart').getContext('2d');
+            const rawData = {{ graph_data | tojson }};
+            const labels = rawData.map(d => d.date);
+            const dataPoints = rawData.map(d => d.count);
+
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Packages Scanned',
+                        data: dataPoints,
+                        backgroundColor: 'rgba(54, 162, 235, 0.6)',
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: '#eee' } },
+                        x: { grid: { display: false } }
+                    }
+                }
+            });
+        </script>
+
+
+
+        <div class="card border-danger">
+            <div class="card-header bg-danger text-white d-flex justify-content-between">
+                <span>Scan History</span>
+                <form action="/admin/clear_history" method="POST" style="display:inline;"
+                    onsubmit="return confirm('Delete ALL history?');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-light text-danger">Clear All</button>
+                </form>
+            </div>
+            <div class="card-body">
+                <p class="small text-danger mb-0"><b>Warning:</b> Clearing history cannot be undone unless
+                    you have a backup. It will reset the 'Received' status for all packages.</p>
+            </div>
+        </div>
+    </div>
+    </div>
+    </div> <!-- End Maintenance Tab -->
+    </div>
+
+    <div class="modal fade" id="imageModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content bg-transparent border-0 shadow-none">
+                <div class="modal-body text-center p-0 position-relative">
+                    <button type="button" class="btn-close btn-close-white position-absolute top-0 end-0 m-3 z-3"
+                        data-bs-dismiss="modal" aria-label="Close"></button>
+                    <img id="previewImage" src="" class="img-fluid rounded shadow" style="max-height: 85vh;">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Dark Mode disabled for Admin Panel as requested
+        // if (localStorage.getItem('rscp_darkmode') === 'true') document.body.classList.add('dark-mode');
+        function showImage(src) { document.getElementById('previewImage').src = src; new bootstrap.Modal(document.getElementById('imageModal')).show(); }
+        function toggleAll(source) { checkboxes = document.getElementsByName('trackings'); for (var i = 0, n = checkboxes.length; i < n; i++) { checkboxes[i].checked = source.checked; } }
+        function submitBulk(action) {
+            let msg = "Perform bulk action?";
+            if (action === 'delete') msg = "DELETE selected items? This cannot be undone.";
+            if (action === 'receive') msg = "Mark selected as RECEIVED?";
+            if (action === 'unreceive') msg = "Mark selected as UN-RECEIVED? This will remove them from history.";
+            if (action === 'mark_late') msg = "Mark selected as LATE?";
+
+            if (confirm(msg)) {
+                document.getElementById('actionType').value = action;
+                document.getElementById('bulkForm').submit();
+            }
+        }
+
+        function toggleDateEdit(tracking) {
+            var display = document.getElementById('dateDisplay_' + tracking);
+            var editor = document.getElementById('dateEditor_' + tracking);
+            if (display && editor) {
+                display.classList.toggle('d-none');
+                editor.classList.toggle('d-none');
+            }
+        }
+
+        function submitDate(tracking) {
+            try {
+                var inputId = 'date_' + tracking;
+                var inputElem = document.getElementById(inputId);
+
+                if (!inputElem) {
+                    alert("Error: Date input element not found for ID: " + inputId);
+                    return;
+                }
+
+                var dateVal = inputElem.value;
+                if (!dateVal) {
+                    alert("Please select a date first.");
+                    return;
+                }
+
+                var form = document.createElement("form");
+                form.method = "POST";
+                form.action = "/admin/set_date/" + tracking;
+
+                var field = document.createElement("input");
+                field.type = "hidden";
+                field.name = "new_date";
+                field.value = dateVal;
+                form.appendChild(field);
+
+                // CSRF
+                var csrfInput = document.querySelector('input[name="csrf_token"]');
+                if (!csrfInput) {
+                    alert("Error: CSRF Token missing on page.");
+                    return;
+                }
+
+                var csrf = document.createElement("input");
+                csrf.type = "hidden";
+                csrf.name = "csrf_token";
+                csrf.value = csrfInput.value;
+                form.appendChild(csrf);
+
+                document.body.appendChild(form);
+                form.submit();
+            } catch (err) {
+                alert("JavaScript Error: " + err.message);
+            }
+        }
+    </script>
+</body>
+
+</html>
