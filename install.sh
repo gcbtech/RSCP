@@ -22,7 +22,7 @@ SERVICE_USER="rscp"
 echo -e "${BLUE}"
 echo "╔═══════════════════════════════════════════════════════════╗"
 echo "║              RSCP Installation Script                     ║"
-echo "║         Receiving Station Control Panel                   ║"
+echo "║         Receive, Scan, Check, Process                     ║"
 echo "╚═══════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
