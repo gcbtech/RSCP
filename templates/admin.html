@@ -507,6 +507,33 @@
                             </form>
                         </div>
                     </div>
+
+                    <!-- System Updates -->
+                    <div class="card mb-4 border-info">
+                        <div class="card-header bg-info text-white fw-bold">🔄 System Updates</div>
+                        <div class="card-body">
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <div>
+                                    <strong>Current Version:</strong>
+                                    <span class="badge bg-secondary" id="currentVersion">{{ app_version }}</span>
+                                </div>
+                                <button type="button" class="btn btn-outline-info btn-sm" onclick="checkForUpdates()">
+                                    Check for Updates
+                                </button>
+                            </div>
+                            <div id="updateStatus" class="small text-muted mb-3" style="display:none;"></div>
+                            <form action="/admin/update" method="POST" id="updateForm" style="display:none;"
+                                onsubmit="return confirm('This will update RSCP to the latest version. Your data (database, config) will NOT be affected. Continue?');">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-info w-100">
+                                    ⬆️ Update Now
+                                </button>
+                                <p class="small text-muted mt-2 mb-0">
+                                    After updating, restart the service: <code>sudo systemctl restart rscp</code>
+                                </p>
+                            </form>
+                        </div>
+                    </div>
                 </div>
             </div> <!-- End Row -->
         </div> <!-- End Maint Tab -->
@@ -655,6 +682,32 @@
             } catch (err) {
                 alert("JavaScript Error: " + err.message);
             }
+        }
+
+        // Check for RSCP updates
+        function checkForUpdates() {
+            const statusEl = document.getElementById('updateStatus');
+            const formEl = document.getElementById('updateForm');
+
+            statusEl.style.display = 'block';
+            statusEl.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Checking for updates...';
+            formEl.style.display = 'none';
+
+            fetch('/admin/check_update')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        statusEl.innerHTML = `<span class="text-danger">Error: ${data.error}</span>`;
+                    } else if (data.update_available) {
+                        statusEl.innerHTML = '<span class="text-success">✅ Update available!</span>';
+                        formEl.style.display = 'block';
+                    } else {
+                        statusEl.innerHTML = '<span class="text-muted">✓ You are running the latest version.</span>';
+                    }
+                })
+                .catch(err => {
+                    statusEl.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
+                });
         }
     </script>
 </body>
