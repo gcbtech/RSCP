@@ -92,7 +92,7 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 echo -e "${GREEN}[6/6]${NC} Setting up systemd service..."
 cat > /etc/systemd/system/rscp.service << EOF
 [Unit]
-Description=RSCP - Receiving Station Control Panel
+Description=RSCP - Receive, Scan, Check, Process
 After=network.target
 
 [Service]
@@ -111,6 +111,7 @@ EOF
 
 systemctl daemon-reload
 systemctl enable rscp
+systemctl start rscp
 
 echo ""
 echo -e "${GREEN}════════════════════════════════════════════════════════════${NC}"
@@ -119,9 +120,7 @@ echo -e "${GREEN}═════════════════════
 echo ""
 echo -e "  ${BLUE}Installation directory:${NC} $INSTALL_DIR"
 echo -e "  ${BLUE}Service user:${NC} $SERVICE_USER"
-echo ""
-echo -e "  ${YELLOW}To start RSCP:${NC}"
-echo "    sudo systemctl start rscp"
+echo -e "  ${BLUE}Service status:${NC} Running (auto-starts on boot)"
 echo ""
 echo -e "  ${YELLOW}To check status:${NC}"
 echo "    sudo systemctl status rscp"
@@ -141,9 +140,8 @@ fi
 
 echo ""
 echo -e "  ${BLUE}First-time setup:${NC}"
-echo "    1. Start the service: sudo systemctl start rscp"
-echo "    2. Open the URL above in your browser"
-echo "    3. Complete the setup wizard"
+echo "    1. Open the URL above in your browser"
+echo "    2. Complete the setup wizard"
 echo ""
 echo -e "${GREEN}Thank you for installing RSCP!${NC}"
 echo ""
