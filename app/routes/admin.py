@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import datetime
+import subprocess
 import pandas as pd
 import zipfile
 import io
@@ -675,3 +676,113 @@ def export_logs():
     output.headers["Content-Disposition"] = "attachment; filename=error_logs.csv"
     output.headers["Content-type"] = "text/csv"
     return output
+
+# --- UPDATE SYSTEM ---
+@admin_bp.route('/check_update')
+def check_update():
+    """Check if updates are available from GitHub."""
+    if not session.get('is_admin'):
+        return {"error": "Admin required"}, 403
+    
+    try:
+        # Get current version
+        version_file = os.path.join(BASE_DIR, 'VERSION')
+        current_version = "unknown"
+        if os.path.exists(version_file):
+            with open(version_file, 'r') as f:
+                current_version = f.read().strip()
+        
+        # Fetch from remote
+        result = subprocess.run(
+            ['git', 'fetch', 'origin'],
+            cwd=BASE_DIR,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        # Check if we're behind
+        result = subprocess.run(
+            ['git', 'status', '-uno'],
+            cwd=BASE_DIR,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        
+        update_available = 'behind' in result.stdout.lower()
+        
+        return {
+            "current_version": current_version,
+            "update_available": update_available,
+            "status": result.stdout.strip()
+        }
+    except subprocess.TimeoutExpired:
+        return {"error": "Timeout checking for updates"}, 500
+    except Exception as e:
+        logger.error(f"Update check error: {e}")
+        return {"error": str(e)}, 500
+
+
+@admin_bp.route('/update', methods=['POST'])
+def perform_update():
+    """Pull latest updates from GitHub."""
+    if not session.get('is_admin'):
+        flash("Admin access required")
+        return redirect(url_for('admin.admin_panel'))
+    
+    try:
+        # Store current version for comparison
+        version_file = os.path.join(BASE_DIR, 'VERSION')
+        old_version = "unknown"
+        if os.path.exists(version_file):
+            with open(version_file, 'r') as f:
+                old_version = f.read().strip()
+        
+        # Fetch latest
+        subprocess.run(
+            ['git', 'fetch', 'origin'],
+            cwd=BASE_DIR,
+            capture_output=True,
+            timeout=30
+        )
+        
+        # Reset to match remote (won't affect gitignored files like config.json, rscp.db)
+        result = subprocess.run(
+            ['git', 'reset', '--hard', 'origin/main'],
+            cwd=BASE_DIR,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode != 0:
+            flash(f"Update failed: {result.stderr}")
+            return redirect(url_for('admin.admin_panel'))
+        
+        # Install any new dependencies
+        venv_pip = os.path.join(BASE_DIR, 'venv', 'bin', 'pip')
+        if os.path.exists(venv_pip):
+            subprocess.run(
+                [venv_pip, 'install', '-r', 'requirements.txt', '-q'],
+                cwd=BASE_DIR,
+                capture_output=True,
+                timeout=120
+            )
+        
+        # Get new version
+        new_version = "unknown"
+        if os.path.exists(version_file):
+            with open(version_file, 'r') as f:
+                new_version = f.read().strip()
+        
+        flash(f"Update successful! {old_version} → {new_version}. Please restart the service for changes to take effect.")
+        logger.info(f"RSCP updated from {old_version} to {new_version}")
+        
+    except subprocess.TimeoutExpired:
+        flash("Update timed out. Please try again or update manually.")
+    except Exception as e:
+        logger.error(f"Update error: {e}")
+        flash(f"Update failed: {str(e)}")
+    
+    return redirect(url_for('admin.admin_panel'))
