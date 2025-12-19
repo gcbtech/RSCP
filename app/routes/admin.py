@@ -678,6 +678,49 @@ def export_logs():
     return output
 
 # --- UPDATE SYSTEM ---
+import shutil
+import tempfile
+import requests
+
+GITHUB_REPO = "gcbtech/RSCP"
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}"
+GITHUB_ZIP_URL = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/main.zip"
+
+# Files that should never be overwritten during updates
+PROTECTED_FILES = [
+    'config.json',
+    'rscp.db', 
+    'manifest.csv',
+    'app.log',
+]
+
+# Directories that should never be overwritten
+PROTECTED_DIRS = [
+    'venv',
+    '__pycache__',
+    '.pytest_cache',
+]
+
+def get_current_version():
+    """Get current installed version."""
+    version_file = os.path.join(BASE_DIR, 'VERSION')
+    if os.path.exists(version_file):
+        with open(version_file, 'r') as f:
+            return f.read().strip()
+    return "unknown"
+
+def get_latest_version():
+    """Check GitHub for latest version."""
+    try:
+        # Get VERSION file content from GitHub
+        url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            return response.text.strip()
+    except Exception as e:
+        logger.error(f"Error checking latest version: {e}")
+    return None
+
 @admin_bp.route('/check_update')
 def check_update():
     """Check if updates are available from GitHub."""
@@ -685,40 +728,21 @@ def check_update():
         return {"error": "Admin required"}, 403
     
     try:
-        # Get current version
-        version_file = os.path.join(BASE_DIR, 'VERSION')
-        current_version = "unknown"
-        if os.path.exists(version_file):
-            with open(version_file, 'r') as f:
-                current_version = f.read().strip()
+        current_version = get_current_version()
+        latest_version = get_latest_version()
         
-        # Fetch from remote
-        result = subprocess.run(
-            ['git', 'fetch', 'origin'],
-            cwd=BASE_DIR,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
+        if not latest_version:
+            return {"error": "Could not check for updates. Please try again later."}, 500
         
-        # Check if we're behind
-        result = subprocess.run(
-            ['git', 'status', '-uno'],
-            cwd=BASE_DIR,
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        
-        update_available = 'behind' in result.stdout.lower()
+        # Compare versions
+        update_available = latest_version != current_version
         
         return {
             "current_version": current_version,
+            "latest_version": latest_version,
             "update_available": update_available,
-            "status": result.stdout.strip()
+            "status": f"Current: {current_version}, Latest: {latest_version}"
         }
-    except subprocess.TimeoutExpired:
-        return {"error": "Timeout checking for updates"}, 500
     except Exception as e:
         logger.error(f"Update check error: {e}")
         return {"error": str(e)}, 500
@@ -726,39 +750,74 @@ def check_update():
 
 @admin_bp.route('/update', methods=['POST'])
 def perform_update():
-    """Pull latest updates from GitHub."""
+    """Download and apply latest updates from GitHub."""
     if not session.get('is_admin'):
         flash("Admin access required")
         return redirect(url_for('admin.admin_panel'))
     
     try:
-        # Store current version for comparison
-        version_file = os.path.join(BASE_DIR, 'VERSION')
-        old_version = "unknown"
-        if os.path.exists(version_file):
-            with open(version_file, 'r') as f:
-                old_version = f.read().strip()
+        old_version = get_current_version()
         
-        # Fetch latest
-        subprocess.run(
-            ['git', 'fetch', 'origin'],
-            cwd=BASE_DIR,
-            capture_output=True,
-            timeout=30
-        )
-        
-        # Reset to match remote (won't affect gitignored files like config.json, rscp.db)
-        result = subprocess.run(
-            ['git', 'reset', '--hard', 'origin/main'],
-            cwd=BASE_DIR,
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        
-        if result.returncode != 0:
-            flash(f"Update failed: {result.stderr}")
+        # Download ZIP from GitHub
+        logger.info("Downloading update from GitHub...")
+        response = requests.get(GITHUB_ZIP_URL, timeout=60, stream=True)
+        if response.status_code != 200:
+            flash(f"Failed to download update: HTTP {response.status_code}")
             return redirect(url_for('admin.admin_panel'))
+        
+        # Save to temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+            for chunk in response.iter_content(chunk_size=8192):
+                tmp_file.write(chunk)
+            tmp_zip_path = tmp_file.name
+        
+        try:
+            # Extract to temp directory
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                with zipfile.ZipFile(tmp_zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(tmp_dir)
+                
+                # Find the extracted folder (GitHub adds -main suffix)
+                extracted_dirs = [d for d in os.listdir(tmp_dir) if os.path.isdir(os.path.join(tmp_dir, d))]
+                if not extracted_dirs:
+                    flash("Update failed: Invalid archive structure")
+                    return redirect(url_for('admin.admin_panel'))
+                
+                source_dir = os.path.join(tmp_dir, extracted_dirs[0])
+                
+                # Copy files, skipping protected ones
+                files_updated = 0
+                for root, dirs, files in os.walk(source_dir):
+                    # Skip protected directories
+                    dirs[:] = [d for d in dirs if d not in PROTECTED_DIRS]
+                    
+                    rel_path = os.path.relpath(root, source_dir)
+                    dest_path = os.path.join(BASE_DIR, rel_path) if rel_path != '.' else BASE_DIR
+                    
+                    # Create directory if needed
+                    if not os.path.exists(dest_path):
+                        os.makedirs(dest_path)
+                    
+                    for file in files:
+                        # Skip protected files
+                        if file in PROTECTED_FILES:
+                            continue
+                        
+                        src_file = os.path.join(root, file)
+                        dst_file = os.path.join(dest_path, file)
+                        
+                        try:
+                            shutil.copy2(src_file, dst_file)
+                            files_updated += 1
+                        except Exception as e:
+                            logger.warning(f"Could not update {file}: {e}")
+                
+                logger.info(f"Updated {files_updated} files")
+        
+        finally:
+            # Clean up temp zip file
+            if os.path.exists(tmp_zip_path):
+                os.unlink(tmp_zip_path)
         
         # Install any new dependencies
         venv_pip = os.path.join(BASE_DIR, 'venv', 'bin', 'pip')
@@ -770,17 +829,14 @@ def perform_update():
                 timeout=120
             )
         
-        # Get new version
-        new_version = "unknown"
-        if os.path.exists(version_file):
-            with open(version_file, 'r') as f:
-                new_version = f.read().strip()
+        new_version = get_current_version()
         
         flash(f"Update successful! {old_version} → {new_version}. Please restart the service for changes to take effect.")
         logger.info(f"RSCP updated from {old_version} to {new_version}")
         
-    except subprocess.TimeoutExpired:
-        flash("Update timed out. Please try again or update manually.")
+    except requests.RequestException as e:
+        logger.error(f"Download error: {e}")
+        flash(f"Failed to download update: {str(e)}")
     except Exception as e:
         logger.error(f"Update error: {e}")
         flash(f"Update failed: {str(e)}")
