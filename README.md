@@ -2,7 +2,7 @@
 
 A self-hosted package and shipment management system for tracking incoming packages, deliveries, returns, and more.
 
-![Version](https://img.shields.io/badge/version-1.15.0-blue)
+![Version](https://img.shields.io/badge/version-1.15.3-blue)
 ![Python](https://img.shields.io/badge/python-3.11+-green)
 ![Flask](https://img.shields.io/badge/flask-2.3+-orange)
 
@@ -108,3 +108,6 @@ MIT License - See LICENSE file for details.
 ## Version History
 
 - **1.15.0** - First public release with security hardening
+- **1.15.1** - Bugfix to install.sh script
+- **1.15.2** - Added auto-start to RSCP service, only applies to automatic installations via install.sh script
+- **1.15.3** - Added update button in Admin Panel, pulls updates directly from Github
