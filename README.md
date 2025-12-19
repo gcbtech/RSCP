@@ -2,7 +2,7 @@
 
 A self-hosted package and shipment management system for tracking incoming packages, deliveries, returns, and more.
 
-![Version](https://img.shields.io/github/v/tag/gcbtech/RSCP?label=version&color=blue)
+![Version](https://img.shields.io/badge/version-1.15.0-blue)
 ![Python](https://img.shields.io/badge/python-3.11+-green)
 ![Flask](https://img.shields.io/badge/flask-2.3+-orange)
 
