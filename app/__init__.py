@@ -92,8 +92,8 @@ def create_app():
     # Security Config - For HTTPS reverse proxy access
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
-        SESSION_COOKIE_SAMESITE='None',  # Required for cross-site cookies with Secure
-        SESSION_COOKIE_SECURE=True,      # Required for HTTPS access
+        SESSION_COOKIE_SAMESITE='Lax',   # Lax works for same-site navigation
+        SESSION_COOKIE_SECURE=False,     # Set True only if always using HTTPS
     )
     
     # CSRF & Security Headers
@@ -101,6 +101,9 @@ def create_app():
     
     @app.before_request
     def check_csrf():
+        # Skip CSRF for setup wizard (no session exists yet)
+        if request.path == '/setup':
+            return
         verify_csrf_token()
         
     @app.after_request
