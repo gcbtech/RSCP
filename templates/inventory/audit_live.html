@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Audit Live</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="icon" href="{{ favicon }}">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <style>
+        body {
+            background: #f8f9fa;
+            padding-bottom: 60px;
+        }
+
+        body.dark-mode {
+            background: #121212;
+            color: #eee;
+        }
+
+        .item-card {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            text-align: center;
+            margin: 20px auto;
+            max-width: 500px;
+        }
+
+        body.dark-mode .item-card {
+            background: #1e1e1e;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .highlight-box {
+            background: rgba(0, 0, 0, 0.05);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+        }
+
+        body.dark-mode .highlight-box {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .scan-target {
+            opacity: 0;
+            position: absolute;
+            pointer-events: none;
+        }
+
+        .footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            text-align: center;
+            padding: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container mt-3">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <span class="badge bg-primary">{{ audit_session.mode|capitalize }} Mode</span>
+            <form action="{{ url_for('inventory.audit_finalize', session_id=audit_session.id) }}" method="POST"
+                onsubmit="return confirm('Finish Audit? This will generate the report.')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="btn btn-outline-danger btn-sm">Finalize Session</button>
+            </form>
+        </div>
+
+        <!-- Scan Input -->
+        <input type="text" id="scanInput" class="scan-target" autocomplete="off" autofocus>
+
+        <!-- Welcome State -->
+        <div id="welcomeState" class="text-center mt-5">
+            <h1>Ready to Scan</h1>
+            <p class="text-muted">Scan an item to begin audit.</p>
+            <div class="spinner-border text-primary d-none" id="loadingSpinner"></div>
+        </div>
+
+        <!-- Item Card (Hidden by default) -->
+        <div id="itemCard" class="item-card d-none">
+            <img id="itemImg" src="" style="max-height: 120px; display: none; margin: 0 auto 15px; border-radius: 8px;">
+            <h2 id="itemName"></h2>
+            <code id="itemSku" class="text-muted"></code>
+
+            <div class="highlight-box">
+                <div class="d-flex justify-content-center gap-4 text-center">
+                    <div>
+                        <div id="systemQty" style="font-size: 2.5rem; font-weight: bold;">--</div>
+                        <small class="text-muted">System Stock</small>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Area -->
+            <div class="mt-4">
+                <p class="mb-3" id="instructionText">Verify shelf quantity matches System Stock.</p>
+
+                <div class="d-grid gap-2">
+                    <button class="btn btn-success btn-lg" onclick="confirmMatch()">
+                        ✅ Match (<span id="matchQty"></span>)
+                    </button>
+                    <button class="btn btn-outline-warning" onclick="showManualInput()">
+                        ✏️ Incorrect Amount
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer" onclick="document.getElementById('scanInput').focus()">Tap screen to focus scanner</div>
+
+    <!-- UNSAVED WORK MODAL -->
+    <div class="modal fade" id="unsavedModal" tabindex="-1" data-bs-backdrop="static">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header bg-warning">
+                    <h5 class="modal-title text-dark">⚠️ Unsaved Item</h5>
+                </div>
+                <div class="modal-body">
+                    <p>Previous item was not confirmed.</p>
+                    <p>Press <strong>Confirm</strong> to save the previous item as a MATCH and continue to the new item.
+                    </p>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="cancelNewScan()">Back</button>
+                    <button type="button" class="btn btn-primary" onclick="confirmAndProceed()">Confirm & Scan
+                        Next</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MANUAL INPUT MODAL -->
+    <div class="modal fade" id="manualModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-body text-center">
+                    <h5>Enter Actual Quantity</h5>
+                    <input type="number" id="manualQtyInput" class="form-control form-control-lg text-center my-3"
+                        pattern="[0-9]*" inputmode="numeric">
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-secondary flex-fill" data-bs-dismiss="modal">Cancel</button>
+                        <button class="btn btn-success flex-fill" onclick="submitManualCount()">Save</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State
+        let currentItem = null;
+        let localCount = 0;
+        let pendingBarcode = null;
+        const sessionId = {{ audit_session.id }};
+        const sessionMode = "{{ audit_session.mode }}";
+        const csrfToken = document.querySelector('input[name="csrf_token"]').value;
+        const scanInput = document.getElementById('scanInput');
+
+        // Modals (Init once)
+        const unsavedModal = new bootstrap.Modal(document.getElementById('unsavedModal'));
+        const manualModal = new bootstrap.Modal(document.getElementById('manualModal'));
+
+        // Dark Mode
+        if (localStorage.getItem('rscp_darkmode') === 'true') document.body.classList.add('dark-mode');
+
+        // Focus Keeper
+        const isModalOpen = () => document.querySelector('.modal.show') !== null;
+
+        document.body.addEventListener('click', (e) => {
+            if (!isModalOpen() && e.target.tagName !== 'BUTTON' && e.target.tagName !== 'INPUT') {
+                scanInput.focus();
+            }
+        });
+
+        scanInput.addEventListener('blur', () => {
+            setTimeout(() => {
+                if (!isModalOpen()) scanInput.focus();
+            }, 100);
+        });
+
+        // Scan Handler
+        scanInput.addEventListener('change', async (e) => {
+            const barcode = e.target.value.trim();
+            e.target.value = '';
+            if (!barcode) return;
+
+            // Handle Active Item State
+            if (currentItem) {
+                // ITEM MODE: Allow scanning same item to increment
+                if (sessionMode === 'item' && barcode === currentItem.sku) {
+                    localCount++;
+                    updateUI();
+                    return;
+                }
+
+                // OTHERWISE: Unsaved Item Logic
+                pendingBarcode = barcode;
+                unsavedModal.show();
+                return;
+            }
+
+            processScan(barcode);
+        });
+
+        async function processScan(barcode) {
+            document.getElementById('loadingSpinner').classList.remove('d-none');
+            document.getElementById('welcomeState').classList.add('d-none');
+            document.getElementById('itemCard').classList.add('d-none');
+
+            try {
+                const res = await fetch('/inventory/audit/scan', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({ session_id: sessionId, barcode: barcode })
+                });
+
+                const data = await res.json();
+                document.getElementById('loadingSpinner').classList.add('d-none');
+
+                if (!res.ok) {
+                    alert(data.error || 'Scan failed');
+                    if (!currentItem) document.getElementById('welcomeState').classList.remove('d-none');
+                    else document.getElementById('itemCard').classList.remove('d-none');
+                    return;
+                }
+
+                // New Item Loaded
+                currentItem = data.item;
+
+                // Initialize Count
+                // If Item Mode, start at 1 (the scan we just did). 
+                // If Shelf Mode, we are verifying existing stock, so localCount isn't primarily displayed but we track it.
+                localCount = 1;
+
+                renderItem();
+
+            } catch (err) {
+                console.error(err);
+                alert("Network Scan Error");
+            }
+        }
+
+        function renderItem() {
+            if (!currentItem) return;
+
+            document.getElementById('itemName').innerText = currentItem.name;
+            document.getElementById('itemSku').innerText = currentItem.sku;
+            document.getElementById('systemQty').innerText = currentItem.quantity;
+
+            const img = document.getElementById('itemImg');
+            if (currentItem.image_url) { img.src = currentItem.image_url; img.style.display = 'block'; }
+            else { img.style.display = 'none'; }
+
+            updateUI();
+            document.getElementById('itemCard').classList.remove('d-none');
+        }
+
+        function updateUI() {
+            // Update Match Button Text based on Mode
+            const btn = document.getElementById('matchBtn');
+            const qtyDisplay = document.getElementById('matchQty');
+
+            if (sessionMode === 'item') {
+                // Item Mode: Show "Confirm Count (X)"
+                // System Stock is reference. We are submitting OUR count.
+                qtyDisplay.innerText = localCount;
+                document.getElementById('instructionText').innerText = `Scanned: ${localCount} | System: ${currentItem.quantity}`;
+            } else {
+                // Shelf Mode: "Match (SystemQty)"
+                qtyDisplay.innerText = currentItem.quantity;
+                document.getElementById('instructionText').innerText = "Verify shelf quantity matches System Stock.";
+            }
+        }
+
+        async function confirmMatch() {
+            if (!currentItem) return;
+
+            // In Item Mode, we submit localCount.
+            // In Shelf Mode, "Match" implies confirming System Qty.
+            const qtyToSubmit = (sessionMode === 'item') ? localCount : currentItem.quantity;
+
+            await submitCount(qtyToSubmit);
+        }
+
+        function showManualInput() {
+            const input = document.getElementById('manualQtyInput');
+            input.value = '';
+            manualModal.show();
+            setTimeout(() => input.focus(), 500);
+
+            // One-time listener addition (or re-addition safe)
+            input.onkeydown = function (e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    submitManualCount();
+                }
+            };
+        }
+
+        async function submitManualCount() {
+            const qty = document.getElementById('manualQtyInput').value;
+            if (qty === '') return;
+
+            manualModal.hide();
+            await submitCount(parseInt(qty));
+        }
+
+        async function submitCount(qty) {
+            if (!currentItem) return;
+
+            try {
+                const res = await fetch('/inventory/audit/submit_count', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({
+                        session_id: sessionId,
+                        item_id: currentItem.id,
+                        count: qty
+                    })
+                });
+
+                if (res.ok) {
+                    // Success
+                    currentItem = null;
+                    localCount = 0;
+                    document.getElementById('itemCard').classList.add('d-none');
+                    document.getElementById('welcomeState').classList.remove('d-none');
+                    document.querySelector('#welcomeState h1').innerText = "Saved! Scan Next";
+                } else {
+                    alert("Error saving count.");
+                }
+
+            } catch (err) {
+                alert("Network Save Error");
+            }
+        }
+
+        // --- Unsaved Handling ---
+
+        function cancelNewScan() {
+            pendingBarcode = null;
+            unsavedModal.hide();
+            scanInput.focus();
+        }
+
+        async function confirmAndProceed() {
+            if (!pendingBarcode) return;
+
+            // 1. Confirm current item
+            await confirmMatch();
+
+            // 2. Hide Modal
+            unsavedModal.hide();
+
+            // 3. Process new barcode
+            setTimeout(() => {
+                const bw = pendingBarcode;
+                pendingBarcode = null;
+                processScan(bw);
+            }, 300);
+        }
+    </script>
+</body>
+
+</html>

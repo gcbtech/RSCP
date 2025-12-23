@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>RSCP | Stock Alerts</title>
+    <link rel="icon" href="{{ favicon }}">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        /* Dark mode */
+        body.dark-mode {
+            background: #1a1a2e;
+            color: #eee;
+        }
+
+        body.dark-mode .card {
+            background: #16213e;
+            border-color: #0f3460;
+        }
+
+        body.dark-mode .card-header {
+            background: #0f3460 !important;
+            color: #fff !important;
+            border-color: #0f3460;
+        }
+
+        body.dark-mode .card-body {
+            color: #ddd;
+        }
+
+        body.dark-mode .table {
+            color: #fff;
+        }
+
+        body.dark-mode .table td,
+        body.dark-mode .table th {
+            color: #fff;
+            background-color: #16213e;
+        }
+
+        body.dark-mode .table strong {
+            color: #fff;
+        }
+
+        body.dark-mode .table-striped>tbody>tr:nth-of-type(odd)>td {
+            background-color: #1a2744;
+        }
+
+        body.dark-mode .table-striped>tbody>tr:nth-of-type(even)>td {
+            background-color: #16213e;
+        }
+
+        body.dark-mode .form-control,
+        body.dark-mode .form-select {
+            background: #1a1a2e;
+            color: #eee;
+            border-color: #0f3460;
+        }
+
+        body.dark-mode .text-muted,
+        body.dark-mode .form-text {
+            color: #ccc !important;
+        }
+
+        body.dark-mode code {
+            color: #f8d7da;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        body.dark-mode a {
+            color: #6ea8fe;
+        }
+
+        body.dark-mode .btn-outline-secondary {
+            color: #aaa;
+            border-color: #666;
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>🔔 Stock Alert Settings</h2>
+        <a href="/inventory" class="btn btn-outline-secondary">← Overview</a>
+    </div>
+
+    {% with messages = get_flashed_messages() %}
+    {% if messages %}
+    <div class="alert alert-info alert-dismissible fade show">
+        {% for msg in messages %}{{ msg }}{% endfor %}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endif %}
+    {% endwith %}
+
+    <form action="/inventory/alerts/config" method="POST" class="mb-4">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="card border-primary">
+            <div class="card-header bg-primary text-white">⚙️ Global Settings</div>
+            <div class="card-body">
+                <label class="form-label">Low Stock Threshold</label>
+                <div class="input-group" style="max-width: 300px;">
+                    <input type="number" name="low_stock_threshold" class="form-control" value="{{ low_threshold }}"
+                        min="0" required>
+                    <button type="submit" class="btn btn-outline-primary">Save Setting</button>
+                </div>
+                <div class="form-text">
+                    Items with this quantity or less will be counted as "Low Stock".<br>
+                    <i class="bi bi-info-circle"></i> <strong>Tip:</strong> Set to <code>0</code> to disable the Global
+                    Low Stock indicator.
+                </div>
+            </div>
+        </div>
+    </form>
+
+    <div class="card mb-4">
+        <div class="card-header">ℹ️ How Alerts Work</div>
+        <div class="card-body">
+            <p class="mb-1">Stock alerts use the <strong>Priority Webhook</strong> from Admin → Notifications.</p>
+            <p class="mb-1">When an item's quantity drops to or below its threshold, an alert is sent.</p>
+            <p class="mb-0">Set threshold to <code>0</code> for out-of-stock alerts only, or a higher number (e.g.,
+                <code>5</code>) for low stock warnings. Note: The Global Setting above defines the "Low Stock" count on
+                the Overview page.
+            </p>
+        </div>
+    </div>
+
+    <form action="/inventory/alerts/bulk" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Manage Alerts</span>
+                <div>
+                    <button type="button" class="btn btn-sm btn-outline-success" onclick="enableAll()">Enable
+                        All</button>
+                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="disableAll()">Disable
+                        All</button>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-striped mb-0">
+                    <thead>
+                        <tr>
+                            <th>Item</th>
+                            <th>Current Qty</th>
+                            <th style="width: 100px;">Alert</th>
+                            <th style="width: 120px;">Threshold</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in items %}
+                        <tr>
+                            <td>
+                                <strong>{{ item.name }}</strong>
+                                <br><small class="text-muted">SKU: {{ item.sku }}</small>
+                            </td>
+                            <td>
+                                <span
+                                    class="badge {% if item.quantity == 0 %}bg-danger{% elif item.quantity <= 5 %}bg-warning text-dark{% else %}bg-success{% endif %}">
+                                    {{ item.quantity }}
+                                </span>
+                            </td>
+                            <td>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input alert-toggle" type="checkbox"
+                                        name="alert_{{ item.id }}" id="alert_{{ item.id }}" {% if item.alert_enabled
+                                        %}checked{% endif %}>
+                                </div>
+                            </td>
+                            <td>
+                                <input type="number" class="form-control form-control-sm" name="threshold_{{ item.id }}"
+                                    min="0" value="{{ item.alert_threshold or 0 }}" style="width: 80px;">
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <button type="submit" class="btn btn-primary">💾 Save Alert Settings</button>
+    </form>
+
+    <script>
+        // Dark mode
+        if (localStorage.getItem('rscp_darkmode') === 'true') {
+            document.body.classList.add('dark-mode');
+        }
+
+        function enableAll() {
+            document.querySelectorAll('.alert-toggle').forEach(cb => cb.checked = true);
+        }
+
+        function disableAll() {
+            document.querySelectorAll('.alert-toggle').forEach(cb => cb.checked = false);
+        }
+    </script>
+</body>
+
+</html>

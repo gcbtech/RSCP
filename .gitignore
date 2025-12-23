@@ -1,0 +1,106 @@
+# ==================================
+# RSCP .gitignore
+# ==================================
+
+# ----------------------------------
+# User Data & Configuration
+# (These contain user-specific data)
+# ----------------------------------
+config.json
+rscp.db
+rscp.db-wal
+rscp.db-shm
+manifest.csv
+received_log.csv
+
+# ----------------------------------
+# Logs
+# ----------------------------------
+*.log
+app.log
+logs/
+error_logs*.csv
+
+# ----------------------------------
+# Python Bytecode & Cache
+# ----------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# ----------------------------------
+# Testing
+# ----------------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+test_results.txt
+
+# ----------------------------------
+# Virtual Environments
+# ----------------------------------
+.env
+.venv/
+venv/
+ENV/
+env/
+
+# ----------------------------------
+# Build & Distribution
+# ----------------------------------
+build/
+dist/
+*.egg
+*.egg-info/
+.eggs/
+*.whl
+*.manifest
+*.spec
+
+# ----------------------------------
+# IDE & Editors
+# ----------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# ----------------------------------
+# OS Generated
+# ----------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ----------------------------------
+# Backup Files
+# ----------------------------------
+*.bak
+*.backup
+backups/
+*.zip
+
+# ----------------------------------
+# Temporary Files
+# ----------------------------------
+*.tmp
+*.temp
+.cache/
+
+# ----------------------------------
+# Git (don't track this test file)
+# ----------------------------------
+.TESTgitignore

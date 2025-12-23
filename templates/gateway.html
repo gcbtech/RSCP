@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Gateway</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: 'Outfit', sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .gateway-container {
+            max-width: 900px;
+            width: 100%;
+        }
+
+        .gateway-header {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: #333;
+        }
+
+        .gateway-header h1 {
+            font-weight: 600;
+            letter-spacing: -0.5px;
+        }
+
+        .module-card {
+            border: none;
+            border-radius: 16px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            height: 100%;
+            background: white;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            text-decoration: none !important;
+            color: inherit;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .module-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1);
+        }
+
+        .card-img-top {
+            height: 180px;
+            background-size: cover;
+            background-position: center;
+            background-color: #eee;
+        }
+
+        .card-body {
+            padding: 1.5rem;
+            text-align: center;
+        }
+
+        .card-title {
+            font-weight: 600;
+            font-size: 1.25rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .card-text {
+            color: #6c757d;
+            font-size: 0.9rem;
+        }
+
+        /* Module Specifics */
+        .module-receiving .card-img-top {
+            background-image: linear-gradient(135deg, #FF9F1C 0%, #FFBF69 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 4rem;
+        }
+
+        .module-inventory .card-img-top {
+            background-image: linear-gradient(135deg, #2EC4B6 0%, #CBF3F0 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 4rem;
+        }
+
+        /* Dark Mode Support (Basic) */
+        @media (prefers-color-scheme: dark) {
+            /* In future, if body.dark-mode is toggled */
+        }
+
+        .logout-link {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            text-decoration: none;
+            color: #6c757d;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .logout-link:hover {
+            color: #dc3545;
+        }
+
+        .admin-link {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            text-decoration: none;
+            color: #6c757d;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .admin-link:hover {
+            color: #0d6efd;
+        }
+    </style>
+</head>
+
+<body>
+
+    {% if current_user.is_admin %}
+    <a href="/admin" class="admin-link">⚡ Admin Panel</a>
+    {% endif %}
+
+    <a href="/logout" class="logout-link">Logout</a>
+
+    <div class="gateway-container">
+        <div class="gateway-header">
+            <h1 class="mb-2">Welcome, {{ current_user.username }}</h1>
+            <p class="text-muted">Select a workspace to begin</p>
+        </div>
+
+        <div class="row g-4 justify-content-center">
+            <!-- RECEIVING MODULE -->
+            <div class="col-md-5">
+                <a href="/receiving" class="module-card module-receiving">
+                    <div class="card-img-top">
+                        📦
+                    </div>
+                    <div class="card-body">
+                        <h5 class="card-title">Receiving</h5>
+                        <p class="card-text">Scan incoming packages, process returns, and manage daily manifest flow.
+                        </p>
+                    </div>
+                </a>
+            </div>
+
+            <!-- INVENTORY MODULE -->
+            <div class="col-md-5">
+                <a href="/inventory" class="module-card module-inventory">
+                    <div class="card-img-top">
+                        📊
+                    </div>
+                    <div class="card-body">
+                        <h5 class="card-title">Inventory</h5>
+                        <p class="card-text">Track stock levels, audit locations, and manage warehouse organization.</p>
+                    </div>
+                </a>
+            </div>
+        </div>
+
+        <div class="text-center mt-5">
+            <small class="text-muted">RSCP System vMain</small>
+        </div>
+    </div>
+
+</body>
+
+</html>

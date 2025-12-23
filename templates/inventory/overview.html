@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>RSCP | Inventory Overview</title>
+    <link rel="icon" href="{{ favicon }}">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        .stat-card {
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 2.5rem;
+            font-weight: bold;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .card-green {
+            background: linear-gradient(135deg, #28a745, #20c997);
+            color: white;
+        }
+
+        .card-red {
+            background: linear-gradient(135deg, #dc3545, #c82333);
+            color: white;
+        }
+
+        .card-yellow {
+            background: linear-gradient(135deg, #ffc107, #e0a800);
+            color: #333;
+        }
+
+        .card-blue {
+            background: linear-gradient(135deg, #0d6efd, #0b5ed7);
+            color: white;
+        }
+
+        .top-mover {
+            border-left: 4px solid #6f42c1;
+            padding-left: 12px;
+            margin-bottom: 10px;
+        }
+
+        /* Dark mode */
+        body.dark-mode {
+            background: #1a1a2e;
+            color: #eee;
+        }
+
+        body.dark-mode .card {
+            background: #16213e;
+            border-color: #0f3460;
+        }
+
+        body.dark-mode .card-header {
+            background: #0f3460 !important;
+            color: #fff !important;
+            border-color: #0f3460;
+        }
+
+        body.dark-mode .card-body {
+            color: #ddd;
+        }
+
+        body.dark-mode .stat-label {
+            color: #aaa;
+        }
+
+        /* Dark mode overrides compatible with Bootstrap */
+        body.dark-mode .table {
+            color: #eee;
+            --bs-table-color: #eee;
+            --bs-table-bg: #16213e;
+            --bs-table-border-color: #0f3460;
+            --bs-table-striped-bg: #1a2744;
+            --bs-table-hover-bg: #1f2f4f;
+            border-color: #0f3460;
+        }
+
+        body.dark-mode .table th,
+        body.dark-mode .table td {
+            color: #eee;
+            border-color: #0f3460;
+        }
+
+        body.dark-mode .text-muted {
+            color: #aaa !important;
+        }
+
+        body.dark-mode .top-mover {
+            border-left-color: #9f6fd1;
+        }
+
+        body.dark-mode a {
+            color: #6ea8fe;
+        }
+
+        body.dark-mode .btn-outline-secondary {
+            color: #aaa;
+            border-color: #666;
+        }
+
+        body.dark-mode .btn-outline-warning {
+            color: #ffc107;
+            border-color: #ffc107;
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>📊 Inventory Overview</h2>
+        <div>
+            <a href="/" class="btn btn-outline-secondary me-2">← Dashboard</a>
+            <a href="{{ url_for('inventory.alerts_page') }}" class="btn btn-outline-warning">🔔 Alerts</a>
+        </div>
+    </div>
+
+    {% with messages = get_flashed_messages() %}
+    {% if messages %}
+    <div class="alert alert-info alert-dismissible fade show">
+        {% for msg in messages %}{{ msg }}{% endfor %}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endif %}
+    {% endwith %}
+
+    <!-- Summary Cards -->
+    <div class="row mb-4">
+        <!-- 1. Inventory Summary -->
+        <div class="col-md-3">
+            <a href="{{ url_for('inventory.list_items') }}" class="text-decoration-none">
+                <div class="stat-card card-blue h-100 hover-bg-light">
+                    <div class="d-flex justify-content-center gap-3">
+                        <div>
+                            <div class="stat-number" id="stat_total_items">{{ stats.total_items }}</div>
+                            <div class="stat-label small">SKUs</div>
+                        </div>
+                        <div style="border-left: 1px solid rgba(255,255,255,0.3);"></div>
+                        <div>
+                            <div class="stat-number" id="stat_total_quantity">{{ stats.total_quantity }}</div>
+                            <div class="stat-label small">Units</div>
+                        </div>
+                    </div>
+                    <div class="mt-2 text-white-50 small">View All Inventory</div>
+                </div>
+            </a>
+        </div>
+
+        <!-- 2. Audit Status -->
+        <div class="col-md-3">
+            <a href="{{ url_for('inventory.audit_history') }}" class="text-decoration-none">
+                <div class="stat-card h-100 hover-bg-light"
+                    style="background: linear-gradient(135deg, #6f42c1, #59359a); color: white;">
+                    <div class="stat-number" id="stat_last_audit" style="font-size: 2rem;">{{ stats.last_audit }}</div>
+                    <div class="stat-label" style="color: rgba(255,255,255,0.8);">Since Last Audit</div>
+                    <div class="mt-2 text-white-50 small">View History</div>
+                </div>
+            </a>
+        </div>
+
+        <!-- 3. Stock Alerts -->
+        <div class="col-md-3">
+            <a href="{{ url_for('inventory.alerts_page') }}" class="text-decoration-none">
+                <div class="stat-card h-100 hover-bg-light"
+                    style="background: linear-gradient(135deg, #fd7e14, #e65100); color: white;">
+                    <div class="d-flex justify-content-center gap-3">
+                        <div>
+                            <div class="stat-number" id="stat_low_stock">{{ stats.low_stock }}</div>
+                            <div class="stat-label small">Low</div>
+                        </div>
+                        <div style="border-left: 1px solid rgba(255,255,255,0.3);"></div>
+                        <div>
+                            <div class="stat-number" id="stat_out_of_stock">{{ stats.out_of_stock }}</div>
+                            <div class="stat-label small">OOS</div>
+                        </div>
+                    </div>
+                    <div class="mt-2 text-white-50 small">View Stock Alerts</div>
+                </div>
+            </a>
+        </div>
+
+        <!-- 4. Margin (Profit) -->
+        <div class="col-md-3">
+            <div
+                class="stat-card bg-info text-white h-100 d-flex flex-column justify-content-center align-items-center">
+                <div class="stat-number" id="stat_margin_percent">{{ stats.margin_percent }}%</div>
+                <div class="stat-label" style="color: rgba(255,255,255,0.9);">Margin <span id="stat_potential_profit"
+                        style="opacity:0.7; font-size:0.9em">(${{ "%.0f"|format(stats.potential_profit) }})</span></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <!-- Top Movers (most consumed) -->
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header">🔥 Top Movers (30 days)</div>
+                <div class="card-body">
+                    {% if top_movers %}
+                    {% for item in top_movers %}
+                    <div class="top-mover">
+                        <strong>{{ item.name }}</strong>
+                        <span class="badge bg-secondary float-end">{{ item.sold }} sold</span>
+                        <br><small class="text-muted">SKU: {{ item.sku }}</small>
+                    </div>
+                    {% endfor %}
+                    {% else %}
+                    <p class="text-muted">No sales data yet. Track quantity changes with "Sold/Consumed" reason.</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Items Needing Attention -->
+        <div class="col-md-6 mb-4">
+            <div class="card h-100">
+                <div class="card-header">⚠️ Items Needing Attention</div>
+                <div class="card-body">
+                    {% if attention_items %}
+                    <table class="table table-sm table-striped">
+                        <thead>
+                            <tr>
+                                <th>Item</th>
+                                <th>Qty</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in attention_items %}
+                            <tr>
+                                <td>
+                                    <a href="/inventory/edit/{{ item.id }}">{{ item.name }}</a>
+                                </td>
+                                <td>
+                                    <span
+                                        class="badge {% if item.quantity == 0 %}bg-danger{% else %}bg-warning text-dark{% endif %}">
+                                        {{ item.quantity }}
+                                    </span>
+                                </td>
+                                <td>
+                                    {% if item.quantity == 0 %}
+                                    <span class="text-danger">Out of Stock</span>
+                                    {% else %}
+                                    <span class="text-warning">Low Stock</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    {% else %}
+                    <p class="text-success">✓ All items are well stocked!</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sales Trend Chart -->
+    <div class="card mb-4">
+        <div class="card-header">📈 Daily Sales Activity (30 days)</div>
+        <div class="card-body">
+            <canvas id="salesChart" style="max-height: 250px;"></canvas>
+        </div>
+    </div>
+
+    <script>
+        // Dark mode
+        if (localStorage.getItem('rscp_darkmode') === 'true') {
+            document.body.classList.add('dark-mode');
+        }
+
+        // Sales trend chart
+        const ctx = document.getElementById('salesChart').getContext('2d');
+        const salesData = {{ sales_trend | tojson }};
+
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: salesData.map(d => d.date),
+                datasets: [{
+                    label: 'Units Sold/Consumed',
+                    data: salesData.map(d => d.count),
+                    borderColor: '#6f42c1',
+                    backgroundColor: 'rgba(111, 66, 193, 0.1)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: { beginAtZero: true }
+                }
+            }
+        });
+
+        // Auto-Refresh Stats
+        setInterval(function () {
+            fetch('/inventory/api/overview')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.total_items !== undefined) document.getElementById('stat_total_items').innerText = data.total_items;
+                    if (data.total_quantity !== undefined) document.getElementById('stat_total_quantity').innerText = data.total_quantity;
+                    if (data.last_audit !== undefined) document.getElementById('stat_last_audit').innerText = data.last_audit;
+                    if (data.low_stock !== undefined) document.getElementById('stat_low_stock').innerText = data.low_stock;
+                    if (data.out_of_stock !== undefined) document.getElementById('stat_out_of_stock').innerText = data.out_of_stock;
+                    if (data.margin_percent !== undefined) document.getElementById('stat_margin_percent').innerText = data.margin_percent + '%';
+                    if (data.potential_profit !== undefined) document.getElementById('stat_potential_profit').innerText = '($' + Math.round(data.potential_profit) + ')';
+                })
+                .catch(e => console.error("Stats refresh failed", e));
+        }, 5000);
+    </script>
+</body>
+
+</html>

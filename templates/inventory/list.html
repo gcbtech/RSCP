@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Inventory Items</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            padding: 20px;
+        }
+
+        body.dark-mode {
+            background: #121212;
+            color: #eee;
+        }
+
+        body.dark-mode .table {
+            color: #eee;
+            --bs-table-bg: #1e1e1e;
+            --bs-table-striped-bg: #2a2a2a;
+            --bs-table-hover-bg: #333;
+        }
+
+        body.dark-mode .card {
+            background: #1e1e1e;
+            border-color: #444;
+            color: #eee;
+        }
+
+        body.dark-mode .card-header {
+            background: #2a2a2a;
+            color: #eee;
+            border-color: #444;
+        }
+
+        body.dark-mode .form-control {
+            background: #2a2a2a;
+            color: #eee;
+            border-color: #555;
+        }
+
+        body.dark-mode .form-control:focus {
+            background: #333;
+            color: #fff;
+            border-color: #0d6efd;
+        }
+
+        body.dark-mode .form-select {
+            background: #2a2a2a;
+            color: #eee;
+            border-color: #555;
+        }
+
+        body.dark-mode .modal-content {
+            background: #1e1e1e;
+            color: #eee;
+            border-color: #444;
+        }
+
+        body.dark-mode .modal-header,
+        body.dark-mode .modal-footer {
+            border-color: #444;
+        }
+
+        body.dark-mode .btn-close {
+            filter: invert(1);
+        }
+
+        body.dark-mode code {
+            color: #ff7b72;
+            background: #2a2a2a;
+        }
+
+        body.dark-mode .text-muted {
+            color: #aaa !important;
+        }
+
+        body.dark-mode .form-label {
+            color: #ddd;
+        }
+
+        body.dark-mode .form-control::placeholder {
+            color: #888;
+        }
+
+        body.dark-mode th,
+        body.dark-mode td {
+            color: #eee !important;
+        }
+
+        .location-badge {
+            font-size: 0.8rem;
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>📋 Inventory Items</h2>
+        <div>
+            <a href="/inventory" class="btn btn-outline-secondary me-2">← Overview</a>
+            <a href="/inventory/add" class="btn btn-success">+ Add Item</a>
+        </div>
+    </div>
+
+    {% with messages = get_flashed_messages() %}
+    {% if messages %}
+    <div class="alert alert-info alert-dismissible fade show">
+        {% for msg in messages %}{{ msg }}{% endfor %}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endif %}
+    {% endwith %}
+
+    <!-- Search -->
+    <div class="mb-3">
+        <input type="text" id="searchInput" class="form-control" placeholder="Search inventory...">
+    </div>
+
+    <!-- Inventory Table -->
+    <div class="table-responsive">
+        <table class="table table-striped table-hover" id="inventoryTable">
+            <thead class="table-dark">
+                <tr>
+                    <th style="width: 50px;"></th>
+                    <th>SKU</th>
+                    <th>Name</th>
+                    <th>Qty</th>
+                    <th>Location</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="inventoryBody">
+                {% include 'inventory/_list_rows.html' %}
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        // Live Update
+        setInterval(function () {
+            // Don't refresh if a modal is open (prevent disruption)
+            if (document.querySelector('.modal.show')) return;
+
+            // Don't refresh if searching (prevent overwriting results while typing)
+            if (document.getElementById('searchInput').value.trim() !== '') return;
+
+            const url = new URL(window.location.href);
+            url.searchParams.set('partial', '1');
+
+            fetch(url)
+                .then(r => r.text())
+                .then(html => {
+                    document.getElementById('inventoryBody').innerHTML = html;
+                    // Re-attach listeners if needed (Bootstrap handles data-bs-toggle automatically)
+                })
+                .catch(e => console.error(e));
+        }, 5000);
+    </script>
+    </table>
+    </div>
+
+    {% if not items %}
+    <div class="text-center text-muted py-5">
+        <h4>No inventory items yet</h4>
+        <p>Add your first item to get started.</p>
+        <a href="/inventory/add" class="btn btn-success">+ Add Item</a>
+    </div>
+    {% endif %}
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Search filter
+        document.getElementById('searchInput').addEventListener('input', function () {
+            const filter = this.value.toLowerCase();
+            const rows = document.querySelectorAll('#inventoryTable tbody tr');
+            rows.forEach(row => {
+                const text = row.textContent.toLowerCase();
+                row.style.display = text.includes(filter) ? '' : 'none';
+            });
+        });
+
+        // Custom reason toggle
+        document.querySelectorAll('[id^="reasonSelect"]').forEach(select => {
+            select.addEventListener('change', function () {
+                const itemId = this.id.replace('reasonSelect', '');
+                const customInput = document.getElementById('customReason' + itemId);
+                if (this.value === 'custom') {
+                    customInput.style.display = 'block';
+                    customInput.name = 'reason';
+                    this.name = '';
+                } else {
+                    customInput.style.display = 'none';
+                    customInput.name = '';
+                    this.name = 'reason';
+                }
+            });
+        });
+
+        // Dark mode
+        if (localStorage.getItem('rscp_darkmode') === 'true') {
+            document.body.classList.add('dark-mode');
+        }
+
+        // Image modal 
+        function showImage(url, title) {
+            document.getElementById('modalImage').src = url;
+            document.getElementById('imageModalLabel').textContent = title || 'Image';
+            new bootstrap.Modal(document.getElementById('imageModal')).show();
+        }
+
+        function copyToClipboard(text, element) {
+            navigator.clipboard.writeText(text).then(function () {
+                const originalTitle = element.getAttribute('title');
+
+                // Visual feedback
+                const tooltip = new bootstrap.Tooltip(element, {
+                    title: "Copied!",
+                    trigger: 'manual'
+                });
+                tooltip.show();
+
+                setTimeout(() => {
+                    tooltip.dispose();
+                    element.setAttribute('title', originalTitle); // Restore original title
+                }, 1000);
+            }, function (err) {
+                console.error('Async: Could not copy text: ', err);
+            });
+        }
+    </script>
+
+    <!-- Image Modal -->
+    <div class="modal fade" id="imageModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="imageModalLabel">Image</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-center">
+                    <img id="modalImage" src="" style="max-width: 100%; max-height: 70vh;">
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

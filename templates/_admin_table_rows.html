@@ -1,0 +1,111 @@
+{% for data in packages %}
+{% set tracking = data.tracking_number %}
+<tr>
+    <td><input type="checkbox" name="trackings" value="{{ tracking }}"></td>
+    <td class="text-center">
+        {% if data.image and data.image|lower != 'nan' and data.image|length > 10 %}
+        <a href="#" onclick="showImage('{{ data.image }}'); return false;">
+            <img src="{{ data.image }}" alt="Img"
+                style="width: 40px; height: 40px; object-fit: cover; border-radius: 4px;" loading="lazy"
+                onerror="this.onerror=null; this.src='https://placehold.co/40x40?text=?'; this.style.border='1px solid red';">
+        </a>
+        {% endif %}
+    </td>
+    <td style="min-width: 200px;">
+        {% if data.scanned or data.status == 'received' %}
+        <span class="text-success fw-bold">Received</span>
+        <small class="text-muted d-block" style="display:none !important;"></small>
+        {% elif data.date == 'Pending' %}
+        <div class="d-flex">
+            <input type="date" id="date_{{ tracking }}" class="form-control form-control-sm me-1" required>
+            <button type="button" class="btn btn-sm btn-outline-dark"
+                onclick="submitDate('{{ tracking }}')">Set</button>
+        </div>
+        {% else %}
+        <div class="date-display" id="dateDisplay_{{ tracking }}">
+            <span onclick="toggleDateEdit('{{ tracking }}')" style="cursor: pointer;" title="Click to edit">
+                {{ data.date | format_date(date_format) }}
+                {% if data.manual_date %}<span class="badge bg-info text-dark ms-1">M</span>{% endif %}
+                <small class="text-muted ms-1">✏️</small>
+            </span>
+        </div>
+        <div class="date-editor d-none" id="dateEditor_{{ tracking }}">
+            <div class="d-flex">
+                <input type="date" id="date_{{ tracking }}" class="form-control form-control-sm me-1"
+                    value="{{ data.date_expected }}">
+                <button type="button" class="btn btn-sm btn-success"
+                    onclick="submitDate('{{ tracking }}')">Save</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary ms-1"
+                    onclick="toggleDateEdit('{{ tracking }}')">✕</button>
+            </div>
+        </div>
+        {% endif %}
+    </td>
+    <td>
+        <span class="fw-bold" title="{{ data.name }}">{{ data.name[:80] }}{% if
+            data.name|length > 80 %}...{% endif %}</span>
+    </td>
+    <td>
+        <div style="font-family: monospace; font-size: 0.85rem;">{{ tracking }}
+        </div>
+        <small class="text-muted">{{ data.source|upper }}</small>
+    </td>
+    <td>
+        {% if data.status == 'refunded' %}
+        <span class="badge bg-dark">Refunded</span>
+        {% elif data.status == 'return_pending' %}
+        <span class="badge bg-warning text-dark">Open Return</span>
+        {% elif data.scanned or data.status == 'received' %}
+        <span class="badge bg-success">Received</span>
+        {% else %}
+        <span
+            class="badge bg-{{ 'danger' if data.status=='past_due' else 'success' if data.status=='on_time' else 'warning' }}">{{
+            data.status }}</span>
+        {% endif %}
+    </td>
+    <td>
+        <form action="/admin/toggle_priority/{{ tracking }}" method="POST" style="display:inline;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-sm p-0 border-0 bg-transparent">
+                {% if data.priority %}<span class="badge bg-purple">PRIORITY</span>{%
+                else %}<span class="badge bg-light text-dark border">Enable</span>{% endif %}
+            </button>
+        </form>
+    </td>
+    <td>
+        <div class="btn-group">
+            {% if not data.scanned %}
+            {% if data.status == 'past_due' %}
+            <a href="/admin/set_status/{{ tracking }}/on_time" class="btn btn-sm btn-success">Mark On Time</a>
+            {% else %}
+            <a href="/admin/set_status/{{ tracking }}/past_due" class="btn btn-sm btn-danger">Mark Late</a>
+            {% endif %}
+            {% else %}
+            <button class="btn btn-sm btn-secondary" disabled>Mark Late</button>
+            {% endif %}
+
+            {% if data.status not in ['refunded', 'return_pending'] %}
+            <a href="/return_mode?track={{ tracking }}" class="btn btn-sm btn-warning ms-1">Return</a>
+            {% endif %}
+
+            {% if inventory_enabled %}
+            {% set extracted_asin = '' %}
+            {% if data.image and 'images-na.ssl-images-amazon.com' in (data.image | string) and '/P/' in (data.image |
+            string) %}
+            {% set extracted_asin = (data.image | string).split('/P/')[1].split('.')[0] %}
+            {% endif %}
+            <a href="/inventory/add?name={{ data.name | urlencode }}&asin={{ extracted_asin | urlencode }}&image_url={{ data.image | default('', true) | urlencode }}&qty={{ data.qty | default(1) }}"
+                class="btn btn-sm ms-1" style="background: #6f42c1; color: white;" title="Import to Inventory">
+                📦
+            </a>
+            {% endif %}
+
+            <form action="/admin/delete_package/{{ tracking }}" method="POST" style="display:inline;"
+                onsubmit="return confirm('Delete {{ tracking }}? This will also remove it from history.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-sm btn-danger ms-1">DELETE</button>
+            </form>
+        </div>
+    </td>
+</tr>
+{% endfor %}

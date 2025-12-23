@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Return Mode</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            padding: 15px;
+            font-family: 'Segoe UI', sans-serif;
+            background-color: #fff0f0;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .step-box {
+            background: white;
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .btn-scan {
+            width: 100%;
+            padding: 15px;
+            font-size: 1.2rem;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h2 class="text-danger fw-bold">↩️ RETURN MODE</h2>
+        <a href="/" class="btn btn-outline-secondary btn-sm">Exit to Dashboard</a>
+    </div>
+    {% with messages = get_flashed_messages() %}
+    {% if messages %}<div class="alert alert-success text-center">{{ messages[0] }}</div>{% endif %}
+    {% endwith %}
+    {% if not item %}
+    <div class="step-box text-center">
+        <h4>Step 1: Identify Item</h4>
+        <p class="text-muted">Scan original box OR Search by name</p>
+        <form method="POST" action="/return_mode">
+            <input type="text" name="search_term" class="form-control form-control-lg mb-3"
+                placeholder="Scan Barcode or Type Name..." autofocus>
+            <button type="submit" class="btn btn-primary btn-scan">Find Item</button>
+        </form>
+        {% if message %}<div class="alert alert-warning mt-3">{{ message }}</div>{% endif %}
+
+        <!-- Disambiguation List -->
+        {% if candidates %}
+        <div class="list-group mt-3 text-start">
+            <div class="list-group-item list-group-item-warning fw-bold">Did you mean?</div>
+            {% for c in candidates %}
+            <a href="/return_mode?track={{ c.tracking }}" class="list-group-item list-group-item-action">
+                <strong>{{ c.name }}</strong>
+                <div class="small text-muted">{{ c.tracking }}</div>
+            </a>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Recent Items -->
+        {% if recent_items and not candidates %}
+        <div class="mt-4 text-start">
+            <h5 class="text-muted border-bottom pb-2">Recent Shipments</h5>
+            <div class="list-group" style="max-height: 400px; overflow-y: auto;">
+                {% for r in recent_items %}
+                <a href="/return_mode?track={{ r.tracking }}"
+                    class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="fw-bold">{{ r.name }}</div>
+                        <small class="text-muted">{{ r.date }} | {{ r.tracking }}</small>
+                    </div>
+                    <span class="badge bg-secondary">SELECT</span>
+                </a>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="step-box">
+        <h4 class="text-primary">{{ item.name }}</h4>
+        <small class="text-muted">Original Tracking: {{ item.tracking }}</small>
+        <hr>
+        <form method="POST" action="/process_return">
+            <input type="hidden" name="original_tracking" value="{{ item.tracking }}">
+            <h5 class="mt-3">Checklist:</h5>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" required id="c1">
+                <label class="form-check-label" for="c1">Contents Verified?</label>
+            </div>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" required id="c2">
+                <label class="form-check-label" for="c2">Old Labels Removed?</label>
+            </div>
+            <h5 class="mt-3">Reason:</h5>
+            <select name="reason" class="form-select mb-3">
+                <option value="Defective" selected>Defective</option>
+                <option value="Wrong Item">Wrong Item</option>
+                <option value="Damaged">Damaged in Transit</option>
+                <option value="No Longer Needed">No Longer Needed</option>
+                <option value="Other">Other</option>
+            </select>
+            <h5 class="mt-3">Scan New Label:</h5>
+            <input type="text" name="return_tracking" class="form-control form-control-lg mb-3"
+                placeholder="Scan Return Tracking (Optional)..." autofocus>
+            <button type="submit" class="btn btn-danger btn-scan">Confirm Return</button>
+        </form>
+    </div>
+    {% endif %}
+</body>
+
+</html>

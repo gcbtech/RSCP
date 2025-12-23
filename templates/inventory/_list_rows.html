@@ -1,0 +1,98 @@
+{% for item in items %}
+<tr>
+    <td>
+        {% if item.image_url %}
+        <a href="#" onclick="showImage('{{ item.image_url }}', '{{ item.name }}'); return false;">
+            <img src="{{ item.image_url }}"
+                style="width: 40px; height: 40px; object-fit: contain; border-radius: 4px; cursor: pointer;">
+        </a>
+        {% endif %}
+    </td>
+    <td>
+        <code style="cursor: pointer;" onclick="copyToClipboard('{{ item.sku }}', this)"
+            title="Click to copy">{{ item.sku }}</code>
+    </td>
+    <td>{{ item.name }}</td>
+    <td>
+        <span class="badge {% if item.quantity > 0 %}bg-success{% else %}bg-danger{% endif %}">
+            {{ item.quantity }}
+        </span>
+    </td>
+    <td>
+        <span class="location-badge">
+            {% set locs = [] %}
+            {% if item.location_area %}{% set _ = locs.append(item.location_area) %}{% endif %}
+            {% if item.location_aisle %}{% set _ = locs.append(item.location_aisle) %}{% endif %}
+            {% if item.location_shelf %}{% set _ = locs.append(item.location_shelf) %}{% endif %}
+            {% if item.location_bin %}{% set _ = locs.append(item.location_bin) %}{% endif %}
+            {{ locs | join(' / ') }}
+        </span>
+    </td>
+    <td>
+        <div class="btn-group btn-group-sm">
+            <!-- Purchase Link -->
+            {% if item.asin and item.asin != 'None' and item.asin != 'none' %}
+            <a href="https://www.amazon.com/dp/{{ item.asin }}" target="_blank" class="btn btn-outline-warning"
+                title="Buy on Amazon">🛒</a>
+            {% elif item.source_url and item.source_url != 'None' %}
+            <a href="{{ item.source_url }}" target="_blank" class="btn btn-outline-warning" title="Purchase">🛒</a>
+            {% endif %}
+            <!-- Adjust Quantity -->
+            <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#adjustModal{{ item.id }}">
+                ±
+            </button>
+            <!-- Edit -->
+            <a href="/inventory/edit/{{ item.id }}" class="btn btn-outline-secondary">✏️</a>
+            <!-- Delete -->
+            <form action="/inventory/delete/{{ item.id }}" method="POST" style="display:inline;"
+                onsubmit="return confirm('Delete this item?');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-danger">🗑️</button>
+            </form>
+        </div>
+    </td>
+</tr>
+
+<!-- Adjust Modal -->
+<div class="modal fade" id="adjustModal{{ item.id }}" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form action="/inventory/adjust/{{ item.id }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <div class="modal-header">
+                    <h5 class="modal-title">Adjust: {{ item.name }}</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Current Quantity: <strong>{{ item.quantity
+                                }}</strong></label>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Quantity Change (+/-)</label>
+                        <input type="number" name="quantity_change" class="form-control" placeholder="e.g., -1 or +5"
+                            required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Reason</label>
+                        <select name="reason" class="form-select" id="reasonSelect{{ item.id }}">
+                            <option value="Sold/Consumed" selected>Sold/Consumed</option>
+                            <option value="Received">Received</option>
+                            <option value="Returned">Returned</option>
+                            <option value="Damaged">Damaged</option>
+                            <option value="Count Correction">Count Correction</option>
+                            <option value="custom">Other (specify)...</option>
+                        </select>
+                        <input type="text" id="customReason{{ item.id }}" class="form-control mt-2"
+                            placeholder="Enter custom reason" style="display:none;">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Apply</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endfor %}
