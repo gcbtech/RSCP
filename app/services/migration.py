@@ -73,6 +73,24 @@ def ensure_db_ready():
         ''')
         conn.commit()
         
+        # Notifications Table (V1.20)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                user_id INTEGER,
+                title TEXT NOT NULL,
+                message TEXT,
+                type TEXT DEFAULT 'info',
+                link TEXT,
+                is_read BOOLEAN DEFAULT 0,
+                read_at TIMESTAMP
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_notifications_unread ON notifications(user_id, is_read)')
+        conn.commit()
+        
         # V1.18: Add badge_id to users table for POS badge scanning
         try:
             conn.execute("ALTER TABLE users ADD COLUMN badge_id TEXT UNIQUE")

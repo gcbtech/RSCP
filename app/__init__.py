@@ -116,6 +116,10 @@ def create_app():
     app.register_blueprint(pos_bp)
     app.register_blueprint(federation_bp)
     
+    # Notifications API
+    from app.routes.notifications import notifications_bp
+    app.register_blueprint(notifications_bp)
+    
     # Global Error Handler
     from app.utils.errors import RscpError
     from flask import render_template
