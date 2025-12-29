@@ -151,7 +151,7 @@ def cart_add_custom():
     
     try:
         unit_price = float(price)
-    except:
+    except ValueError:
         flash('Invalid price.')
         return redirect(url_for('pos.sales'))
     
@@ -252,7 +252,7 @@ def cart_discount():
     
     try:
         discount_value = float(discount_amount) if discount_amount else 0
-    except:
+    except ValueError:
         discount_value = 0
     
     # Check if discount exceeds thresholds

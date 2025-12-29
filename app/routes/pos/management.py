@@ -427,7 +427,7 @@ def settings():
         try:
             tax_float = round(float(tax_rate) / 100, 6)  # Round to avoid floating point issues
             set_pos_setting('TAX_RATE', str(tax_float))
-        except:
+        except ValueError:
             flash('Invalid tax rate.')
         
         # Feature toggles

@@ -238,7 +238,7 @@ def start_scheduler():
                 os.write(lock_fd, str(os.getpid()).encode())
                 os.close(lock_fd)
                 logger.info("[Background] Took over stale scheduler lock")
-            except:
+            except OSError:
                 logger.info("[Background] Could not acquire lock, skipping scheduler")
                 return
     except Exception as e:

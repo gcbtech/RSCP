@@ -41,7 +41,7 @@ def generate_sku(category='ATO'):
                     next_num = int(num_str) + 1
                 else:
                     next_num = 1
-            except:
+            except (ValueError, IndexError):
                 next_num = 1
         else:
             next_num = 1
@@ -348,7 +348,7 @@ def fetch_image_from_url():
                     content_type = head_response.headers.get('Content-Type', '')
                     if 'image' not in content_type:
                         return jsonify({'error': 'URL does not appear to be an image'}), 404
-                except:
+                except Exception:
                     pass  # If HEAD fails, still try to use the URL
             
             return jsonify({'image_url': image_url})

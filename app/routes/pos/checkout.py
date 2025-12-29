@@ -252,8 +252,8 @@ def receipt(order_number):
     if order['payment_details']:
         try:
             payment_details = json.loads(order['payment_details'])
-        except:
-            pass
+        except json.JSONDecodeError:
+            pass  # Invalid payment details JSON
             
     # Get branding settings
     from app.routes.pos.core import get_pos_setting
@@ -295,8 +295,8 @@ def receipt_print(order_number):
     if order['payment_details']:
         try:
             payment_details = json.loads(order['payment_details'])
-        except:
-            pass
+        except json.JSONDecodeError:
+            pass  # Invalid payment details JSON
             
     # Get branding settings
     from app.routes.pos.core import get_pos_setting

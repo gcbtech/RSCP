@@ -75,7 +75,7 @@ def reveal_string(obfuscated_text: str, key: str) -> str:
         xor_bytes = base64.b64decode(obfuscated_text)
         key_cycle = (key * (len(xor_bytes) // len(key) + 1))[:len(xor_bytes)]
         return "".join([chr(a ^ ord(b)) for a, b in zip(xor_bytes, key_cycle)])
-    except:
+    except (ValueError, TypeError):
         return ""
 
 def local_time_filter(value, fmt="%Y-%m-%d %H:%M"):

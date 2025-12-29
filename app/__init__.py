@@ -61,7 +61,7 @@ def create_app():
                 g.user_id = current_user.username
             else:
                 g.user_id = 'Guest'
-        except:
+        except Exception:
             g.user_id = 'Guest'
 
     # Config
@@ -78,7 +78,7 @@ def create_app():
             conn.close()
             if user_count > 0:
                 logging.warning("SECRET_KEY missing from config.json but users exist. Using temp key - sessions will be invalid!")
-        except:
+        except Exception:
             pass  # DB not ready yet, first run
         secret_key = 'temp_setup_key'
     
@@ -264,7 +264,7 @@ def create_app():
     try:
         with open(version_file, 'r') as f:
             app_version = f.read().strip()
-    except:
+    except IOError:
         app_version = "unknown"
     
     @app.context_processor
@@ -284,8 +284,8 @@ def create_app():
                 result = conn.execute('SELECT COUNT(*) as cnt FROM inventory_items').fetchone()
                 inventory_count = result['cnt'] if result else 0
                 # No need to close - teardown handles it
-            except:
-                pass
+            except Exception:
+                pass  # Inventory table may not exist yet
         
         # Favicon from static folder
         favicon = "/static/favicon.png"

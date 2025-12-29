@@ -61,7 +61,7 @@ def get_tax_rate():
     rate = get_pos_setting('TAX_RATE', '0.0')
     try:
         return float(rate)
-    except:
+    except ValueError:
         return 0.0
 
 
@@ -104,7 +104,7 @@ def generate_order_number(terminal_id='POS-1'):
                 # Extract the sequence number
                 last_seq = int(result['order_number'].split('-')[-1])
                 next_seq = last_seq + 1
-            except:
+            except (ValueError, IndexError):
                 next_seq = 1
         else:
             next_seq = 1
@@ -165,7 +165,7 @@ def get_inventory_item(sku):
                         if ids.get('upc') == sku or ids.get('part_number') == sku:
                             result = item
                             break
-                except:
+                except json.JSONDecodeError:
                     continue
         
         return dict(result) if result else None
@@ -303,7 +303,7 @@ def save_cash_discount():
     discount_type = request.form.get('type', 'percent')
     try:
         amount = float(request.form.get('amount', 0))
-    except:
+    except ValueError:
         amount = 0
     
     set_pos_setting('CASH_DISCOUNT_ENABLED', enabled)

@@ -151,7 +151,8 @@ def sync_manifest():
                 
                 try:
                     qty = int(float(row.get('Quantity', '1') or 1)) # Handle "1.0" string
-                except: qty = 1
+                except ValueError:
+                    qty = 1
                 
                 img = str(row.get('Image', '')).strip()
                 if img.lower() == 'nan': img = ""

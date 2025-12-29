@@ -493,6 +493,6 @@ def _get_version():
         if os.path.exists(version_file):
             with open(version_file) as f:
                 return f.read().strip()
-    except:
+    except IOError:
         pass
     return 'unknown'

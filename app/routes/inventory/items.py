@@ -526,8 +526,8 @@ def edit_item(item_id):
         try:
             if 'secondary_ids' in item.keys() and item['secondary_ids']:
                 secondary_ids = json.loads(item['secondary_ids'])
-        except:
-            pass
+        except json.JSONDecodeError:
+            pass  # Invalid JSON in secondary_ids
         
         return render_template('inventory/add.html', 
                                item=item, 

@@ -242,8 +242,8 @@ def refund_order(order_number):
     if order['payment_details']:
         try:
             payment_details = json.loads(order['payment_details'])
-        except:
-            pass
+        except json.JSONDecodeError:
+            pass  # Invalid payment details JSON
     
     return render_template('pos/refund_order.html',
                            order=order,

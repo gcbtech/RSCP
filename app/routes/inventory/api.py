@@ -17,7 +17,7 @@ def get_api_limiter():
     """Get limiter with API rate limit (100 per minute per IP)."""
     try:
         return current_app.limiter.limit("100 per minute")
-    except:
+    except AttributeError:
         return lambda f: f  # No-op if limiter not available
 
 
