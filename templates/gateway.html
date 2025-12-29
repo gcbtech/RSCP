@@ -334,6 +334,7 @@
             </div>
 
             <!-- INVENTORY MODULE -->
+            {% if inventory_enabled %}
             <div class="col-12 col-lg-5">
                 <a href="/inventory" class="module-card module-inventory">
                     <div class="card-img-top">
@@ -345,6 +346,7 @@
                     </div>
                 </a>
             </div>
+            {% endif %}
 
             <!-- POS MODULE -->
             {% if pos_enabled %}

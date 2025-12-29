@@ -22,27 +22,17 @@
 
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
             <h5 class="text-start text-primary">1. Organization</h5>
             <input type="text" name="org_name" class="form-control mb-3" placeholder="Organization Name (Optional)">
 
-            <h5 class="text-start text-primary">2. Admin Security</h5>
-            <input type="password" name="admin_pass" class="form-control mb-3" placeholder="Create Admin Password"
-                required>
-
             <hr>
 
-            <h5 class="text-start text-success">3. First Scanner User</h5>
-            <div class="row g-2">
-                <div class="col-8">
-                    <input type="text" name="first_user" class="form-control" value="Staff"
-                        placeholder="Name (e.g. Dave)" required>
-                </div>
-                <div class="col-4">
-                    <input type="number" name="first_pin" class="form-control" placeholder="PIN (Opt)"
-                        inputmode="numeric">
-                </div>
+            <h5 class="text-start text-success">2. Create Admin Account</h5>
+            <input type="text" name="admin_user" class="form-control mb-2" placeholder="Admin Username" required>
+            <input type="password" name="admin_pass" class="form-control mb-2" placeholder="Admin Password" required>
+            <div class="form-text text-start mb-3">This account has full access. You can create additional users later.
             </div>
-            <div class="form-text text-start mb-3">Leave PIN blank for instant login.</div>
 
             <button type="submit" class="btn btn-primary w-100 mt-3">Finish Setup & Launch</button>
         </form>

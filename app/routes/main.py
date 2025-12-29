@@ -39,8 +39,12 @@ def index():
     if not current_user.is_authenticated:
         logger.info(f"[Index] No user in session. Redirecting to login.")
         return redirect(url_for('auth.login'))
-        
-    return render_template('gateway.html')
+    
+    config = load_config()
+    inv_enabled = config.get('INVENTORY_MODULE_ENABLED', False)
+    pos_enabled = config.get('POS_ENABLED', False)
+    
+    return render_template('gateway.html', inventory_enabled=inv_enabled, pos_enabled=pos_enabled)
 
 @main_bp.route('/receiving')
 @login_required
@@ -88,15 +92,9 @@ def setup_wizard():
                 json.dump(config_data, f, indent=4)
         except: pass
         
-        # Create Users
-        create_user("Admin", config_data["ADMIN_HASH"], is_admin=True) 
-        
-        staff_user = request.form.get('first_user', 'Staff').strip()
-        staff_pin = request.form.get('first_pin', '').strip()
-        
-        if staff_pin:
-            # Create staff user with PIN as password
-            create_user(staff_user, generate_password_hash(staff_pin), is_admin=False)
+        # Create Admin user with custom username
+        admin_user = request.form.get('admin_user', 'Admin').strip()
+        create_user(admin_user, config_data["ADMIN_HASH"], is_admin=True)
             
         return redirect(url_for('auth.login'))
         
