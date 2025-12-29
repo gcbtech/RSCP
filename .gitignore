@@ -104,3 +104,10 @@ backups/
 # Git (don't track this test file)
 # ----------------------------------
 .TESTgitignore
+
+# ----------------------------------
+# User Uploads (instance-specific)
+# ----------------------------------
+static/uploads/
+static/uploads/inventory/
+static/uploads/inventory/thumbs/
