@@ -6,7 +6,8 @@
         {% if data.image and data.image|lower != 'nan' and data.image|length > 10 %}
         <a href="#" onclick="showImage('{{ data.image }}'); return false;">
             <img src="{{ data.image }}" alt="Img"
-                style="width: 40px; height: 40px; object-fit: cover; border-radius: 4px;" loading="lazy"
+                style="width: 40px; height: 40px; object-fit: contain; border-radius: 4px; background: #f8f9fa;"
+                loading="lazy"
                 onerror="this.onerror=null; this.src='https://placehold.co/40x40?text=?'; this.style.border='1px solid red';">
         </a>
         {% endif %}

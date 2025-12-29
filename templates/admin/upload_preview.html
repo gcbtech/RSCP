@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Import Preview</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #f8f9fa;
+        }
+
+        body.dark-mode {
+            background: #121212;
+            color: #eee;
+        }
+
+        .preview-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        body.dark-mode .preview-card {
+            background: #1e1e1e;
+        }
+
+        .table-preview {
+            font-size: 0.85rem;
+        }
+
+        .table-preview th {
+            background: #f8f9fa;
+            position: sticky;
+            top: 0;
+        }
+
+        body.dark-mode .table-preview th {
+            background: #2a2a2a;
+        }
+
+        .mapping-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .mapping-label {
+            min-width: 120px;
+            font-weight: bold;
+        }
+
+        .warning-box {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 15px;
+        }
+
+        body.dark-mode .warning-box {
+            background: #332d00;
+            border-color: #665800;
+        }
+
+        .preview-table-wrapper {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+        }
+
+        body.dark-mode .preview-table-wrapper {
+            border-color: #444;
+        }
+
+        body.dark-mode .table {
+            color: #eee;
+        }
+
+        body.dark-mode .table-striped tbody tr:nth-of-type(odd) {
+            background-color: rgba(255, 255, 255, 0.05);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container py-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>📋 Import Preview</h2>
+            <a href="{{ url_for('admin.admin_panel') }}" class="btn btn-outline-secondary">← Cancel</a>
+        </div>
+
+        <!-- Summary -->
+        <div class="preview-card">
+            <h5>📊 File Summary</h5>
+            <p class="mb-1"><strong>Filename:</strong> {{ preview.filename }}</p>
+            <p class="mb-1"><strong>Total Rows:</strong> {{ preview.total_rows }}</p>
+            <p class="mb-0"><strong>Mode:</strong> {{ 'Replace All' if preview.mode == 'replace' else 'Append to
+                Existing' }}</p>
+        </div>
+
+        <!-- Warnings -->
+        {% if preview.warnings %}
+        <div class="warning-box">
+            <h6>⚠️ Warnings</h6>
+            <ul class="mb-0">
+                {% for warn in preview.warnings %}
+                <li>{{ warn }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <!-- Column Mapping -->
+        <div class="preview-card">
+            <h5>🔗 Column Mapping</h5>
+            <p class="text-muted small">These columns were auto-detected. Adjust if needed before confirming.</p>
+            <form action="{{ url_for('admin.upload_confirm') }}" method="POST" id="confirmForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">Tracking Number *</label>
+                        <select name="col_tracking" class="form-select form-select-sm" required>
+                            <option value="">-- Select --</option>
+                            {% for col in preview.original_columns %}
+                            <option value="{{ col }}" {% if col==preview.mapping.tracking %}selected{% endif %}>{{ col
+                                }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">Item Name *</label>
+                        <select name="col_name" class="form-select form-select-sm" required>
+                            <option value="">-- Select --</option>
+                            {% for col in preview.original_columns %}
+                            <option value="{{ col }}" {% if col==preview.mapping.name %}selected{% endif %}>{{ col }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small fw-bold">Expected Date</label>
+                        <select name="col_date" class="form-select form-select-sm">
+                            <option value="">-- None --</option>
+                            {% for col in preview.original_columns %}
+                            <option value="{{ col }}" {% if col==preview.mapping.date %}selected{% endif %}>{{ col }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small fw-bold">Quantity</label>
+                        <select name="col_quantity" class="form-select form-select-sm">
+                            <option value="">-- None (default: 1) --</option>
+                            {% for col in preview.original_columns %}
+                            <option value="{{ col }}" {% if col==preview.mapping.quantity %}selected{% endif %}>{{ col
+                                }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">ASIN</label>
+                        <select name="col_asin" class="form-select form-select-sm">
+                            <option value="">-- None --</option>
+                            {% for col in preview.original_columns %}
+                            <option value="{{ col }}" {% if col==preview.mapping.asin %}selected{% endif %}>{{ col }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text small">Used to auto-generate image URLs</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">Image URL</label>
+                        <select name="col_image" class="form-select form-select-sm">
+                            <option value="">-- None --</option>
+                            {% for col in preview.original_columns %}
+                            <option value="{{ col }}" {% if col==preview.mapping.image %}selected{% endif %}>{{ col }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">Product URL</label>
+                        <select name="col_product_url" class="form-select form-select-sm">
+                            <option value="">-- None --</option>
+                            {% for col in preview.original_columns %}
+                            <option value="{{ col }}" {% if col==preview.mapping.product_url %}selected{% endif %}>{{
+                                col }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text small">Link to purchase page</div>
+                    </div>
+                </div>
+
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-success">✅ Confirm Import ({{ preview.total_rows }}
+                        rows)</button>
+                    <a href="{{ url_for('admin.admin_panel') }}" class="btn btn-outline-danger">Cancel</a>
+                </div>
+            </form>
+        </div>
+
+        <!-- Data Preview -->
+        <div class="preview-card">
+            <h5>👀 Data Preview (First {{ preview.preview_rows|length }} rows)</h5>
+            <div class="preview-table-wrapper">
+                <table class="table table-sm table-striped table-preview mb-0">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            {% for col in preview.original_columns[:8] %}
+                            <th>{{ col }}</th>
+                            {% endfor %}
+                            {% if preview.original_columns|length > 8 %}
+                            <th>...</th>
+                            {% endif %}
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in preview.preview_rows %}
+                        <tr>
+                            <td>{{ loop.index }}</td>
+                            {% for col in preview.original_columns[:8] %}
+                            <td>{{ row[col]|truncate(40) if row[col] else '-' }}</td>
+                            {% endfor %}
+                            {% if preview.original_columns|length > 8 %}
+                            <td>...</td>
+                            {% endif %}
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        if (localStorage.getItem('rscp_dark_mode') === 'true') document.body.classList.add('dark-mode');
+    </script>
+</body>
+
+</html>

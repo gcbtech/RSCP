@@ -1,0 +1,130 @@
+{% extends "inventory/list.html" %}
+
+{% block title %}Inventory Valuation | RSCP{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12 d-flex justify-content-between align-items-center">
+        <div>
+            <h2>💰 Inventory Valuation</h2>
+            <p class="text-muted mb-0">Financial Snapshot: {{ today.strftime('%B %d, %Y') }}</p>
+        </div>
+        <div>
+            <button onclick="window.print()" class="btn btn-secondary">🖨️ Print Report</button>
+            <a href="{{ url_for('inventory.index') }}" class="btn btn-outline-secondary">Back</a>
+        </div>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card border-primary border-start border-3 h-100">
+            <div class="card-body">
+                <h6 class="text-muted text-uppercase small">Total Cost Value</h6>
+                <h3 class="fw-bold text-primary">${{ "%.2f"|format(total_cost) }}</h3>
+                <small class="text-muted">Asset Value</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-success border-start border-3 h-100">
+            <div class="card-body">
+                <h6 class="text-muted text-uppercase small">Total Retail Value</h6>
+                <h3 class="fw-bold text-success">${{ "%.2f"|format(total_retail) }}</h3>
+                <small class="text-muted">Potential Revenue</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-info border-start border-3 h-100">
+            <div class="card-body">
+                <h6 class="text-muted text-uppercase small">Potential Profit</h6>
+                <h3 class="fw-bold text-info">${{ "%.2f"|format(potential_profit) }}</h3>
+                <small class="text-muted">Retail - Cost</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card border-secondary border-start border-3 h-100">
+            <div class="card-body">
+                <h6 class="text-muted text-uppercase small">Overall Margin</h6>
+                <h3 class="fw-bold">{{ "%.1f"|format(margin_percent) }}%</h3>
+                <small class="text-muted">{{ total_items }} Total Items</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Category Breakdown -->
+<div class="card shadow-sm">
+    <div class="card-header bg-white">
+        <h5 class="mb-0">📂 Value by Category</h5>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Code</th>
+                        <th>Category Name</th>
+                        <th class="text-center">Unique SKUs</th>
+                        <th class="text-center">Total Qty</th>
+                        <th class="text-end">Cost Value</th>
+                        <th class="text-end">Retail Value</th>
+                        <th class="text-end pe-3">Margin %</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for cat in categories %}
+                    {% set cat_margin = ((cat.retail_value - cat.cost_value) / cat.retail_value * 100) if
+                    cat.retail_value > 0 else 0 %}
+                    <tr>
+                        <td class="ps-3 font-monospace fw-bold">{{ cat.code }}</td>
+                        <td>{{ cat.description }}</td>
+                        <td class="text-center">{{ cat.count }}</td>
+                        <td class="text-center">{{ cat.qty }}</td>
+                        <td class="text-end">${{ "%.2f"|format(cat.cost_value) }}</td>
+                        <td class="text-end fw-bold text-success">${{ "%.2f"|format(cat.retail_value) }}</td>
+                        <td class="text-end pe-3">{{ "%.1f"|format(cat_margin) }}%</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="table-light fw-bold">
+                    <tr>
+                        <td colspan="3" class="text-end">totals:</td>
+                        <td class="text-center">{{ categories|sum(attribute='qty') }}</td>
+                        <td class="text-end">${{ "%.2f"|format(total_cost) }}</td>
+                        <td class="text-end">${{ "%.2f"|format(total_retail) }}</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+
+<style>
+    @media print {
+        body {
+            background: white;
+        }
+
+        .btn,
+        form {
+            display: none !important;
+        }
+
+        .card {
+            border: 1px solid #ddd;
+            break-inside: avoid;
+            box-shadow: none !important;
+        }
+
+        .col-md-3 {
+            width: 25%;
+            float: left;
+        }
+    }
+</style>
+{% endblock %}

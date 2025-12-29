@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Refund Order</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            background: #f1f5f9;
+        }
+
+        .refund-header {
+            background: linear-gradient(135deg, #dc2626 0%, #f97316 100%);
+            color: white;
+            padding: 1.5rem 2rem;
+        }
+
+        .refund-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            margin-bottom: 1rem;
+        }
+
+        .item-row {
+            padding: 1rem;
+            border-bottom: 1px solid #f1f5f9;
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="refund-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h2>↩️ Refund: {{ order.order_number }}</h2>
+                <small>{{ order.created_at[:16] }} • {{ order.operator_name }} • {{ order.payment_method|capitalize
+                    }}</small>
+            </div>
+            <a href="{{ url_for('pos.refunds') }}" class="btn btn-outline-light">← Back</a>
+        </div>
+    </div>
+
+    <div class="container-fluid p-4">
+        <div class="row">
+            <div class="col-lg-8">
+                <!-- Order Items -->
+                <div class="refund-card">
+                    <div class="card-header bg-white border-bottom d-flex justify-content-between">
+                        <strong>Order Items</strong>
+                        <span
+                            class="badge bg-{% if order.status == 'completed' %}success{% elif order.status == 'refunded' %}danger{% else %}warning{% endif %}">
+                            {{ order.status }}
+                        </span>
+                    </div>
+
+                    <form action="{{ url_for('pos.refund_process') }}" method="POST" id="refundForm">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="order_id" value="{{ order.id }}">
+
+                        {% for item in items %}
+                        {% set available = item.quantity - item.refunded_qty %}
+                        <div class="item-row">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <div class="flex-grow-1">
+                                    <div class="fw-bold">{{ item.name }}</div>
+                                    <div class="text-muted small">
+                                        {{ item.sku }} • ${{ "%.2f"|format(item.unit_price) }} each
+                                        {% if item.refunded_qty > 0 %}
+                                        <span class="text-danger">({{ item.refunded_qty }} refunded)</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                <div class="text-end" style="min-width: 120px;">
+                                    <div class="fw-bold">${{ "%.2f"|format(item.line_total) }}</div>
+                                    <div class="small text-muted">×{{ item.quantity }}</div>
+                                </div>
+                            </div>
+
+                            {% if available > 0 %}
+                            <div class="mt-2 p-2 bg-light rounded">
+                                <div class="form-check form-check-inline">
+                                    <input class="form-check-input item-check" type="checkbox" name="item_id"
+                                        value="{{ item.id }}" id="item{{ item.id }}">
+                                    <label class="form-check-label" for="item{{ item.id }}">Refund</label>
+                                </div>
+                                <input type="number" name="quantity_{{ item.id }}"
+                                    class="form-control form-control-sm d-inline-block" style="width: 70px;"
+                                    value="{{ available }}" min="1" max="{{ available }}">
+                                <span class="text-muted small">of {{ available }}</span>
+                                <select name="restock_{{ item.id }}" class="form-select form-select-sm d-inline-block"
+                                    style="width: 140px;">
+                                    <option value="none">Don't restock</option>
+                                    <option value="restock">Return to inventory</option>
+                                    <option value="damaged">Damaged/Discard</option>
+                                </select>
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+
+                        <div class="p-3">
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Refund Reason *</label>
+                                <select name="reason" class="form-select" required>
+                                    <option value="">Select reason...</option>
+                                    {% for key, label in refund_reasons.items() %}
+                                    <option value="{{ key }}">{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Additional Notes</label>
+                                <textarea name="reason_notes" class="form-control" rows="2"></textarea>
+                            </div>
+
+                            <div class="d-flex gap-2">
+                                <button type="submit" name="refund_type" value="partial"
+                                    class="btn btn-warning flex-grow-1">
+                                    Partial Refund (Selected Items)
+                                </button>
+                                <button type="submit" name="refund_type" value="full" class="btn btn-danger"
+                                    onclick="return confirm('Process FULL refund of ${{ " %.2f"|format(order.total)
+                                    }}?')">
+                                    Full Refund
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+
+                <!-- Previous Refunds -->
+                {% if refunds %}
+                <div class="refund-card">
+                    <div class="card-header bg-white border-bottom">
+                        <strong>Refund History</strong>
+                    </div>
+                    <div class="card-body">
+                        {% for refund in refunds %}
+                        <div class="mb-3 p-2 bg-light rounded">
+                            <div class="d-flex justify-content-between">
+                                <strong class="text-danger">-${{ "%.2f"|format(refund.amount) }}</strong>
+                                <span class="text-muted small">{{ refund.created_at[:16] }}</span>
+                            </div>
+                            <div class="small">
+                                {{ refund.refund_type|capitalize }} • {{ refund.reason }} • By: {{ refund.manager_name
+                                }}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="col-lg-4">
+                <!-- Order Summary -->
+                <div class="refund-card">
+                    <div class="card-header bg-white border-bottom">
+                        <strong>Order Summary</strong>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between mb-2">
+                            <span>Subtotal</span>
+                            <span>${{ "%.2f"|format(order.subtotal) }}</span>
+                        </div>
+                        {% if order.discount_amount > 0 %}
+                        <div class="d-flex justify-content-between mb-2 text-warning">
+                            <span>Discount</span>
+                            <span>-${{ "%.2f"|format(order.discount_amount) }}</span>
+                        </div>
+                        {% endif %}
+                        <div class="d-flex justify-content-between mb-2">
+                            <span>Tax</span>
+                            <span>${{ "%.2f"|format(order.tax_amount) }}</span>
+                        </div>
+                        <hr>
+                        <div class="d-flex justify-content-between fw-bold fs-5">
+                            <span>Total</span>
+                            <span>${{ "%.2f"|format(order.total) }}</span>
+                        </div>
+
+                        <hr>
+                        <div class="small text-muted">
+                            <strong>Payment:</strong> {{ order.payment_method|capitalize }}
+                            {% if payment_details.tendered %}
+                            <br>Tendered: ${{ "%.2f"|format(payment_details.tendered) }}
+                            <br>Change: ${{ "%.2f"|format(payment_details.change) }}
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

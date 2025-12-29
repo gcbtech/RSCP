@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | POS Sales</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root {
+            --pos-primary: #2563eb;
+            --pos-success: #16a34a;
+            --pos-warning: #d97706;
+            --pos-danger: #dc2626;
+            --pos-bg: #f1f5f9;
+        }
+
+        body {
+            background: var(--pos-bg);
+            margin: 0;
+        }
+
+        .pos-header {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+            color: white;
+            padding: 1rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .pos-header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .pos-container {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 1rem;
+            padding: 1rem;
+            height: calc(100vh - 70px);
+        }
+
+        @media (max-width: 992px) {
+            .pos-container {
+                display: flex;
+                flex-direction: column;
+                height: auto;
+                padding: 0.5rem;
+                gap: 0.5rem;
+            }
+
+            /* Search card stays at top on mobile */
+            .pos-search-card {
+                order: -1 !important;
+                flex-shrink: 0;
+            }
+
+            /* Cart card comes after search on mobile with scrollable content */
+            .pos-cart-card {
+                order: 2 !important;
+                max-height: 50vh;
+                overflow-y: auto;
+            }
+        }
+
+        .pos-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            overflow: hidden;
+        }
+
+        .pos-card-header {
+            background: #f8fafc;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid #e2e8f0;
+            font-weight: 600;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .pos-card-body {
+            padding: 1rem;
+        }
+
+        /* Search and scan */
+        .search-box {
+            position: relative;
+            margin-bottom: 1rem;
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 1rem 1rem 1rem 3rem;
+            font-size: 1.2rem;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+        }
+
+        .search-box input:focus {
+            border-color: var(--pos-primary);
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .search-box .search-icon {
+            position: absolute;
+            left: 1rem;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 1.2rem;
+        }
+
+        /* Autocomplete dropdown */
+        .autocomplete-results {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 100;
+            max-height: 300px;
+            overflow-y: auto;
+            display: none;
+        }
+
+        .autocomplete-results.show {
+            display: block;
+        }
+
+        .autocomplete-item {
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            border-bottom: 1px solid #f1f5f9;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .autocomplete-item:hover {
+            background: #f8fafc;
+        }
+
+        .autocomplete-item:last-child {
+            border-bottom: none;
+        }
+
+        .autocomplete-item .sku {
+            font-family: monospace;
+            color: #64748b;
+            font-size: 0.85rem;
+        }
+
+        .stock-ok {
+            color: var(--pos-success);
+        }
+
+        .stock-low {
+            color: var(--pos-warning);
+        }
+
+        .stock-out {
+            color: var(--pos-danger);
+        }
+
+        /* Cart items */
+        .cart-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .cart-item:last-child {
+            border-bottom: none;
+        }
+
+        .cart-item-name {
+            font-weight: 500;
+        }
+
+        .cart-item-sku {
+            font-size: 0.8rem;
+            color: #64748b;
+            font-family: monospace;
+        }
+
+        .cart-item-price {
+            font-weight: 600;
+            color: var(--pos-primary);
+        }
+
+        .cart-item-qty {
+            width: 50px;
+            text-align: center;
+            border: 1px solid #e2e8f0;
+            border-radius: 4px;
+            padding: 0.25rem;
+        }
+
+        .cart-item-remove {
+            color: var(--pos-danger);
+            cursor: pointer;
+            padding: 0.25rem 0.5rem;
+        }
+
+        /* Totals */
+        .totals {
+            background: #f8fafc;
+            padding: 1rem;
+            border-top: 2px solid #e2e8f0;
+        }
+
+        .totals-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.25rem 0;
+        }
+
+        .totals-row.grand-total {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--pos-primary);
+            padding-top: 0.5rem;
+            margin-top: 0.5rem;
+            border-top: 2px solid var(--pos-primary);
+        }
+
+        /* Action buttons */
+        .pos-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.5rem;
+            padding: 1rem;
+        }
+
+        .pos-btn {
+            padding: 1rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+
+        .pos-btn:active {
+            transform: scale(0.98);
+        }
+
+        .pos-btn-primary {
+            background: var(--pos-primary);
+            color: white;
+        }
+
+        .pos-btn-success {
+            background: var(--pos-success);
+            color: white;
+            grid-column: span 2;
+        }
+
+        .pos-btn-secondary {
+            background: #e2e8f0;
+            color: #475569;
+        }
+
+        .pos-btn-danger {
+            background: var(--pos-danger);
+            color: white;
+        }
+
+        /* Discount input */
+        .discount-input {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            padding: 0.5rem;
+            background: #fffbeb;
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+        }
+
+        .discount-input input {
+            width: 80px;
+            padding: 0.5rem;
+            border: 1px solid #fcd34d;
+            border-radius: 4px;
+        }
+
+        .discount-input select {
+            padding: 0.5rem;
+            border: 1px solid #fcd34d;
+            border-radius: 4px;
+        }
+
+        /* Empty cart state */
+        .empty-cart {
+            text-align: center;
+            padding: 3rem 1rem;
+            color: #94a3b8;
+        }
+
+        .empty-cart-icon {
+            font-size: 4rem;
+            opacity: 0.5;
+        }
+
+        /* Dark mode */
+        body.dark-mode {
+            --pos-bg: #0f172a;
+        }
+
+        body.dark-mode .pos-card {
+            background: #1e293b;
+            color: #e2e8f0;
+        }
+
+        body.dark-mode .pos-card-header {
+            background: #0f172a;
+            border-color: #334155;
+        }
+
+        body.dark-mode .search-box input {
+            background: #1e293b;
+            border-color: #334155;
+            color: white;
+        }
+
+        body.dark-mode .autocomplete-results {
+            background: #1e293b;
+            border-color: #334155;
+        }
+
+        body.dark-mode .autocomplete-item {
+            border-color: #334155;
+        }
+
+        body.dark-mode .autocomplete-item:hover {
+            background: #334155;
+        }
+
+        body.dark-mode .totals {
+            background: #0f172a;
+            border-color: #334155;
+        }
+
+        /* ========== MOBILE ENHANCEMENTS ========== */
+        /* Phones (including Panasonic FZ-N1: 720x1280) */
+        @media (max-width: 767px) {
+            .pos-header {
+                padding: 0.5rem;
+                gap: 0.25rem;
+            }
+
+            .pos-header h1 {
+                font-size: 1rem;
+                flex: 1;
+            }
+
+            /* Reorder: Cart first, Search second on mobile */
+            .pos-container {
+                display: flex;
+                flex-direction: column;
+                padding: 0.5rem;
+                gap: 0.5rem;
+                height: auto;
+            }
+
+            /* Cart panel comes first */
+            .pos-container>.pos-card:last-child {
+                order: -1;
+            }
+
+            /* Search panel - make it compact */
+            .pos-container>.pos-card:first-child {
+                order: 1;
+            }
+
+            .pos-card {
+                border-radius: 8px;
+            }
+
+            .pos-card-header {
+                padding: 0.5rem 0.75rem;
+                font-size: 0.85rem;
+            }
+
+            .pos-card-body {
+                padding: 0.5rem;
+            }
+
+            /* Compact search box */
+            .search-box {
+                margin-bottom: 0.5rem;
+            }
+
+            .search-box input {
+                padding: 0.75rem 0.75rem 0.75rem 2.25rem;
+                font-size: 1rem;
+                border-radius: 8px;
+            }
+
+            .search-box .search-icon {
+                left: 0.75rem;
+                font-size: 1rem;
+            }
+
+            /* Cart items - optimized for narrow screens */
+            .cart-item {
+                padding: 0.625rem 0.5rem;
+                gap: 0.375rem;
+            }
+
+            .cart-item-info {
+                flex: 1;
+                min-width: 0;
+                /* Allow text truncation */
+            }
+
+            .cart-item-name {
+                font-size: 0.9rem;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+
+            .cart-item-sku {
+                font-size: 0.7rem;
+            }
+
+            .cart-item-qty {
+                width: 50px;
+                padding: 0.375rem;
+                font-size: 0.9rem;
+            }
+
+            .cart-item-price {
+                font-size: 0.9rem;
+                min-width: 60px;
+                text-align: right;
+            }
+
+            .cart-item-remove {
+                padding: 0.375rem 0.5rem;
+                font-size: 1rem;
+            }
+
+            /* Totals - compact */
+            .totals {
+                padding: 0.5rem;
+            }
+
+            .totals-row {
+                font-size: 0.9rem;
+            }
+
+            .totals-row.grand-total {
+                font-size: 1.25rem;
+                padding-top: 0.375rem;
+                margin-top: 0.375rem;
+            }
+
+            /* Actions - full width buttons */
+            .pos-actions {
+                padding: 0.5rem;
+                gap: 0.375rem;
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .pos-btn {
+                padding: 0.75rem 0.5rem;
+                font-size: 0.85rem;
+                min-height: 44px;
+                border-radius: 6px;
+            }
+
+            .pos-btn-success {
+                grid-column: span 2;
+                font-size: 1rem;
+                padding: 0.875rem;
+            }
+
+            /* Empty cart - compact */
+            .empty-cart {
+                padding: 1.5rem 0.5rem;
+            }
+
+            .empty-cart-icon {
+                font-size: 2.5rem;
+            }
+
+            /* Autocomplete dropdown */
+            .autocomplete-results {
+                max-height: 200px;
+            }
+
+            .autocomplete-item {
+                padding: 0.75rem;
+                font-size: 0.9rem;
+            }
+
+            /* Discount input - inline */
+            .discount-input {
+                padding: 0.375rem;
+                gap: 0.375rem;
+            }
+
+            .discount-input input {
+                width: 70px;
+                padding: 0.375rem;
+            }
+
+            .discount-input select {
+                padding: 0.375rem;
+            }
+
+            /* Hide held orders section header text on mobile */
+            .alert.alert-info strong {
+                font-size: 0.85rem;
+            }
+
+            /* Custom item form - compact */
+            .collapse .card-body {
+                padding: 0.5rem;
+            }
+
+            .collapse .form-control {
+                padding: 0.5rem;
+                font-size: 0.9rem;
+            }
+        }
+
+        /* Very small phones (320px) */
+        @media (max-width: 400px) {
+            .pos-header h1 {
+                font-size: 0.9rem;
+            }
+
+            .pos-header .badge {
+                font-size: 0.7rem;
+                padding: 0.25rem 0.375rem;
+            }
+
+            .pos-btn {
+                padding: 0.625rem 0.375rem;
+                font-size: 0.8rem;
+            }
+
+            .totals-row.grand-total {
+                font-size: 1.1rem;
+            }
+
+            .cart-item-name {
+                font-size: 0.85rem;
+            }
+
+            .cart-item-price {
+                font-size: 0.85rem;
+                min-width: 50px;
+            }
+        }
+
+        /* Touch device optimizations */
+        @media (hover: none) and (pointer: coarse) {
+            .pos-btn:active {
+                transform: scale(0.97);
+                opacity: 0.9;
+            }
+
+            .cart-item-remove:active {
+                background: rgba(220, 38, 38, 0.15);
+                border-radius: 4px;
+            }
+
+            .autocomplete-item:active {
+                background: #e2e8f0;
+            }
+
+            /* Larger tap targets for touch */
+            .cart-item-qty {
+                min-height: 40px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="pos-header">
+        <h1>💳 Point of Sale</h1>
+        <div class="d-flex gap-2 align-items-center">
+            {% if pos_operator and pos_operator != local_user %}
+            <span class="badge bg-warning text-dark" title="Active Operator">🧑‍💼 {{ pos_operator }}</span>
+            {% endif %}
+            <span class="badge bg-light text-dark">{{ local_user }}</span>
+            <form action="{{ url_for('pos.pos_lock') }}" method="POST" style="margin: 0;">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-outline-light btn-sm" title="Lock POS">🔒</button>
+            </form>
+            <a href="/" class="btn btn-outline-light btn-sm">← Exit POS</a>
+        </div>
+    </div>
+
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="flash-container" style="padding: 0 1rem;">
+        {% for category, message in messages %}
+        <div class="alert alert-{{ 'warning' if category == 'warning' else 'success' }} alert-dismissible fade show"
+            role="alert" style="margin-bottom: 0.5rem;">
+            {{ message }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
+
+    <div class="pos-container">
+        <!-- Left: Search and Item Entry -->
+        <div class="pos-card pos-search-card">
+            <div class="pos-card-header">
+                <span>🔍 Scan or Search Item</span>
+            </div>
+            <div class="pos-card-body">
+                <div class="search-box">
+                    <span class="search-icon">📦</span>
+                    <form action="{{ url_for('pos.cart_add') }}" method="POST" id="addForm">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="text" name="sku" id="skuInput" placeholder="Scan SKU or type to search..."
+                            autofocus autocomplete="off">
+                        <input type="hidden" name="quantity" value="1">
+                    </form>
+                    <div class="autocomplete-results" id="autocompleteResults"></div>
+                </div>
+
+                {% if allow_hold and held_orders %}
+                <div class="alert alert-info">
+                    <strong>📋 Held Orders ({{ held_orders|length }})</strong>
+                    <div class="mt-2">
+                        {% for held in held_orders %}
+                        <form action="{{ url_for('pos.cart_recall', held_id=held.id) }}" method="POST" class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-sm btn-outline-primary me-1">
+                                {{ held.note or 'Order ' ~ held.id }} ({{ held.created_at[:16] }})
+                            </button>
+                        </form>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+
+                <!-- Add Custom Item -->
+                <div class="mb-3">
+                    <button class="btn btn-outline-secondary btn-sm w-100" type="button" data-bs-toggle="collapse"
+                        data-bs-target="#customItemForm">
+                        ➕ Add Custom Item (not in inventory)
+                    </button>
+                    <div class="collapse mt-2" id="customItemForm">
+                        <form action="{{ url_for('pos.cart_add_custom') }}" method="POST" class="p-3 bg-light rounded">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <input type="text" name="name" class="form-control" placeholder="Item name"
+                                        required>
+                                </div>
+                                <div class="col-3">
+                                    <input type="number" name="price" class="form-control" placeholder="Price"
+                                        step="0.01" min="0" required>
+                                </div>
+                                <div class="col-3">
+                                    <button type="submit" class="btn btn-primary w-100">Add</button>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Order Discount -->
+                {% if cart['items'] %}
+                <div class="discount-input">
+                    <span>🏷️ Order Discount:</span>
+                    <form action="{{ url_for('pos.cart_discount') }}" method="POST"
+                        class="d-flex gap-2 align-items-center">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="number" name="discount_amount" step="0.01" min="0"
+                            value="{{ cart['discount_amount'] or '' }}" placeholder="0">
+                        <select name="discount_type">
+                            <option value="fixed" {% if cart['discount_type']=='fixed' %}selected{% endif %}>$ Off
+                            </option>
+                            <option value="percent" {% if cart['discount_type']=='percent' %}selected{% endif %}>% Off
+                            </option>
+                        </select>
+                        <input type="text" name="discount_reason" placeholder="Reason"
+                            value="{{ cart['discount_reason'] or '' }}" style="width: 120px;">
+                        <button type="submit" class="btn btn-sm btn-warning">Apply</button>
+                    </form>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Right: Cart -->
+        <div class="pos-card pos-cart-card d-flex flex-column">
+            <div class="pos-card-header">
+                <span>🛒 Cart ({{ cart['items']|length }} items)</span>
+                {% if cart['items'] %}
+                <form action="{{ url_for('pos.cart_clear') }}" method="POST" class="d-inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                        onclick="return confirm('Clear entire cart?')">Clear</button>
+                </form>
+                {% endif %}
+            </div>
+
+            <div class="pos-card-body flex-grow-1" style="overflow-y: auto; max-height: 400px;">
+                {% if cart['items'] %}
+                {% for item in cart['items'] %}
+                <div class="cart-item">
+                    <div class="flex-grow-1">
+                        <div class="cart-item-name">{{ item.name }}</div>
+                        <div class="cart-item-sku">
+                            {{ item.sku }}
+                            {% if item.stock_quantity is defined %}
+                            <span
+                                class="ms-2 {% if item.quantity > item.stock_quantity %}text-danger fw-bold{% elif item.stock_quantity <= 0 %}text-danger{% else %}text-muted{% endif %}">
+                                ({{ item.stock_quantity }} in stock)
+                            </span>
+                            {% endif %}
+                        </div>
+                        {% if item.discount_amount %}
+                        <small class="text-warning">-${{ "%.2f"|format(item.discount_amount) }} off</small>
+                        {% endif %}
+                        {% if not item.sell_price or item.sell_price <= 0 %} <small class="text-danger fw-bold">⚠️ No
+                            price set!</small>
+                            {% endif %}
+                            {% if item.stock_quantity is defined and item.quantity > item.stock_quantity %}
+                            <small class="text-danger fw-bold">⚠️ Exceeds stock!</small>
+                            {% endif %}
+                    </div>
+                    <div class="text-center mx-2">
+                        <form action="{{ url_for('pos.cart_update', index=loop.index0) }}" method="POST"
+                            class="d-inline">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <input type="number" name="quantity" value="{{ item.quantity }}" min="1" max="999"
+                                class="form-control form-control-sm text-center"
+                                style="width: 60px; display: inline-block;" onchange="this.form.submit()"
+                                title="Click to edit quantity">
+                        </form>
+                    </div>
+                    <div
+                        class="cart-item-price {% if not item.sell_price or item.sell_price <= 0 %}text-danger{% endif %}">
+                        ${{ "%.2f"|format(item.line_total) }}
+                    </div>
+                    <form action="{{ url_for('pos.cart_remove', index=loop.index0) }}" method="POST" class="d-inline">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button type="submit" class="cart-item-remove">×</button>
+                    </form>
+                </div>
+                {% endfor %}
+                {% else %}
+                <div class="empty-cart">
+                    <div class="empty-cart-icon">🛒</div>
+                    <p>Cart is empty</p>
+                    <small>Scan an item to begin</small>
+                </div>
+                {% endif %}
+            </div>
+
+            {% if cart['items'] %}
+            <div class="totals">
+                <div class="totals-row">
+                    <span>Subtotal</span>
+                    <span>${{ "%.2f"|format(subtotal) }}</span>
+                </div>
+                {% if order_discount > 0 %}
+                <div class="totals-row text-warning">
+                    <span>Discount</span>
+                    <span>-${{ "%.2f"|format(order_discount) }}</span>
+                </div>
+                {% endif %}
+                <div class="totals-row">
+                    <span>Tax ({{ "%.2f"|format(tax_rate) }}%)</span>
+                    <span>${{ "%.2f"|format(tax_amount) }}</span>
+                </div>
+                <div class="totals-row grand-total">
+                    <span>Total</span>
+                    <span>${{ "%.2f"|format(total) }}</span>
+                </div>
+            </div>
+
+            <div class="pos-actions">
+                {% if allow_hold %}
+                <button class="pos-btn pos-btn-secondary" onclick="holdOrder()">📋 Hold</button>
+                {% endif %}
+                <a href="{{ url_for('pos.checkout') }}"
+                    class="pos-btn pos-btn-success text-decoration-none text-center">
+                    💳 Checkout (${{ "%.2f"|format(total) }})
+                </a>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Hold Order Modal -->
+    <div class="modal fade" id="holdModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <form action="{{ url_for('pos.cart_hold') }}" method="POST">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Hold Order</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <label class="form-label">Order Note (optional)</label>
+                        <input type="text" name="note" class="form-control"
+                            placeholder="e.g., Customer name, table number...">
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Hold Order</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const skuInput = document.getElementById('skuInput');
+        const addForm = document.getElementById('addForm');
+        const autocomplete = document.getElementById('autocompleteResults');
+        let debounceTimer;
+
+        // Auto-submit on barcode scan (fast input)
+        skuInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                addForm.submit();
+            }
+        });
+
+        // Search autocomplete
+        skuInput.addEventListener('input', () => {
+            clearTimeout(debounceTimer);
+            const query = skuInput.value.trim();
+
+            if (query.length < 2) {
+                autocomplete.classList.remove('show');
+                return;
+            }
+
+            debounceTimer = setTimeout(() => {
+                fetch(`/pos/api/search?q=${encodeURIComponent(query)}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.items && data.items.length > 0) {
+                            autocomplete.innerHTML = data.items.map(item => {
+                                const priceClass = (!item.sell_price || item.sell_price <= 0) ? 'text-danger' : '';
+                                const priceText = item.sell_price?.toFixed(2) || '0.00';
+                                const priceWarning = (!item.sell_price || item.sell_price <= 0) ? '⚠️ ' : '';
+                                return `
+                                <div class="autocomplete-item" onclick="selectItem('${item.sku}')">
+                                    <div>
+                                        <div>${item.name}</div>
+                                        <div class="sku">${item.sku}</div>
+                                    </div>
+                                    <div>
+                                        <span class="stock-${item.stock_status}">${item.quantity} in stock</span>
+                                        <span class="ms-2 fw-bold ${priceClass}">${priceWarning}$${priceText}</span>
+                                    </div>
+                                </div>
+                            `}).join('');
+                            autocomplete.classList.add('show');
+                        } else {
+                            autocomplete.classList.remove('show');
+                        }
+                    });
+            }, 200);
+        });
+
+        function selectItem(sku) {
+            skuInput.value = sku;
+            autocomplete.classList.remove('show');
+            addForm.submit();
+        }
+
+        // Close autocomplete on outside click
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.search-box')) {
+                autocomplete.classList.remove('show');
+            }
+        });
+
+        function holdOrder() {
+            new bootstrap.Modal(document.getElementById('holdModal')).show();
+        }
+    </script>
+</body>
+
+</html>

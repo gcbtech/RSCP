@@ -130,6 +130,21 @@ def init_db():
         cur.execute('CREATE INDEX IF NOT EXISTS idx_status ON packages (status)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_date_expected ON packages (date_expected)')
         
+        # 4. Login Attempts Table (Security Logging)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS login_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                success BOOLEAN NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ip_address TEXT,
+                user_agent TEXT,
+                device_info TEXT
+            )
+        ''')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_login_timestamp ON login_attempts (timestamp)')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_login_username ON login_attempts (username)')
+        
         conn.commit()
         logger.info("Database initialized successfully.")
     except Exception as e:

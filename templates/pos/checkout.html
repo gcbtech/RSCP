@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Checkout</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        :root {
+            --pos-primary: #2563eb;
+            --pos-success: #16a34a;
+        }
+
+        body {
+            background: #f1f5f9;
+        }
+
+        .checkout-container {
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+
+        .checkout-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            margin-bottom: 1rem;
+        }
+
+        .checkout-header {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+            color: white;
+            padding: 1.5rem;
+            border-radius: 12px 12px 0 0;
+            text-align: center;
+        }
+
+        .checkout-header h1 {
+            margin: 0;
+            font-size: 2rem;
+        }
+
+        .checkout-header .total {
+            font-size: 3rem;
+            font-weight: 700;
+            margin-top: 0.5rem;
+        }
+
+        .checkout-body {
+            padding: 1.5rem;
+        }
+
+        /* Order summary */
+        .order-summary {
+            margin-bottom: 1.5rem;
+        }
+
+        .order-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .order-item:last-child {
+            border-bottom: none;
+        }
+
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+        }
+
+        .summary-row.total {
+            font-size: 1.25rem;
+            font-weight: 700;
+            border-top: 2px solid var(--pos-primary);
+            padding-top: 1rem;
+            margin-top: 0.5rem;
+        }
+
+        /* Payment tabs */
+        .payment-tabs {
+            display: flex;
+            border-bottom: 2px solid #e2e8f0;
+            margin-bottom: 1.5rem;
+        }
+
+        .payment-tab {
+            flex: 1;
+            padding: 1rem;
+            text-align: center;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-size: 1rem;
+            font-weight: 500;
+            color: #64748b;
+            transition: all 0.2s;
+        }
+
+        .payment-tab.active {
+            color: var(--pos-primary);
+            border-bottom: 3px solid var(--pos-primary);
+            margin-bottom: -2px;
+        }
+
+        .payment-tab:hover {
+            color: var(--pos-primary);
+        }
+
+        .payment-content {
+            display: none;
+        }
+
+        .payment-content.active {
+            display: block;
+        }
+
+        /* Cash input */
+        .cash-section {
+            text-align: center;
+        }
+
+        .cash-input {
+            font-size: 2rem;
+            text-align: center;
+            width: 200px;
+            padding: 0.75rem;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .cash-input:focus {
+            border-color: var(--pos-primary);
+            outline: none;
+        }
+
+        .quick-cash {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            margin-bottom: 1.5rem;
+        }
+
+        .quick-cash button {
+            padding: 0.75rem 1.25rem;
+            border: 2px solid #e2e8f0;
+            background: white;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .quick-cash button:hover {
+            border-color: var(--pos-primary);
+            color: var(--pos-primary);
+        }
+
+        .change-display {
+            background: #f0fdf4;
+            border: 2px solid var(--pos-success);
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+
+        .change-display .label {
+            color: #166534;
+            font-weight: 500;
+        }
+
+        .change-display .amount {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--pos-success);
+        }
+
+        /* Split payment */
+        .split-section {}
+
+        .split-row {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .split-row input {
+            flex: 1;
+            padding: 0.75rem;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+        }
+
+        .split-remaining {
+            background: #fef3c7;
+            border: 2px solid #f59e0b;
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+            margin: 1rem 0;
+        }
+
+        /* Complete button */
+        .complete-btn {
+            width: 100%;
+            padding: 1.25rem;
+            font-size: 1.25rem;
+            font-weight: 700;
+            border: none;
+            border-radius: 8px;
+            background: var(--pos-success);
+            color: white;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+
+        .complete-btn:hover {
+            background: #15803d;
+        }
+
+        .complete-btn:active {
+            transform: scale(0.98);
+        }
+
+        .complete-btn:disabled {
+            background: #94a3b8;
+            cursor: not-allowed;
+        }
+
+        body.dark-mode {
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+
+        body.dark-mode .checkout-card {
+            background: #1e293b;
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="checkout-container">
+        <div class="checkout-card">
+            <div class="checkout-header">
+                <h1>💳 Checkout</h1>
+                <div class="total">${{ "%.2f"|format(total) }}</div>
+            </div>
+
+            <div class="checkout-body">
+                <!-- Order Summary (Collapsible) -->
+                <details class="order-summary">
+                    <summary class="mb-2" style="cursor: pointer; font-weight: 600;">
+                        📦 Order Summary ({{ cart['items']|length }} items)
+                    </summary>
+                    {% for item in cart['items'] %}
+                    <div class="order-item">
+                        <span>{{ item.name }} ×{{ item.quantity }}</span>
+                        <span>${{ "%.2f"|format(item.line_total) }}</span>
+                    </div>
+                    {% endfor %}
+                    <div class="summary-row">
+                        <span>Subtotal</span>
+                        <span>${{ "%.2f"|format(subtotal) }}</span>
+                    </div>
+                    {% if order_discount > 0 %}
+                    <div class="summary-row text-warning">
+                        <span>Discount</span>
+                        <span>-${{ "%.2f"|format(order_discount) }}</span>
+                    </div>
+                    {% endif %}
+                    <div class="summary-row">
+                        <span>Tax ({{ "%.1f"|format(tax_rate) }}%)</span>
+                        <span>${{ "%.2f"|format(tax_amount) }}</span>
+                    </div>
+                    <div class="summary-row total">
+                        <span>Total</span>
+                        <span>${{ "%.2f"|format(total) }}</span>
+                    </div>
+                </details>
+
+                <!-- Payment Method Tabs -->
+                <div class="payment-tabs">
+                    <button class="payment-tab" onclick="showPayment('cash')">💵 Cash</button>
+                    <button class="payment-tab active" onclick="showPayment('card')">💳 Card</button>
+                    <button class="payment-tab" onclick="showPayment('split')">➗ Split</button>
+                </div>
+
+                <form action="{{ url_for('pos.checkout_process') }}" method="POST" id="checkoutForm">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="payment_method" id="paymentMethod" value="card">
+
+                    <!-- Cash Payment -->
+                    <div id="cash-content" class="payment-content">
+                        <div class="cash-section">
+                            <label class="form-label fw-bold">Amount Tendered</label>
+                            <div>
+                                <input type="number" name="tendered" id="tenderedAmount" class="cash-input" value="0"
+                                    min="0" step="0.01" onchange="updateChange()" oninput="updateChange()">
+                            </div>
+
+                            <div class="quick-cash">
+                                <button type="button" onclick="addTendered(1)">$1</button>
+                                <button type="button" onclick="addTendered(5)">$5</button>
+                                <button type="button" onclick="addTendered(10)">$10</button>
+                                <button type="button" onclick="addTendered(20)">$20</button>
+                                <button type="button" onclick="addTendered(50)">$50</button>
+                                <button type="button" onclick="addTendered(100)">$100</button>
+                                <button type="button" onclick="setTendered({{ total }})"
+                                    style="background: #e0f2fe; border-color: #0284c7;">Exact</button>
+                                <button type="button" onclick="clearTendered()"
+                                    style="background: #fef2f2; border-color: #dc2626;">Clear</button>
+                            </div>
+
+                            {% if cash_discount_enabled and cash_discount_value > 0 %}
+                            <div class="alert alert-success text-center mb-2" style="font-weight: 600;">
+                                💰 Cash Discount: -${{ "%.2f"|format(cash_discount_value) }}
+                                {% if cash_discount_type == 'percent' %}({{ cash_discount_amount }}% off){% endif %}
+                                <br>
+                                <span class="fs-5">Pay only ${{ "%.2f"|format(total - cash_discount_value) }}</span>
+                            </div>
+                            {% endif %}
+
+                            <div class="change-display" id="changeDisplay">
+                                <div class="label">Change Due</div>
+                                <div class="amount" id="changeAmount">$0.00</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Card Payment -->
+                    <div id="card-content" class="payment-content active">
+                        <div class="text-center py-4">
+                            <div style="font-size: 4rem;">💳</div>
+                            <h4>Card Payment</h4>
+                            <p class="text-muted">Enter <strong>${{ "%.2f"|format(total) }}</strong> on the card
+                                terminal</p>
+                            <div class="alert alert-info">
+                                <strong>Note:</strong> Press "Complete Sale" after the card payment is approved.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Split Payment -->
+                    <div id="split-content" class="payment-content">
+                        <div class="split-section">
+                            <h5 class="mb-3">Split Payment</h5>
+
+                            <div class="split-row">
+                                <label style="width: 80px;">💵 Cash:</label>
+                                <input type="number" name="cash_amount" id="splitCash" step="0.01" min="0" value="0"
+                                    oninput="updateSplit()">
+                            </div>
+
+                            <div id="cardSplits">
+                                <div class="split-row">
+                                    <label style="width: 80px;">💳 Card 1:</label>
+                                    <input type="number" name="card_amount" class="card-split" step="0.01" min="0"
+                                        value="0" oninput="updateSplit()">
+                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addCard()">+
+                                        Card</button>
+                                </div>
+                            </div>
+
+                            <div class="split-remaining" id="splitRemaining">
+                                <div>Remaining: <strong id="remainingAmount">${{ "%.2f"|format(total) }}</strong></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="d-flex gap-2 mt-4">
+                        <a href="{{ url_for('pos.sales') }}" class="btn btn-outline-secondary flex-grow-1">← Back to
+                            Cart</a>
+                        <button type="submit" class="complete-btn flex-grow-1" id="completeBtn"
+                            onclick="return validateCheckout()">
+                            ✓ Complete Sale
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const total = {{ total }};
+        const cashDiscountValue = {{ cash_discount_value }};
+        const cashTotal = total - cashDiscountValue;  // Discounted total for cash payments
+
+        function validateCheckout() {
+            const paymentMethod = document.getElementById('paymentMethod').value;
+
+            if (paymentMethod === 'cash') {
+                const tendered = parseFloat(document.getElementById('tenderedAmount').value) || 0;
+                if (tendered < cashTotal) {
+                    alert('Insufficient cash tendered. Please enter at least $' + cashTotal.toFixed(2));
+                    return false;
+                }
+            } else if (paymentMethod === 'split') {
+                const cash = parseFloat(document.getElementById('splitCash').value) || 0;
+                let cards = 0;
+                document.querySelectorAll('.card-split').forEach(i => {
+                    cards += parseFloat(i.value) || 0;
+                });
+                if (cash + cards < total - 0.01) {
+                    alert('Split payment total is less than the order amount.');
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        function showPayment(type) {
+            document.querySelectorAll('.payment-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.payment-content').forEach(c => c.classList.remove('active'));
+
+            event.target.classList.add('active');
+            document.getElementById(type + '-content').classList.add('active');
+            document.getElementById('paymentMethod').value = type;
+        }
+
+        function addTendered(amount) {
+            // Add the amount to current tendered (accumulate bills)
+            const input = document.getElementById('tenderedAmount');
+            const current = parseFloat(input.value) || 0;
+            input.value = (current + amount).toFixed(2);
+            updateChange();
+        }
+
+        function setTendered(amount) {
+            // Set exact amount (for "Exact" button)
+            document.getElementById('tenderedAmount').value = amount.toFixed(2);
+            updateChange();
+        }
+
+        function clearTendered() {
+            document.getElementById('tenderedAmount').value = '0.00';
+            updateChange();
+        }
+
+        function updateChange() {
+            const tendered = parseFloat(document.getElementById('tenderedAmount').value) || 0;
+            const change = tendered - cashTotal;  // Use discounted total for cash
+
+            // Show negative if still owed, positive if change due
+            if (change >= 0) {
+                document.getElementById('changeAmount').textContent = '$' + change.toFixed(2);
+            } else {
+                document.getElementById('changeAmount').textContent = '-$' + Math.abs(change).toFixed(2);
+            }
+
+            const display = document.getElementById('changeDisplay');
+            if (change >= 0) {
+                display.style.background = '#f0fdf4';
+                display.style.borderColor = '#16a34a';
+            } else {
+                display.style.background = '#fef2f2';
+                display.style.borderColor = '#dc2626';
+            }
+        }
+
+        function updateSplit() {
+            const cash = parseFloat(document.getElementById('splitCash').value) || 0;
+            let cards = 0;
+            document.querySelectorAll('.card-split').forEach(i => {
+                cards += parseFloat(i.value) || 0;
+            });
+
+            // Calculate cash discount on the cash portion (same logic as backend)
+            let splitCashDiscount = 0;
+            const cashDiscountEnabled = {% if cash_discount_enabled %} true{% else %} false{% endif %};
+        const cashDiscountAmount = {{ cash_discount_amount }};
+        const cashDiscountType = '{{ cash_discount_type }}';
+
+        if (cashDiscountEnabled && cash > 0 && cashDiscountAmount > 0) {
+            if (cashDiscountType === 'percent') {
+                splitCashDiscount = cash * (cashDiscountAmount / 100);
+            } else {
+                // Fixed discount proportional to cash portion
+                const cashProportion = cash / total;
+                splitCashDiscount = Math.min(cashDiscountAmount * cashProportion, cash);
+            }
+            splitCashDiscount = Math.round(splitCashDiscount * 100) / 100;
+        }
+
+        const adjustedTotal = total - splitCashDiscount;
+        const remaining = adjustedTotal - cash - cards;
+
+        // Update display
+        let displayText = '$' + remaining.toFixed(2);
+        if (splitCashDiscount > 0) {
+            displayText += ' (Cash discount: -$' + splitCashDiscount.toFixed(2) + ')';
+        }
+        document.getElementById('remainingAmount').innerHTML = displayText;
+
+        const display = document.getElementById('splitRemaining');
+        if (remaining <= 0.01) {
+            display.style.background = '#f0fdf4';
+            display.style.borderColor = '#16a34a';
+        } else {
+            display.style.background = '#fef3c7';
+            display.style.borderColor = '#f59e0b';
+        }
+        }
+
+        function addCard() {
+            const count = document.querySelectorAll('.card-split').length + 1;
+            const row = document.createElement('div');
+            row.className = 'split-row';
+            row.innerHTML = `
+                <label style="width: 80px;">💳 Card ${count}:</label>
+                <input type="number" name="card_amount" class="card-split" step="0.01" min="0" 
+                       value="0" oninput="updateSplit()">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="this.parentElement.remove(); updateSplit();">×</button>
+            `;
+            document.getElementById('cardSplits').appendChild(row);
+        }
+
+        // Initialize
+        updateChange();
+    </script>
+</body>
+
+</html>

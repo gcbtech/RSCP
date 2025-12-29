@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Refunds Report</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            background: #f1f5f9;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #dc2626 0%, #f97316 100%);
+            color: white;
+            padding: 1.5rem 2rem;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .table-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            overflow: hidden;
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="header">
+        <h2>↩️ Refunds Report</h2>
+        <small>Last {{ days }} days</small>
+    </div>
+
+    <div class="container-fluid p-4">
+        <a href="{{ url_for('pos.management') }}" class="btn btn-outline-primary mb-3">← Back to Dashboard</a>
+
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <div class="stat-card text-center">
+                    <div class="display-6 text-danger">${{ "%.2f"|format(stats.total_refunded or 0) }}</div>
+                    <div class="text-muted">Total Refunded</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="stat-card text-center">
+                    <div class="display-6">{{ stats.refund_count or 0 }}</div>
+                    <div class="text-muted">Refund Count</div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="stat-card text-center">
+                    <div class="display-6">${{ "%.2f"|format(stats.avg_refund or 0) }}</div>
+                    <div class="text-muted">Average Refund</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-lg-4">
+                <div class="table-card">
+                    <div class="card-header bg-white border-bottom"><strong>Reasons</strong></div>
+                    <div class="card-body">
+                        {% for reason in reasons %}
+                        <div class="d-flex justify-content-between mb-2">
+                            <span>{{ reason.reason }}</span>
+                            <span class="badge bg-danger">{{ reason.count }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-8">
+                <div class="table-card">
+                    <div class="card-header bg-white border-bottom"><strong>Recent Refunds</strong></div>
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Order</th>
+                                <th>Amount</th>
+                                <th>Reason</th>
+                                <th>Manager</th>
+                                <th>Date</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for r in recent %}
+                            <tr>
+                                <td class="font-monospace">{{ r.order_number }}</td>
+                                <td class="text-danger fw-bold">-${{ "%.2f"|format(r.amount) }}</td>
+                                <td>{{ r.reason }}</td>
+                                <td>{{ r.manager_name }}</td>
+                                <td>{{ r.created_at[:16] }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

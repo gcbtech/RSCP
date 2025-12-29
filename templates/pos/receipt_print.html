@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>{{ org_name or 'RSCP' }} | Receipt {{ order.order_number }}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            width: 80mm;
+            margin: 0 auto;
+            padding: 10mm;
+            font-size: 12px;
+        }
+
+        .header {
+            text-align: center;
+            border-bottom: 1px dashed #000;
+            padding-bottom: 8px;
+            margin-bottom: 8px;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            margin-bottom: 4px;
+        }
+
+        .order-number {
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        .section {
+            border-bottom: 1px dashed #000;
+            padding: 8px 0;
+        }
+
+        .section:last-child {
+            border-bottom: none;
+        }
+
+        .row {
+            display: flex;
+            justify-content: space-between;
+            margin: 2px 0;
+        }
+
+        .item {
+            padding: 4px 0;
+        }
+
+        .item-name {
+            font-weight: bold;
+        }
+
+        .item-detail {
+            font-size: 10px;
+            color: #666;
+        }
+
+        .total-row {
+            font-weight: bold;
+            font-size: 16px;
+            margin-top: 8px;
+        }
+
+        .footer {
+            text-align: center;
+            padding-top: 12px;
+            font-size: 10px;
+        }
+
+        @media print {
+            body {
+                width: 100%;
+                padding: 0;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        {% if org_name %}
+        <h1>{{ org_name }}</h1>
+        {% if receipt_store_name %}
+        <div>{{ receipt_store_name }}</div>
+        {% endif %}
+        {% elif receipt_store_name %}
+        <h1>{{ receipt_store_name }}</h1>
+        {% else %}
+        <h1>Receipt</h1>
+        {% endif %}
+        {% if receipt_header %}
+        <div style="white-space: pre-line; font-size: 10px; margin-top: 4px;">{{ receipt_header }}</div>
+        {% endif %}
+        <div class="order-number">{{ order.order_number }}</div>
+        <div>{{ order.created_at | local_time }}</div>
+    </div>
+
+    <div class="section">
+        <div class="row">
+            <span>Operator:</span>
+            <span>{{ order.operator_name }}</span>
+        </div>
+    </div>
+
+    <div class="section">
+        {% for item in items %}
+        <div class="item">
+            <div class="row">
+                <span class="item-name">{{ item.name }}</span>
+                <span>${{ "%.2f"|format(item.line_total) }}</span>
+            </div>
+            <div class="item-detail">
+                {{ item.quantity }} × ${{ "%.2f"|format(item.unit_price) }}
+                {% if item.discount_amount %} (-${{ "%.2f"|format(item.discount_amount) }}){% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="section">
+        <div class="row">
+            <span>Subtotal</span>
+            <span>${{ "%.2f"|format(order.subtotal) }}</span>
+        </div>
+        {% if order.discount_amount > 0 %}
+        <div class="row">
+            <span>Discount</span>
+            <span>-${{ "%.2f"|format(order.discount_amount) }}</span>
+        </div>
+        {% endif %}
+        <div class="row">
+            <span>Tax ({{ "%.1f"|format(order.tax_rate * 100) }}%)</span>
+            <span>${{ "%.2f"|format(order.tax_amount) }}</span>
+        </div>
+        <div class="row total-row">
+            <span>TOTAL</span>
+            <span>${{ "%.2f"|format(order.total) }}</span>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="row">
+            <span>Payment:</span>
+            <span>{{ order.payment_method|upper }}</span>
+        </div>
+        {% if payment_details.tendered %}
+        <div class="row">
+            <span>Tendered:</span>
+            <span>${{ "%.2f"|format(payment_details.tendered) }}</span>
+        </div>
+        <div class="row">
+            <span>Change:</span>
+            <span>${{ "%.2f"|format(payment_details.change) }}</span>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="footer">
+        {% if receipt_footer %}
+        <p style="white-space: pre-line;">{{ receipt_footer }}</p>
+        {% else %}
+        <p>Thank you for your purchase!</p>
+        {% endif %}
+    </div>
+
+    <script>window.print();</script>
+</body>
+
+</html>

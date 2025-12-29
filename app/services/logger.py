@@ -21,11 +21,11 @@ def log_error(message, level="ERROR", source="Backend", user_id=None, trace=None
         else:
             logger.info(log_msg)
 
-        # 2. Write to DB
+        # 2. Write to DB (using local time instead of UTC)
         conn = get_db_connection()
         conn.execute('''
             INSERT INTO error_logs (timestamp, level, source, message, trace, user_id, status)
-            VALUES (CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?)
+            VALUES (datetime('now', 'localtime'), ?, ?, ?, ?, ?, ?)
         ''', (level, source, message, trace, user_id, status))
         conn.commit()
         conn.close()

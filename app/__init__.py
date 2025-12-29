@@ -9,6 +9,8 @@ from flask_limiter.util import get_remote_address
 from app.routes.main import main_bp
 from app.routes.admin import admin_bp
 from app.routes.inventory import inventory_bp
+from app.routes.pos import pos_bp
+from app.routes.federation import federation_bp
 from app.utils.helpers import format_date_filter
 from app.services.data_manager import load_config, BASE_DIR
 from app.services.migration import ensure_db_ready
@@ -51,7 +53,16 @@ def create_app():
     @app.before_request
     def add_request_id():
         g.request_id = str(uuid.uuid4())[:8] # Short UUID
-        g.user_id = session.get('user', 'Guest')
+        
+        # Try to get logged in user
+        try:
+            from flask_login import current_user
+            if current_user and current_user.is_authenticated:
+                g.user_id = current_user.username
+            else:
+                g.user_id = 'Guest'
+        except:
+            g.user_id = 'Guest'
 
     # Config
     conf = load_config()
@@ -78,6 +89,7 @@ def create_app():
     app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
     
     # Rate Limiter (attached to app, used in routes)
+    # Per-IP rate limiting to prevent abuse
     limiter = Limiter(
         key_func=get_remote_address,
         app=app,
@@ -85,6 +97,13 @@ def create_app():
         storage_uri="memory://"
     )
     app.limiter = limiter  # Make accessible to blueprints
+    
+    # Static file caching (1 week for images, CSS, JS)
+    app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 604800  # 7 days in seconds
+    
+    # Apply rate limits to specific routes
+    # Login: 5 attempts per minute per IP (brute-force protection)
+    limiter.limit("5 per minute")(app.view_functions.get('auth.login', lambda: None))
     
     # Database connection cleanup (for request-scoped connections)
     from app.services.db import init_app as init_db_app
@@ -94,6 +113,8 @@ def create_app():
     app.register_blueprint(main_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(inventory_bp)
+    app.register_blueprint(pos_bp)
+    app.register_blueprint(federation_bp)
     
     # Global Error Handler
     from app.utils.errors import RscpError
@@ -117,7 +138,9 @@ def create_app():
                              request_id=getattr(g, 'request_id', 'Initial')), 500
     
     # Filters
+    from app.utils.helpers import local_time_filter
     app.jinja_env.filters['format_date'] = format_date_filter
+    app.jinja_env.filters['local_time'] = local_time_filter
     
     # Reverse Proxy Support - Trust X-Forwarded-* headers
     from werkzeug.middleware.proxy_fix import ProxyFix
@@ -136,9 +159,60 @@ def create_app():
     from app.services.csrf import generate_csrf_token, verify_csrf_token
     
     @app.before_request
+    def require_login():
+        """Global authentication check - all routes require login except whitelist."""
+        try:
+            from flask_login import current_user, logout_user
+            import time
+            
+            # Whitelist: Routes that don't require authentication
+            public_paths = [
+                '/',  # Index will handle its own redirect
+                '/login',
+                '/logout', 
+                '/setup',
+                '/static/',
+                '/favicon.ico'
+            ]
+            
+            # Check if current path is public
+            for public_path in public_paths:
+                if request.path == public_path or request.path.startswith(public_path):
+                    return None
+            
+            # Check if user is authenticated
+            if not current_user.is_authenticated:
+                # Redirect to login with 'next' parameter to return after login
+                return redirect(url_for('auth.login', next=request.url))
+            
+            # Check session timeout (if enabled)
+            from app.services.data_manager import load_config
+            config = load_config() or {}
+            timeout_enabled = config.get('SESSION_TIMEOUT_ENABLED', False)
+            timeout_minutes = config.get('SESSION_TIMEOUT_MINUTES', 30)
+            
+            if timeout_enabled and timeout_minutes > 0:
+                login_time = session.get('login_time')
+                if login_time:
+                    elapsed = time.time() - login_time
+                    if elapsed > (timeout_minutes * 60):
+                        logout_user()
+                        session.clear()
+                        flash('Session expired due to inactivity. Please log in again.', 'info')
+                        return redirect(url_for('auth.login'))
+                    # Update activity time on each request
+                    session['login_time'] = time.time()
+                    
+        except Exception as e:
+            # If any error occurs checking auth, redirect to login
+            import logging
+            logging.getLogger(__name__).error(f"Auth check error: {e}")
+            return redirect(url_for('auth.login'))
+    
+    @app.before_request
     def check_csrf():
-        # Skip CSRF for setup wizard (no session exists yet)
-        if request.path == '/setup':
+        # Skip CSRF for login/logout/setup (no session may exist yet)
+        if request.path in ['/login', '/logout', '/setup'] or request.path.startswith('/static'):
             return
         verify_csrf_token()
         
@@ -199,6 +273,7 @@ def create_app():
         org = c.get('ORG_NAME', '') if c else ''
         trim_enabled = c.get('AUTO_TRIM', False) if c else False
         inventory_enabled = c.get('INVENTORY_ENABLED', False) if c else False
+        pos_enabled = c.get('POS_ENABLED', False) if c else False
         
         # Get inventory count if enabled (uses shared request connection)
         inventory_count = 0
@@ -215,6 +290,11 @@ def create_app():
         # Favicon from static folder
         favicon = "/static/favicon.png"
         
+        # Get user info from Flask-Login's current_user instead of session
+        from flask_login import current_user
+        local_user = current_user.username if current_user.is_authenticated else None
+        is_admin = current_user.is_admin if current_user.is_authenticated else False
+        
         return {
             'app_name': "RSCP",
             'app_version': app_version,
@@ -223,9 +303,11 @@ def create_app():
             'trim_enabled': trim_enabled,
             'inventory_enabled': inventory_enabled,
             'inventory_count': inventory_count,
-            'is_admin': session.get('is_admin', False),
-            'local_user': session.get('user', None),
-            'csrf_token': generate_csrf_token
+            'pos_enabled': pos_enabled,
+            'is_admin': is_admin,
+            'local_user': local_user,
+            'csrf_token': generate_csrf_token,
+            'config': c  # Full config for templates that need it
         }
         
     return app

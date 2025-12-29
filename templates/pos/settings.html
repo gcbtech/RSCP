@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | POS Settings</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            background: #f1f5f9;
+        }
+
+        .settings-header {
+            background: linear-gradient(135deg, #7c3aed 0%, #2563eb 100%);
+            color: white;
+            padding: 1.5rem 2rem;
+        }
+
+        .settings-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="settings-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <h2>⚙️ POS Settings</h2>
+            <a href="{{ url_for('pos.management') }}" class="btn btn-outline-light">← Back</a>
+        </div>
+    </div>
+
+    <div class="container py-4">
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        <div class="alert alert-success">{{ messages[0] }}</div>
+        {% endif %}
+        {% endwith %}
+
+        <form action="{{ url_for('pos.settings') }}" method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <!-- Tax Settings -->
+            <div class="settings-card">
+                <div class="card-header bg-white border-bottom">
+                    <strong>💵 Tax Settings</strong>
+                </div>
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold">Sales Tax Rate (%)</label>
+                            <p class="text-muted small mb-0">Applied to all orders at checkout</p>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="input-group" style="max-width: 200px;">
+                                <input type="number" name="tax_rate" class="form-control" value="{{ tax_rate }}"
+                                    step="0.01" min="0" max="100">
+                                <span class="input-group-text">%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Feature Toggles -->
+            <div class="settings-card">
+                <div class="card-header bg-white border-bottom">
+                    <strong>🔧 Feature Settings</strong>
+                </div>
+                <div class="card-body">
+                    <div class="row align-items-center mb-4">
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold mb-0">Require Manager for Void</label>
+                            <p class="text-muted small mb-0">When enabled, staff must authenticate a manager to remove
+                                items from cart</p>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <div class="form-check form-switch d-inline-block">
+                                <input class="form-check-input" type="checkbox" name="require_manager_void" {% if
+                                    require_manager_void %}checked{% endif %} style="transform: scale(1.5);">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold mb-0">Allow Hold/Recall Orders</label>
+                            <p class="text-muted small mb-0">Allow operators to hold orders and recall them later</p>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <div class="form-check form-switch d-inline-block">
+                                <input class="form-check-input" type="checkbox" name="allow_hold_orders" {% if
+                                    allow_hold_orders %}checked{% endif %} style="transform: scale(1.5);">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cash Discount -->
+            <div class="settings-card">
+                <div class="card-header bg-white border-bottom">
+                    <strong>💰 Cash Discount</strong>
+                </div>
+                <div class="card-body">
+                    <div class="row align-items-center mb-3">
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold mb-0">Enable Cash Discount</label>
+                            <p class="text-muted small mb-0">Automatically apply a discount for cash payments</p>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <div class="form-check form-switch d-inline-block">
+                                <input class="form-check-input" type="checkbox" name="cash_discount_enabled" {% if
+                                    cash_discount_enabled %}checked{% endif %} style="transform: scale(1.5);">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row align-items-center">
+                        <div class="col-md-6">
+                            <label class="form-label">Cash Discount Amount</label>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="input-group" style="max-width: 250px;">
+                                <input type="number" name="cash_discount_amount" class="form-control"
+                                    value="{{ cash_discount_amount or 0 }}" step="0.01" min="0">
+                                <select name="cash_discount_type" class="form-select" style="max-width: 100px;">
+                                    <option value="percent" {% if cash_discount_type=='percent' %}selected{% endif %}>%
+                                    </option>
+                                    <option value="fixed" {% if cash_discount_type=='fixed' %}selected{% endif %}>$
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Receipt Branding -->
+            <div class="settings-card">
+                <div class="card-header bg-white border-bottom">
+                    <strong>🧾 Receipt Branding</strong>
+                </div>
+                <div class="card-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Store Name</label>
+                        <input type="text" name="receipt_store_name" class="form-control"
+                            value="{{ receipt_store_name or '' }}" placeholder="e.g., Main Street Location">
+                        <small class="text-muted">Appears below the organization name on receipts</small>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Receipt Header Message</label>
+                        <textarea name="receipt_header" class="form-control" rows="2"
+                            placeholder="e.g., Address, phone number, store hours">{{ receipt_header or '' }}</textarea>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Receipt Footer Message</label>
+                        <textarea name="receipt_footer" class="form-control" rows="2"
+                            placeholder="e.g., Thank you for shopping with us! Return policy info">{{ receipt_footer or '' }}</textarea>
+                    </div>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-lg">Save Settings</button>
+        </form>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

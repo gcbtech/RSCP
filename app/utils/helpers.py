@@ -32,7 +32,7 @@ def format_date_filter(value: str, fmt_type: str = 'US') -> str:
     if not value or value == 'Pending': return value
     try:
         dt = datetime.datetime.strptime(value, '%Y-%m-%d')
-        if fmt_type == 'EU':
+        if fmt_type in ('EU', 'UK'):  # Support both EU and UK for DD/MM/YYYY
             return dt.strftime('%d/%m/%Y')
         return dt.strftime('%m/%d/%Y')
     except ValueError:
@@ -77,3 +77,34 @@ def reveal_string(obfuscated_text: str, key: str) -> str:
         return "".join([chr(a ^ ord(b)) for a, b in zip(xor_bytes, key_cycle)])
     except:
         return ""
+
+def local_time_filter(value, fmt="%Y-%m-%d %H:%M"):
+    """
+    Converts a UTC datetime (string or object) to System Local Time string.
+    Usage in Jinja: {{ order.created_at | local_time }}
+    """
+    if not value: return ""
+    
+    try:
+        from datetime import datetime, timezone
+        
+        # If it's a string, parse it first
+        if isinstance(value, str):
+            # Handle potential milliseconds or different formats if needed
+            # For now assuming standard SQL format: YYYY-MM-DD HH:MM:SS
+            utc_dt = datetime.strptime(str(value)[:19], "%Y-%m-%d %H:%M:%S")
+        else:
+            utc_dt = value
+            
+        # Ensure it's timezone-aware (UTC)
+        if utc_dt.tzinfo is None:
+            utc_dt = utc_dt.replace(tzinfo=timezone.utc)
+            
+        # Convert to local system time (astimezone with no args does this)
+        local_dt = utc_dt.astimezone()
+        
+        return local_dt.strftime(fmt)
+        
+    except Exception as e:
+        # Fallback to original string or empty if conversion fails
+        return str(value)[:16]

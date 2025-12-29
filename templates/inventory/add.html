@@ -3,8 +3,15 @@
 
 <head>
     <title>RSCP | {% if edit_mode %}Edit{% else %}Add{% endif %} Item</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.bootstrap5.min.css">
     <link rel="icon" href="{{ favicon }}">
+    <!-- Margin settings for suggested price calculation -->
+    <script>
+        var marginEnabled = {{ 'true' if config and config.PREFERRED_MARGIN_ENABLED else 'false' }};
+        var marginPercent = {{ config.PREFERRED_MARGIN_PERCENT if config and config.PREFERRED_MARGIN_PERCENT else 20 }};
+    </script>
     <style>
         body {
             padding: 20px;
@@ -85,13 +92,127 @@
         body.dark-mode input::placeholder {
             color: #888 !important;
         }
+
+        /* Mobile Responsive Styles */
+        @media (max-width: 576px) {
+            body {
+                padding: 10px;
+                max-width: 100%;
+            }
+
+            /* Header - stack on mobile */
+            .page-header {
+                flex-direction: column !important;
+                gap: 10px;
+                text-align: center;
+            }
+
+            .page-header h2 {
+                font-size: 1.2rem;
+                margin: 0;
+            }
+
+            .page-header .btn {
+                width: 100%;
+                margin: 0 !important;
+            }
+
+            /* Form inputs */
+            .form-control,
+            .form-select {
+                font-size: 16px;
+                /* Prevents iOS zoom */
+                padding: 10px;
+            }
+
+            .form-label {
+                font-size: 0.9rem;
+            }
+
+            /* Card padding */
+            .card-body {
+                padding: 12px;
+            }
+
+            .card-header {
+                padding: 10px 12px;
+            }
+
+            /* Two-column rows to single column */
+            .col-md-6 {
+                width: 100%;
+            }
+
+            /* Price fields side by side on mobile too */
+            .price-row .col-md-6 {
+                width: 50%;
+            }
+
+            /* Buttons full width */
+            .btn-primary,
+            .btn-success,
+            .btn-danger {
+                width: 100%;
+                padding: 12px;
+                font-size: 1rem;
+            }
+
+            /* Accordion */
+            .accordion-button {
+                padding: 10px 12px;
+                font-size: 0.9rem;
+            }
+
+            .accordion-body {
+                padding: 10px;
+            }
+
+            /* Footer buttons */
+            .footer-buttons {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .footer-buttons .btn {
+                width: 100%;
+            }
+        }
+
+        /* Extra small screens (like FZ-N1 in portrait) */
+        @media (max-width: 360px) {
+            body {
+                padding: 5px;
+            }
+
+            .page-header h2 {
+                font-size: 1rem;
+            }
+
+            .form-control,
+            .form-select {
+                padding: 8px;
+            }
+
+            .form-label {
+                font-size: 0.8rem;
+            }
+
+            .card-body {
+                padding: 8px;
+            }
+
+            /* Stack price fields on very small screens */
+            .price-row .col-md-6 {
+                width: 100%;
+            }
+        }
     </style>
 </head>
 
 <body>
     {% include '_nav.html' %}
 
-    <div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-4 page-header">
         <h2>{% if edit_mode %}✏️ Edit Item{% else %}📦 Add Item{% endif %}</h2>
         <a href="/inventory/items" class="btn btn-outline-secondary">← Back</a>
     </div>
@@ -117,13 +238,16 @@
                     <div class="col-md-6">
                         <label class="form-label">SKU <small class="text-muted">(auto-generates if
                                 empty)</small></label>
-                        <input type="text" name="sku" class="form-control" placeholder="e.g., RSCP-PRI-0001-0001">
+                        <input type="text" name="sku" id="skuInput" class="form-control"
+                            placeholder="e.g., RSCP-PRI-0001-0001" onblur="checkSkuExists()">
+                        <div id="skuFeedback" class="form-text text-danger" style="display:none;"></div>
                     </div>
                     <div class="col-md-6">
                         <label class="form-label">Category Code</label>
                         <select name="category" class="form-select" id="categorySelect">
                             {% for code, desc in categories.items() %}
-                            <option value="{{ code }}">{{ code }} - {{ desc }}</option>
+                            <option value="{{ code }}" {% if prefill and prefill.category==code %}selected{% endif %}>{{
+                                code }} - {{ desc }}</option>
                             {% endfor %}
                             <option value="custom">Custom...</option>
                         </select>
@@ -132,31 +256,68 @@
                     </div>
                 </div>
                 {% else %}
+                <!-- Edit Mode: SKU with regeneration option -->
                 <div class="mb-3">
                     <label class="form-label">SKU</label>
-                    <input type="text" name="sku" class="form-control" value="{{ item.sku }}" required>
+                    <div class="input-group">
+                        <input type="text" name="sku" id="currentSku" class="form-control" value="{{ item.sku }}"
+                            required>
+                        <button type="button" class="btn btn-outline-warning" data-bs-toggle="collapse"
+                            data-bs-target="#regenerateSkuSection">
+                            🔄 Regenerate
+                        </button>
+                    </div>
                     <small class="text-muted">Change with caution - this is the unique identifier</small>
+
+                    <!-- Regenerate SKU Section (collapsed by default) -->
+                    <div class="collapse mt-2" id="regenerateSkuSection">
+                        <div class="card card-body bg-light">
+                            <div class="row align-items-end">
+                                <div class="col-md-6">
+                                    <label class="form-label">New Category for SKU</label>
+                                    <select id="newSkuCategory" class="form-select">
+                                        {% for code, desc in categories.items() %}
+                                        <option value="{{ code }}">{{ code }} - {{ desc }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-6">
+                                    <button type="button" class="btn btn-warning w-100" onclick="regenerateSku()">
+                                        ✅ Generate New SKU
+                                    </button>
+                                </div>
+                            </div>
+                            <small class="text-muted mt-2">⚠️ This will replace the current SKU with a new
+                                auto-generated one</small>
+                            <input type="hidden" name="regenerate_sku" id="regenerateSkuFlag" value="">
+                            <input type="hidden" name="new_sku_category" id="newSkuCategoryHidden" value="">
+                        </div>
+                    </div>
                 </div>
                 {% endif %}
 
-                <!-- Image Preview (if available from import) -->
-                {% if prefill and prefill.image_url %}
-                <div class="mb-3 text-center">
-                    <img src="{{ prefill.image_url }}" style="max-height: 120px; border-radius: 8px;">
-                    <input type="hidden" name="image_url" value="{{ prefill.image_url }}">
+                <!-- Image Preview (if available from import or fetched) -->
+                <div class="mb-3 text-center" id="imagePreviewContainer"
+                    style="{{ 'display:block;' if (prefill and prefill.image_url) or (edit_mode and item.image_url) else 'display:none;' }}">
+                    <img src="{{ prefill.image_url if prefill and prefill.image_url else (item.image_url if edit_mode and item.image_url else '') }}"
+                        id="imagePreview" style="max-height: 120px; border-radius: 8px;">
                 </div>
-                {% endif %}
+
+                <!-- Always-present hidden input for image URL (can be populated by fetch or prefill) -->
+                <input type="hidden" name="image_url" id="imageUrlInput"
+                    value="{{ prefill.image_url if prefill and prefill.image_url else (item.image_url if edit_mode and item.image_url else '') }}">
 
                 <!-- Image Upload -->
                 <div class="mb-3">
                     <label class="form-label">Item Photo</label>
-                    <input type="file" name="image" class="form-control" accept="image/*">
-                    {% if item and item.image_url %}
-                    <div class="mt-2">
-                        <small>Current Image:</small>
-                        <img src="{{ item.image_url }}" style="height: 50px; border-radius: 4px; margin-left: 10px;">
+                    <div class="input-group">
+                        <input type="file" name="image" class="form-control" accept="image/*" id="fileInput">
+                        <button type="button" class="btn btn-outline-secondary" onclick="openCameraModal()">
+                            📷 Take Photo
+                        </button>
                     </div>
-                    {% endif %}
+                    <small class="text-muted">Upload a new image, take a photo, or use "Fetch Image" from Product URL
+                        below</small>
                 </div>
 
                 <!-- Name (required) -->
@@ -180,27 +341,69 @@
                 <div class="card mb-3">
                     <div class="card-header">📍 Location <small class="text-muted">(at least one required)</small></div>
                     <div class="card-body">
+                        {% set loc_labels = config.get('LOCATION_LABELS', {}) if config else {} %}
+                        {% set loc_options = config.get('LOCATION_OPTIONS', {}) if config else {} %}
+                        {% set allow_custom = config.get('LOCATION_ALLOW_CUSTOM', true) if config else true %}
                         <div class="row">
                             <div class="col-md-6 mb-2">
-                                <label class="form-label">Area/Building</label>
-                                <input type="text" name="location_area" class="form-control"
-                                    value="{{ item.location_area if edit_mode else '' }}"
-                                    placeholder="e.g., Warehouse A">
+                                <label class="form-label">{{ loc_labels.get('area', 'Area') }}</label>
+                                <select name="location_area" class="form-select location-select" id="locArea">
+                                    <option value="">-- Unassigned --</option>
+                                    {% for opt in loc_options.get('area', []) %}
+                                    <option value="{{ opt }}" {% if (edit_mode and item.location_area==opt) or (prefill
+                                        and prefill.location_area==opt) %}selected{% endif %}>{{ opt }}</option>
+                                    {% endfor %}
+                                    {% set current_area = item.location_area if edit_mode else (prefill.location_area if
+                                    prefill else '') %}
+                                    {% if current_area and current_area not in loc_options.get('area', []) %}
+                                    <option value="{{ current_area }}" selected>{{ current_area }}</option>
+                                    {% endif %}
+                                </select>
                             </div>
                             <div class="col-md-6 mb-2">
-                                <label class="form-label">Aisle</label>
-                                <input type="text" name="location_aisle" class="form-control"
-                                    value="{{ item.location_aisle if edit_mode else '' }}" placeholder="e.g., Aisle 3">
+                                <label class="form-label">{{ loc_labels.get('aisle', 'Aisle') }}</label>
+                                <select name="location_aisle" class="form-select location-select" id="locAisle">
+                                    <option value=""></option>
+                                    {% for opt in loc_options.get('aisle', []) %}
+                                    <option value="{{ opt }}" {% if (edit_mode and item.location_aisle==opt) or (prefill
+                                        and prefill.location_aisle==opt) %}selected{% endif %}>{{ opt }}</option>
+                                    {% endfor %}
+                                    {% set current_aisle = item.location_aisle if edit_mode else (prefill.location_aisle
+                                    if prefill else '') %}
+                                    {% if current_aisle and current_aisle not in loc_options.get('aisle', []) %}
+                                    <option value="{{ current_aisle }}" selected>{{ current_aisle }}</option>
+                                    {% endif %}
+                                </select>
                             </div>
                             <div class="col-md-6 mb-2">
-                                <label class="form-label">Shelf</label>
-                                <input type="text" name="location_shelf" class="form-control"
-                                    value="{{ item.location_shelf if edit_mode else '' }}" placeholder="e.g., Shelf B">
+                                <label class="form-label">{{ loc_labels.get('shelf', 'Shelf') }}</label>
+                                <select name="location_shelf" class="form-select location-select" id="locShelf">
+                                    <option value=""></option>
+                                    {% for opt in loc_options.get('shelf', []) %}
+                                    <option value="{{ opt }}" {% if (edit_mode and item.location_shelf==opt) or (prefill
+                                        and prefill.location_shelf==opt) %}selected{% endif %}>{{ opt }}</option>
+                                    {% endfor %}
+                                    {% set current_shelf = item.location_shelf if edit_mode else (prefill.location_shelf
+                                    if prefill else '') %}
+                                    {% if current_shelf and current_shelf not in loc_options.get('shelf', []) %}
+                                    <option value="{{ current_shelf }}" selected>{{ current_shelf }}</option>
+                                    {% endif %}
+                                </select>
                             </div>
                             <div class="col-md-6 mb-2">
-                                <label class="form-label">Bin</label>
-                                <input type="text" name="location_bin" class="form-control"
-                                    value="{{ item.location_bin if edit_mode else '' }}" placeholder="e.g., Bin 12">
+                                <label class="form-label">{{ loc_labels.get('bin', 'Bin') }}</label>
+                                <select name="location_bin" class="form-select location-select" id="locBin">
+                                    <option value=""></option>
+                                    {% for opt in loc_options.get('bin', []) %}
+                                    <option value="{{ opt }}" {% if (edit_mode and item.location_bin==opt) or (prefill
+                                        and prefill.location_bin==opt) %}selected{% endif %}>{{ opt }}</option>
+                                    {% endfor %}
+                                    {% set current_bin = item.location_bin if edit_mode else (prefill.location_bin if
+                                    prefill else '') %}
+                                    {% if current_bin and current_bin not in loc_options.get('bin', []) %}
+                                    <option value="{{ current_bin }}" selected>{{ current_bin }}</option>
+                                    {% endif %}
+                                </select>
                             </div>
                         </div>
                     </div>
@@ -220,38 +423,65 @@
                             <div class="col-md-6 mb-2">
                                 <label class="form-label">Supplier</label>
                                 <input type="text" name="supplier" class="form-control"
-                                    value="{{ item.supplier if edit_mode else '' }}" placeholder="Supplier name">
+                                    value="{{ item.supplier if edit_mode else (prefill.supplier if prefill and prefill.supplier else '') }}"
+                                    placeholder="Supplier name">
+                            </div>
+                            <div class="col-md-6 mb-2">
+                                <label class="form-label">UPC/EAN Barcode</label>
+                                <input type="text" name="upc" class="form-control"
+                                    value="{{ secondary_ids.upc if secondary_ids else '' }}"
+                                    placeholder="e.g., 012345678901">
+                            </div>
+                            <div class="col-md-6 mb-2">
+                                <label class="form-label">Part Number</label>
+                                <input type="text" name="part_number" class="form-control"
+                                    value="{{ secondary_ids.part_number if secondary_ids else '' }}"
+                                    placeholder="Manufacturer part #">
+                            </div>
+                            <div class="col-12 mb-2">
+                                <label class="form-label">Keywords / Tags</label>
+                                <input type="text" name="keywords" class="form-control"
+                                    value="{{ item.keywords if edit_mode and item.keywords else (prefill.keywords if prefill and prefill.keywords else '') }}"
+                                    placeholder="Comma separated keywords for search (e.g., 'adapter, fast cable, backup')">
                             </div>
                             <div class="col-md-6 mb-2">
                                 <label class="form-label">Buy Price</label>
-                                <input type="number" step="0.01" name="buy_price" class="form-control"
-                                    value="{{ item.buy_price if edit_mode and item.buy_price else '' }}"
-                                    placeholder="0.00">
+                                <input type="number" step="0.01" name="buy_price" id="buyPriceInput"
+                                    class="form-control"
+                                    value="{{ item.buy_price if edit_mode and item.buy_price else (prefill.buy_price if prefill and prefill.buy_price else '') }}"
+                                    placeholder="0.00" oninput="updateSuggestedPrice()">
                             </div>
                             <div class="col-md-6 mb-2">
                                 <label class="form-label">Sell Price</label>
-                                <input type="number" step="0.01" name="sell_price" class="form-control"
-                                    value="{{ item.sell_price if edit_mode and item.sell_price else '' }}"
+                                <input type="number" step="0.01" name="sell_price" id="sellPriceInput"
+                                    class="form-control"
+                                    value="{{ item.sell_price if edit_mode and item.sell_price else (prefill.sell_price if prefill and prefill.sell_price else '') }}"
                                     placeholder="0.00">
                             </div>
                             <div class="col-md-6 mb-2">
                                 <label class="form-label">First Stock Date</label>
                                 <input type="date" name="first_stock_date" class="form-control"
-                                    value="{{ item.first_stock_date if edit_mode else '' }}">
+                                    value="{{ item.first_stock_date if edit_mode else (prefill.first_stock_date if prefill and prefill.first_stock_date else '') }}">
                             </div>
                             <div class="col-md-6 mb-2">
                                 <label class="form-label">Resupply Interval (days)</label>
                                 <input type="number" name="resupply_interval" class="form-control" min="0"
-                                    value="{{ item.resupply_interval if edit_mode and item.resupply_interval else '' }}"
+                                    value="{{ item.resupply_interval if edit_mode and item.resupply_interval else (prefill.resupply_interval if prefill and prefill.resupply_interval else '') }}"
                                     placeholder="e.g., 30">
                             </div>
                             <div class="col-12 mb-2">
                                 <label class="form-label">Product URL</label>
-                                <input type="url" name="source_url" class="form-control"
-                                    value="{{ (item.source_url if item.source_url and item.source_url != 'None' else ('https://www.amazon.com/dp/' + item.asin if item.asin else '')) if edit_mode else (prefill.source_url if prefill and prefill.source_url else '') }}"
-                                    placeholder="https://ebay.com/... or other purchase link">
-                                <small class="text-muted">Optional: Link to purchase more (auto-generated for Amazon via
-                                    ASIN)</small>
+                                <div class="input-group">
+                                    <input type="url" name="source_url" id="sourceUrl" class="form-control"
+                                        value="{{ (item.source_url if item.source_url and item.source_url != 'None' else ('https://www.amazon.com/dp/' + item.asin if item.asin else '')) if edit_mode else (prefill.source_url if prefill and prefill.source_url else '') }}"
+                                        placeholder="https://ebay.com/... or other purchase link">
+                                    <button type="button" class="btn btn-outline-primary" onclick="fetchImageFromUrl()"
+                                        id="fetchImageBtn">
+                                        🔍 Fetch Image
+                                    </button>
+                                </div>
+                                <small class="text-muted">Paste an eBay or Amazon URL, then click "Fetch Image" to
+                                    auto-fill the image</small>
                             </div>
                         </div>
                     </div>
@@ -265,7 +495,8 @@
                             <div class="col-md-6">
                                 <div class="form-check form-switch">
                                     <input class="form-check-input" type="checkbox" name="alert_enabled"
-                                        id="alertEnabled" {% if edit_mode and item.alert_enabled %}checked{% endif %}>
+                                        id="alertEnabled" {% if (edit_mode and item.alert_enabled) or (prefill and
+                                        prefill.alert_enabled) %}checked{% endif %}>
                                     <label class="form-check-label" for="alertEnabled">Enable low stock alert</label>
                                 </div>
                                 <small class="text-muted">Send webhook when quantity is at or below threshold</small>
@@ -273,7 +504,7 @@
                             <div class="col-md-6">
                                 <label class="form-label">Alert Threshold</label>
                                 <input type="number" name="alert_threshold" class="form-control" min="0"
-                                    value="{{ item.alert_threshold if edit_mode and item.alert_threshold else 0 }}"
+                                    value="{{ item.alert_threshold if edit_mode and item.alert_threshold else (prefill.alert_threshold if prefill and prefill.alert_threshold else 0) }}"
                                     placeholder="0 = out of stock only">
                             </div>
                         </div>
@@ -346,7 +577,45 @@
     </div>
     {% endif %}
 
+    <!-- Camera Modal -->
+    <div class="modal fade" id="cameraModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">📷 Take Photo</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body text-center p-0">
+                    <video id="cameraVideo" autoplay playsinline
+                        style="width:100%; max-height:400px; background:black;"></video>
+                    <canvas id="cameraCanvas" style="display:none;"></canvas>
+                </div>
+                <div class="modal-footer justify-content-center">
+                    <button type="button" class="btn btn-outline-secondary" onclick="switchCamera()">🔄 Flip</button>
+                    <button type="button" class="btn btn-primary" onclick="capturePhoto()">📸 Capture</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
+
+    <!-- Tom Select Initialization for Location Dropdowns -->
+    <script>
+        var allowCustomLocations = {{ 'true' if config and config.LOCATION_ALLOW_CUSTOM else 'false' }};
+
+        document.querySelectorAll('.location-select').forEach(function (el) {
+            new TomSelect(el, {
+                create: allowCustomLocations,
+                createOnBlur: allowCustomLocations,
+                placeholder: 'Select or type...',
+                allowEmptyOption: true,
+                sortField: { field: 'text', direction: 'asc' }
+            });
+        });
+    </script>
+
     <script>
         // Custom category toggle
         const catSelect = document.getElementById('categorySelect');
@@ -366,9 +635,246 @@
             });
         }
 
+        // SKU Regeneration function (edit mode)
+        function regenerateSku() {
+            const category = document.getElementById('newSkuCategory').value;
+
+            // Call server to generate a new SKU
+            fetch('/inventory/generate-sku?category=' + encodeURIComponent(category))
+                .then(response => response.json())
+                .then(data => {
+                    if (data.sku) {
+                        document.getElementById('currentSku').value = data.sku;
+                        document.getElementById('regenerateSkuFlag').value = 'true';
+                        document.getElementById('newSkuCategoryHidden').value = category;
+
+                        // Collapse the regenerate section
+                        bootstrap.Collapse.getOrCreateInstance(document.getElementById('regenerateSkuSection')).hide();
+
+                        alert('SKU updated to: ' + data.sku + '\n\nDon\'t forget to save the item!');
+                    } else {
+                        alert('Error generating SKU: ' + (data.error || 'Unknown error'));
+                    }
+                })
+                .catch(err => {
+                    alert('Error: ' + err);
+                });
+        }
+
+        // Fetch image from eBay/Amazon URL
+        function fetchImageFromUrl() {
+            const url = document.getElementById('sourceUrl').value.trim();
+            const btn = document.getElementById('fetchImageBtn');
+
+            if (!url) {
+                alert('Please enter a product URL first');
+                return;
+            }
+
+            // Show loading state
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '⏳ Fetching...';
+            btn.disabled = true;
+
+            fetch('/inventory/fetch-image-from-url', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token() }}'
+                },
+                body: JSON.stringify({ url: url })
+            })
+                .then(response => {
+                    // Parse JSON regardless of status to get error message
+                    return response.json().then(data => {
+                        return { ok: response.ok, status: response.status, data: data };
+                    });
+                })
+                .then(result => {
+                    if (result.ok && result.data.image_url) {
+                        // Success - update the hidden image URL input
+                        const imageUrlInput = document.getElementById('imageUrlInput');
+                        if (imageUrlInput) {
+                            imageUrlInput.value = result.data.image_url;
+                        }
+
+                        // Update and show the preview
+                        const preview = document.getElementById('imagePreview');
+                        const previewContainer = document.getElementById('imagePreviewContainer');
+                        if (preview) {
+                            preview.src = result.data.image_url;
+                        }
+                        if (previewContainer) {
+                            previewContainer.style.display = 'block';
+                        }
+
+                        alert('✅ Image found and applied!\n\nDon\'t forget to save the item.');
+                    } else {
+                        // Error - show the error message
+                        const errorMsg = result.data.error || 'Could not find an image at that URL.';
+                        alert('❌ ' + errorMsg + '\n\nTry a different URL or enter the image URL manually.');
+                    }
+                })
+                .catch(err => {
+                    alert('❌ Error fetching image: ' + err.message);
+                })
+                .finally(() => {
+                    btn.innerHTML = originalText;
+                    btn.disabled = false;
+                });
+        }
+
+        // Check if SKU already exists (client-side validation)
+        function checkSkuExists() {
+            const skuInput = document.getElementById('skuInput');
+            const feedback = document.getElementById('skuFeedback');
+
+            if (!skuInput || !feedback) return;
+
+            const sku = skuInput.value.trim();
+            if (!sku) {
+                feedback.style.display = 'none';
+                skuInput.classList.remove('is-invalid');
+                return;
+            }
+
+            fetch('/inventory/check-sku-exists?sku=' + encodeURIComponent(sku))
+                .then(response => response.json())
+                .then(data => {
+                    if (data.exists) {
+                        feedback.textContent = '⚠️ This SKU already exists! Please use a different SKU.';
+                        feedback.style.display = 'block';
+                        skuInput.classList.add('is-invalid');
+                    } else {
+                        feedback.textContent = '✓ SKU is available';
+                        feedback.style.display = 'block';
+                        feedback.classList.remove('text-danger');
+                        feedback.classList.add('text-success');
+                        skuInput.classList.remove('is-invalid');
+                        skuInput.classList.add('is-valid');
+
+                        // Reset after 3 seconds
+                        setTimeout(() => {
+                            feedback.style.display = 'none';
+                            feedback.classList.add('text-danger');
+                            feedback.classList.remove('text-success');
+                            skuInput.classList.remove('is-valid');
+                        }, 3000);
+                    }
+                })
+                .catch(err => {
+                    console.error('Error checking SKU:', err);
+                });
+        }
+
         // Dark mode
         if (localStorage.getItem('rscp_darkmode') === 'true') {
             document.body.classList.add('dark-mode');
+        }
+
+        // Suggested price calculation based on margin settings
+        function updateSuggestedPrice() {
+            if (!marginEnabled) return;
+
+            const buyPrice = parseFloat(document.getElementById('buyPriceInput').value) || 0;
+            const sellInput = document.getElementById('sellPriceInput');
+
+            if (buyPrice > 0 && !sellInput.value) {
+                const suggestedPrice = (buyPrice * (1 + marginPercent / 100)).toFixed(2);
+                sellInput.placeholder = '~$' + suggestedPrice;
+            } else if (buyPrice === 0) {
+                sellInput.placeholder = '0.00';
+            }
+        }
+
+        // Initialize on page load
+        updateSuggestedPrice();
+
+        // Camera Logic
+        let stream = null;
+        let currentFacingMode = 'environment'; // default to rear camera
+
+        function openCameraModal() {
+            const modal = new bootstrap.Modal(document.getElementById('cameraModal'));
+            modal.show();
+            startCamera();
+
+            // Stop camera when modal is closed
+            document.getElementById('cameraModal').addEventListener('hidden.bs.modal', stopCamera);
+        }
+
+        async function startCamera() {
+            try {
+                if (stream) stopCamera();
+
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: currentFacingMode }
+                });
+                const video = document.getElementById('cameraVideo');
+                video.srcObject = stream;
+            } catch (err) {
+                console.error("Camera error:", err);
+                alert("Could not access camera: " + err.message);
+            }
+        }
+
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+        }
+
+        function switchCamera() {
+            currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
+            startCamera();
+        }
+
+        function capturePhoto() {
+            const video = document.getElementById('cameraVideo');
+            const canvas = document.getElementById('cameraCanvas');
+
+            // Set canvas dimensions to match video
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+
+            const context = canvas.getContext('2d');
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+            // Get base64 data
+            const imageData = canvas.toDataURL('image/jpeg', 0.8);
+
+            // Upload
+            fetch('/inventory/upload_photo', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token() }}'
+                },
+                body: JSON.stringify({ image: imageData })
+            })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.url) {
+                        // Update preview and hidden input
+                        document.getElementById('imageUrlInput').value = data.url;
+
+                        const preview = document.getElementById('imagePreview');
+                        preview.src = data.url;
+                        document.getElementById('imagePreviewContainer').style.display = 'block';
+
+                        // Close modal
+                        const modalEl = document.getElementById('cameraModal');
+                        const modal = bootstrap.Modal.getInstance(modalEl);
+                        modal.hide();
+
+                        // Cleanup
+                        stopCamera();
+                    } else {
+                        alert('Upload failed: ' + data.error);
+                    }
+                })
+                .catch(err => alert('Error uploading photo: ' + err));
         }
     </script>
 </body>

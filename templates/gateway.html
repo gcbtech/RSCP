@@ -5,6 +5,7 @@
     <title>RSCP | Gateway</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
     <link rel="icon" href="{{ favicon }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
     <style>
         body {
@@ -96,6 +97,15 @@
             font-size: 4rem;
         }
 
+        .module-pos .card-img-top {
+            background-image: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 4rem;
+        }
+
         /* Dark Mode Support (Basic) */
         @media (prefers-color-scheme: dark) {
             /* In future, if body.dark-mode is toggled */
@@ -128,26 +138,189 @@
         .admin-link:hover {
             color: #0d6efd;
         }
+
+        /* ========== MOBILE RESPONSIVE ========== */
+        /* Phones and small tablets (Panasonic FZ-N1: 720x1280, 4.7") */
+        @media (max-width: 992px) {
+            body {
+                padding: 0;
+                align-items: flex-start;
+                min-height: auto;
+            }
+
+            .gateway-container {
+                max-width: 100%;
+                padding: 0.75rem;
+            }
+
+            .gateway-header {
+                margin-bottom: 0.75rem;
+                text-align: left;
+            }
+
+            .gateway-header h1 {
+                font-size: 1.2rem;
+                margin-bottom: 0.25rem;
+            }
+
+            .gateway-header p {
+                display: none;
+            }
+
+            /* Full-width stacked buttons - override Bootstrap centering */
+            .row.g-4 {
+                gap: 0.5rem !important;
+                margin: 0 !important;
+                justify-content: flex-start !important;
+                width: 100% !important;
+            }
+
+            .row.g-4>[class*="col"] {
+                flex: 0 0 100% !important;
+                max-width: 100% !important;
+                padding: 0 !important;
+                width: 100% !important;
+            }
+
+            /* Module cards as horizontal buttons */
+            .module-card {
+                flex-direction: row;
+                border-radius: 12px;
+                min-height: auto;
+                box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+            }
+
+            .card-img-top {
+                height: auto;
+                width: 80px;
+                min-height: 80px;
+                font-size: 2rem !important;
+                border-radius: 12px 0 0 12px;
+                flex-shrink: 0;
+            }
+
+            .card-body {
+                padding: 0.75rem 1rem;
+                text-align: left;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+            }
+
+            .card-title {
+                font-size: 1.1rem;
+                margin-bottom: 0.125rem;
+            }
+
+            .card-text {
+                display: block;
+                font-size: 0.8rem;
+                color: #6c757d;
+                margin: 0;
+                line-height: 1.3;
+            }
+
+            .module-card:hover {
+                transform: none;
+            }
+
+            .module-card:active {
+                transform: scale(0.98);
+                opacity: 0.9;
+            }
+
+            /* Footer */
+            .text-center.mt-5 {
+                margin-top: 1rem !important;
+            }
+        }
+
+        /* Small phones (320px width) */
+        @media (max-width: 400px) {
+            .gateway-container {
+                padding: 0.5rem;
+            }
+
+            .card-img-top {
+                width: 60px;
+                min-height: 60px;
+                font-size: 1.5rem !important;
+            }
+
+            .card-body {
+                padding: 0.5rem 0.75rem;
+            }
+
+            .card-title {
+                font-size: 1rem;
+            }
+
+            .card-text {
+                font-size: 0.75rem;
+            }
+        }
+
+        /* Tablets (768px - 1024px) */
+        @media (min-width: 768px) and (max-width: 1024px) {
+            .gateway-container {
+                max-width: 700px;
+            }
+
+            .card-img-top {
+                height: 140px;
+                font-size: 3rem !important;
+            }
+
+            .col-md-5 {
+                flex: 0 0 48%;
+                max-width: 48%;
+            }
+        }
+
+        /* Touch device enhancements */
+        @media (hover: none) and (pointer: coarse) {
+            .module-card {
+                -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+            }
+
+            .module-card:active {
+                transform: scale(0.98);
+                opacity: 0.9;
+            }
+        }
     </style>
 </head>
 
 <body>
 
-    {% if current_user.is_admin %}
-    <a href="/admin" class="admin-link">⚡ Admin Panel</a>
-    {% endif %}
+    <!-- Mobile Header Bar -->
+    <div class="mobile-header d-md-none d-flex justify-content-between align-items-center p-2 mb-2"
+        style="background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        {% if current_user.is_admin %}
+        <a href="/admin" class="btn btn-sm btn-outline-secondary">⚡ Admin</a>
+        {% else %}
+        <span></span>
+        {% endif %}
+        <span class="text-muted small">{{ current_user.username }}</span>
+        <a href="{{ url_for('auth.logout') }}" class="btn btn-sm btn-outline-danger">Logout</a>
+    </div>
 
-    <a href="/logout" class="logout-link">Logout</a>
+    <!-- Desktop Links -->
+    {% if current_user.is_admin %}
+    <a href="/admin" class="admin-link d-none d-md-block">⚡ Admin Panel</a>
+    {% endif %}
+    <a href="{{ url_for('auth.logout') }}" class="logout-link d-none d-md-block">Logout</a>
 
     <div class="gateway-container">
         <div class="gateway-header">
-            <h1 class="mb-2">Welcome, {{ current_user.username }}</h1>
-            <p class="text-muted">Select a workspace to begin</p>
+            <h1 class="mb-2 d-none d-md-block">Welcome, {{ current_user.username }}</h1>
+            <h1 class="mb-2 d-md-none">Select Module</h1>
+            <p class="text-muted d-none d-md-block">Select a workspace to begin</p>
         </div>
 
-        <div class="row g-4 justify-content-center">
+        <div class="row g-4 g-lg-4 justify-content-lg-center">
             <!-- RECEIVING MODULE -->
-            <div class="col-md-5">
+            <div class="col-12 col-lg-5">
                 <a href="/receiving" class="module-card module-receiving">
                     <div class="card-img-top">
                         📦
@@ -161,7 +334,7 @@
             </div>
 
             <!-- INVENTORY MODULE -->
-            <div class="col-md-5">
+            <div class="col-12 col-lg-5">
                 <a href="/inventory" class="module-card module-inventory">
                     <div class="card-img-top">
                         📊
@@ -172,6 +345,21 @@
                     </div>
                 </a>
             </div>
+
+            <!-- POS MODULE -->
+            {% if pos_enabled %}
+            <div class="col-12 col-lg-5">
+                <a href="/pos" class="module-card module-pos">
+                    <div class="card-img-top">
+                        💳
+                    </div>
+                    <div class="card-body">
+                        <h5 class="card-title">Point of Sale</h5>
+                        <p class="card-text">Process sales transactions, handle refunds, and view analytics.</p>
+                    </div>
+                </a>
+            </div>
+            {% endif %}
         </div>
 
         <div class="text-center mt-5">

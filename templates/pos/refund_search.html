@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Refund Search</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            background: #f1f5f9;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #dc2626 0%, #f97316 100%);
+            color: white;
+            padding: 1.5rem 2rem;
+        }
+
+        .result-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+        }
+
+        .order-row {
+            padding: 1rem;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .order-row:hover {
+            background: #f8fafc;
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="header">
+        <h2>🔍 Search Results</h2>
+        <small>Query: "{{ query }}" {% if date_from %}| From: {{ date_from }}{% endif %} {% if date_to %}| To: {{
+            date_to }}{% endif %}</small>
+    </div>
+
+    <div class="container-fluid p-4">
+        <a href="{{ url_for('pos.refunds') }}" class="btn btn-outline-secondary mb-3">← Back to Refunds</a>
+
+        <div class="result-card">
+            {% if orders %}
+            {% for order in orders %}
+            <div class="order-row d-flex justify-content-between align-items-center">
+                <div>
+                    <span class="fw-bold font-monospace">{{ order.order_number }}</span>
+                    <span
+                        class="badge bg-{% if order.status == 'completed' %}success{% elif order.status == 'refunded' %}danger{% else %}warning{% endif %} ms-2">{{
+                        order.status }}</span>
+                </div>
+                <div class="text-end">
+                    <div class="fw-bold">${{ "%.2f"|format(order.total) }}</div>
+                    <small class="text-muted">{{ order.created_at[:16] }}</small>
+                </div>
+                <a href="{{ url_for('pos.refund_order', order_number=order.order_number) }}"
+                    class="btn btn-sm btn-outline-primary">View</a>
+            </div>
+            {% endfor %}
+            {% else %}
+            <div class="text-center p-5 text-muted">
+                <div style="font-size: 3rem;">🔍</div>
+                <p>No orders match your search criteria.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

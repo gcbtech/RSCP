@@ -251,16 +251,15 @@
                                 </td>
                                 <td>
                                     <span
-                                        class="badge {% if item.quantity == 0 %}bg-danger{% else %}bg-warning text-dark{% endif %}">
+                                        class="badge {% if item.quantity <= 0 %}bg-danger{% else %}bg-warning text-dark{% endif %}">
                                         {{ item.quantity }}
                                     </span>
                                 </td>
                                 <td>
-                                    {% if item.quantity == 0 %}
-                                    <span class="text-danger">Out of Stock</span>
-                                    {% else %}
-                                    <span class="text-warning">Low Stock</span>
-                                    {% endif %}
+                                    {% if item.quantity <= 0 %} <span class="text-danger">Out of Stock</span>
+                                        {% else %}
+                                        <span class="text-warning">Low Stock</span>
+                                        {% endif %}
                                 </td>
                             </tr>
                             {% endfor %}

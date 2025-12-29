@@ -137,7 +137,8 @@
     <div id="tzAlert">⚠️ Timezone Mismatch: Check Server Time</div>
 
     <div class="app-header">
-        <a href="/" class="btn btn-outline-secondary btn-sm" style="position: absolute; left: 15px; top: 15px;">&larr;
+        <a href="/" class="btn btn-outline-secondary btn-sm sidebar-menu-btn"
+            style="position: absolute; left: 15px; top: 15px;">&larr;
             Menu</a>
         {% if org_name %}<span class="org-name">{{ org_name }}</span>{% endif %}
         <div style="font-size: 1.5rem; font-weight: 900; letter-spacing: 2px;">{{ app_name }}</div>
@@ -216,6 +217,8 @@
             {% endif %}
         </div>
     </div>
+
+
 
     <a href="/settings" class="btn btn-outline-secondary w-100 mb-3"
         style="border-radius: 12px; margin-top: 20px;">Settings</a>

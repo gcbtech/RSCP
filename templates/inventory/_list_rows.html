@@ -1,9 +1,11 @@
 {% for item in items %}
-<tr>
+<tr data-secondary-ids="{{ item.secondary_ids or '' }}">
     <td>
+        <!-- Hidden searchable data for UPC/Part Number and Keywords -->
+        <span style="display:none;">{{ item.secondary_ids or '' }} {{ item.keywords or '' }}</span>
         {% if item.image_url %}
         <a href="#" onclick="showImage('{{ item.image_url }}', '{{ item.name }}'); return false;">
-            <img src="{{ item.image_url }}"
+            <img src="{{ item.thumbnail_url or item.image_url }}" loading="lazy"
                 style="width: 40px; height: 40px; object-fit: contain; border-radius: 4px; cursor: pointer;">
         </a>
         {% endif %}
@@ -14,9 +16,59 @@
     </td>
     <td>{{ item.name }}</td>
     <td>
-        <span class="badge {% if item.quantity > 0 %}bg-success{% else %}bg-danger{% endif %}">
-            {{ item.quantity }}
-        </span>
+        {% set threshold = item.alert_threshold if item.alert_threshold else 0 %}
+        {% if item.quantity <= 0 %} <span class="badge bg-danger" title="Out of Stock">{{ item.quantity }}</span>
+            {% elif item.quantity <= threshold %} <span class="badge bg-warning text-dark"
+                title="Low Stock (threshold: {{ threshold }})">{{ item.quantity }}</span>
+                {% else %}
+                <span class="badge bg-success" title="In Stock">{{ item.quantity }}</span>
+                {% endif %}
+    </td>
+    <td>
+        ${{ "%.2f"|format(item.buy_price or 0) }}
+    </td>
+    <td>
+        <div class="d-flex align-items-center gap-2">
+            {% if item.sell_price and item.buy_price and item.sell_price < item.buy_price %} <span
+                class="text-danger fw-bold" title="Sell Price is less than Cost!">${{ "%.2f"|format(item.sell_price or
+                0) }} ⚠️</span>
+                {% else %}
+                <span>${{ "%.2f"|format(item.sell_price or 0) }}</span>
+                {% endif %}
+
+                {% if item.sell_price and item.buy_price and item.sell_price > 0 %}
+                {% set margin = ((item.sell_price - item.buy_price) / item.sell_price) * 100 %}
+                {% set markup = 0 %}
+                {% if item.buy_price > 0 %}
+                {% set markup = ((item.sell_price - item.buy_price) / item.buy_price) * 100 %}
+                {% endif %}
+
+                {% set pref_val = config.get('PREFERRED_MARGIN_PERCENT', 30)|float %}
+                {% set pref_type = config.get('PREFERRED_MARGIN_TYPE', 'margin') %}
+
+                {# Markup Badge #}
+                {% set markup_class = "bg-secondary" %}
+                {% if pref_type == 'markup' %}
+                {% set markup_class = "bg-success" if markup >= pref_val else "bg-danger" %}
+                {% endif %}
+                <span class="badge {{ markup_class }}" title="Markup: {{ " %.1f"|format(markup) }}%">
+                    Mk: {{ "%.0f"|format(markup) }}%
+                </span>
+
+                {# Margin Badge #}
+                {% set margin_class = "bg-secondary" %}
+                {% if pref_type == 'margin' %}
+                {% set margin_class = "bg-success" if margin >= pref_val else "bg-danger" %}
+                {% endif %}
+                <span class="badge {{ margin_class }}" title="Margin: {{ " %.1f"|format(margin) }}%">
+                    Mg: {{ "%.0f"|format(margin) }}%
+                </span>
+                {% endif %}
+
+                {% if not item.sell_price or item.sell_price == 0 %}
+                <span class="badge bg-warning text-dark" title="Price not set">No Price</span>
+                {% endif %}
+        </div>
     </td>
     <td>
         <span class="location-badge">
@@ -44,11 +96,14 @@
             <!-- Edit -->
             <a href="/inventory/edit/{{ item.id }}" class="btn btn-outline-secondary">✏️</a>
             <!-- Delete -->
-            <form action="/inventory/delete/{{ item.id }}" method="POST" style="display:inline;"
-                onsubmit="return confirm('Delete this item?');">
+            <form action="/inventory/delete/{{ item.id }}" method="POST"
+                onsubmit="return confirm('Delete {{ item.name }}?');" style="display:inline;">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-danger">🗑️</button>
             </form>
+            <button class="btn btn-outline-dark" data-name="{{ item.name }}"
+                onclick="openLabelModal('{{ item.sku }}', this.getAttribute('data-name'), '{{ item.sell_price }}')"
+                title="Print Label">🖨️</button>
         </div>
     </td>
 </tr>

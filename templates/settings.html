@@ -52,7 +52,7 @@
         <a href="/" class="btn btn-secondary btn-lg">Back to Main Menu</a>
         <button class="btn btn-outline-warning btn-lg"
             onclick="new bootstrap.Modal(document.getElementById('reportModal')).show()">⚠️ Report Issue</button>
-        <a href="/logout" class="btn btn-outline-danger btn-lg">Log Out / Switch User</a>
+        <a href="{{ url_for('auth.logout') }}" class="btn btn-outline-danger btn-lg">Log Out / Switch User</a>
     </div>
 
     <hr class="my-4">

@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | POS Management</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            background: #f1f5f9;
+        }
+
+        .mgmt-header {
+            background: linear-gradient(135deg, #7c3aed 0%, #2563eb 100%);
+            color: white;
+            padding: 1.5rem 2rem;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            margin-bottom: 1rem;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .stat-label {
+            color: #64748b;
+            font-size: 0.875rem;
+        }
+
+        .chart-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            margin-bottom: 1rem;
+        }
+
+        .quick-link {
+            display: block;
+            padding: 1rem;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            text-decoration: none;
+            color: inherit;
+            margin-bottom: 0.5rem;
+            transition: transform 0.1s;
+        }
+
+        .quick-link:hover {
+            transform: translateX(4px);
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="mgmt-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h2>📊 POS Management</h2>
+                <small>Last {{ days }} days</small>
+            </div>
+            <div class="d-flex gap-2">
+                <select onchange="location.href='?days='+this.value" class="form-select form-select-sm"
+                    style="width: auto;">
+                    <option value="7" {% if days==7 %}selected{% endif %}>7 days</option>
+                    <option value="30" {% if days==30 %}selected{% endif %}>30 days</option>
+                    <option value="90" {% if days==90 %}selected{% endif %}>90 days</option>
+                </select>
+                <a href="{{ url_for('pos.sales') }}" class="btn btn-outline-light btn-sm">← Back to Sales</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="container-fluid p-4">
+        <div class="row">
+            <!-- Stats Row -->
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="stat-value text-primary">${{ "%.2f"|format(stats.total_revenue or 0) }}</div>
+                    <div class="stat-label">Total Revenue</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="stat-value">{{ stats.total_orders or 0 }}</div>
+                    <div class="stat-label">Orders</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="stat-value">${{ "%.2f"|format(stats.avg_order or 0) }}</div>
+                    <div class="stat-label">Avg Order</div>
+                </div>
+            </div>
+            <div class="col-md-3">
+                <div class="stat-card">
+                    <div class="stat-value text-danger">${{ "%.2f"|format(refund_stats.refund_total or 0) }}</div>
+                    <div class="stat-label">Refunds ({{ refund_stats.refund_count or 0 }})</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Sales Chart -->
+            <div class="col-lg-8">
+                <div class="chart-card">
+                    <h5 class="mb-3">📈 Daily Sales</h5>
+                    <canvas id="salesChart" height="200"></canvas>
+                </div>
+            </div>
+
+            <!-- Quick Links & Top Sellers -->
+            <div class="col-lg-4">
+                <div class="chart-card">
+                    <h5 class="mb-3">📋 Reports</h5>
+                    <a href="{{ url_for('pos.daily_report') }}" class="quick-link">📊 End of Day Report</a>
+                    <a href="{{ url_for('pos.valuation_report') }}" class="quick-link">💰 Inventory Valuation</a>
+                    <a href="{{ url_for('pos.reorder_report') }}" class="quick-link">📉 Smart Reorder List</a>
+                    <a href="{{ url_for('pos.sales_history') }}" class="quick-link">📜 Sales History</a>
+                    <a href="{{ url_for('pos.top_sellers') }}" class="quick-link">🏆 Top Sellers</a>
+                    <a href="{{ url_for('pos.margins') }}" class="quick-link">💰 Margin Analysis</a>
+                    <a href="{{ url_for('pos.hourly_analysis') }}" class="quick-link">🕐 Hourly Analysis</a>
+                    <a href="{{ url_for('pos.operator_performance') }}" class="quick-link">👤 Operator Performance</a>
+                    <a href="{{ url_for('pos.refunds_report') }}" class="quick-link">↩️ Refunds Report</a>
+                    <a href="{{ url_for('pos.settings') }}" class="quick-link">⚙️ POS Settings</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- Top Sellers -->
+            <div class="col-lg-6">
+                <div class="chart-card">
+                    <h5 class="mb-3">🏆 Top Sellers</h5>
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Item</th>
+                                <th class="text-end">Sold</th>
+                                <th class="text-end">Revenue</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in top_sellers[:5] %}
+                            <tr>
+                                <td>{{ item.name }}<br><small class="text-muted">{{ item.sku }}</small></td>
+                                <td class="text-end">{{ item.sold }}</td>
+                                <td class="text-end">${{ "%.2f"|format(item.revenue) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    <a href="{{ url_for('pos.top_sellers') }}" class="btn btn-sm btn-outline-primary">View All →</a>
+                </div>
+            </div>
+
+            <!-- Payment Breakdown -->
+            <div class="col-lg-6">
+                <div class="chart-card">
+                    <h5 class="mb-3">💳 Payment Methods</h5>
+                    <canvas id="paymentChart" height="150"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Export Section -->
+        <div class="chart-card">
+            <h5 class="mb-3">📥 Export Data</h5>
+            <form action="{{ url_for('pos.export_data') }}" method="GET" class="row g-2 align-items-end">
+                <div class="col-auto">
+                    <label class="form-label">Type</label>
+                    <select name="type" class="form-select">
+                        <option value="orders">Orders</option>
+                        <option value="items">Order Items</option>
+                        <option value="refunds">Refunds</option>
+                    </select>
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">From</label>
+                    <input type="date" name="date_from" class="form-control">
+                </div>
+                <div class="col-auto">
+                    <label class="form-label">To</label>
+                    <input type="date" name="date_to" class="form-control">
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-primary">Download CSV</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // Sales Chart
+        const salesData = {{ daily_sales| map(attribute = 'revenue') | list | tojson }};
+        const salesLabels = {{ daily_sales| map(attribute = 'day') | list | tojson }};
+
+        new Chart(document.getElementById('salesChart'), {
+            type: 'line',
+            data: {
+                labels: salesLabels.map(d => new Date(d).toLocaleDateString()),
+                datasets: [{
+                    label: 'Revenue',
+                    data: salesData,
+                    borderColor: '#2563eb',
+                    backgroundColor: 'rgba(37, 99, 235, 0.1)',
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { display: false } },
+                scales: {
+                    y: { beginAtZero: true, ticks: { callback: v => '$' + v } }
+                }
+            }
+        });
+
+        // Payment Chart
+        const paymentLabels = {{ payment_breakdown| map(attribute = 'payment_method') | list | tojson }};
+        const paymentData = {{ payment_breakdown| map(attribute = 'amount') | list | tojson }};
+
+        new Chart(document.getElementById('paymentChart'), {
+            type: 'doughnut',
+            data: {
+                labels: paymentLabels.map(l => l.charAt(0).toUpperCase() + l.slice(1)),
+                datasets: [{
+                    data: paymentData,
+                    backgroundColor: ['#16a34a', '#2563eb', '#f59e0b']
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: { legend: { position: 'bottom' } }
+            }
+        });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Operator Performance</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            background: #f1f5f9;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #7c3aed 0%, #2563eb 100%);
+            color: white;
+            padding: 1.5rem 2rem;
+        }
+
+        .table-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            overflow: hidden;
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="header">
+        <h2>👤 Operator Performance</h2>
+        <small>Last {{ days }} days</small>
+    </div>
+
+    <div class="container-fluid p-4">
+        <a href="{{ url_for('pos.management') }}" class="btn btn-outline-primary mb-3">← Back to Dashboard</a>
+
+        <div class="table-card">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>#</th>
+                        <th>Operator</th>
+                        <th class="text-end">Orders</th>
+                        <th class="text-end">Revenue</th>
+                        <th class="text-end">Avg Order</th>
+                        <th class="text-end">Discounts Given</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for op in operators %}
+                    <tr>
+                        <td class="fw-bold">{{ loop.index }}</td>
+                        <td class="fw-bold">{{ op.username }}</td>
+                        <td class="text-end">{{ op.orders }}</td>
+                        <td class="text-end text-primary fw-bold">${{ "%.2f"|format(op.revenue or 0) }}</td>
+                        <td class="text-end">${{ "%.2f"|format(op.avg_order or 0) }}</td>
+                        <td class="text-end text-warning">${{ "%.2f"|format(op.discounts_given or 0) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

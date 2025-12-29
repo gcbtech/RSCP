@@ -45,6 +45,11 @@ def index():
 @main_bp.route('/receiving')
 @login_required
 def receiving_dashboard():
+    # Check user role (admins bypass role check)
+    if not current_user.is_admin and not current_user.has_role('receiving'):
+        flash("You don't have access to the Receiving module.")
+        return redirect(url_for('main.index'))
+    
     stats = get_dashboard_stats()
     scans = get_scan_count(14)
     m_age = get_file_age(MANIFEST_FILE)
@@ -98,6 +103,7 @@ def setup_wizard():
     return render_template('setup.html')
 
 @main_bp.route('/settings')
+@login_required
 def settings_page():
     return render_template('settings.html')
 
@@ -124,6 +130,7 @@ def report_issue():
     return redirect(url_for('main.index'))
 
 @main_bp.route('/scan', methods=['GET', 'POST'])
+@login_required
 def scan_page_legacy():
     logger.info(f"[Scan] scan_page_legacy called. Method: {request.method}, Session: {dict(session)}")
     if request.method == 'POST':
@@ -398,6 +405,7 @@ def history_view():
         conn.close()
 
 @main_bp.route('/return_mode', methods=['GET', 'POST'])
+@login_required
 def return_mode():
     found_item = None
     message = None
@@ -461,6 +469,7 @@ def return_mode():
     return render_template('return_mode.html', item=found_item, message=message, candidates=candidates, recent_items=recent_items)
 
 @main_bp.route('/process_return', methods=['POST'])
+@login_required
 def process_return():
     original_tracking = request.form.get('original_tracking')
     return_tracking = request.form.get('return_tracking')
@@ -496,6 +505,7 @@ def process_return():
     return redirect(url_for('main.return_mode'))
 
 @main_bp.route('/mark_refunded/<tracking>', methods=['POST'])
+@login_required
 def mark_refunded(tracking):
     conn = get_db_connection()
     try:
@@ -515,6 +525,7 @@ def mark_refunded(tracking):
     return redirect(url_for('main.open_returns_view'))
 
 @main_bp.route('/open_returns')
+@login_required
 def open_returns_view():
     conn = get_db_connection()
     try:
@@ -538,6 +549,7 @@ def open_returns_view():
         conn.close()
 
 @main_bp.route('/refunded_log')
+@login_required
 def refunded_view():
     conn = get_db_connection()
     rows = conn.execute("SELECT * FROM packages WHERE status='refunded' ORDER BY refund_date DESC").fetchall()
@@ -546,6 +558,7 @@ def refunded_view():
     return render_template('refunded.html', items=items)
 
 @main_bp.route('/past_due')
+@login_required
 def past_due_view():
     conn = get_db_connection()
     rows = conn.execute("SELECT * FROM packages WHERE status='past_due' AND date_scanned IS NULL").fetchall()
@@ -554,6 +567,7 @@ def past_due_view():
     return render_template('past_due.html', items=items)
 
 @main_bp.route('/expected')
+@login_required
 def expected_view():
     conn = get_db_connection()
     today = datetime.date.today().strftime('%Y-%m-%d')

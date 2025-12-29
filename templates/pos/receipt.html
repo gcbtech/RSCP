@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>{{ org_name or 'RSCP' }} | Receipt {{ order.order_number }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #f1f5f9;
+            margin: 0;
+            padding: 0;
+            font-size: 14px;
+        }
+
+        .receipt-container {
+            max-width: 500px;
+            margin: 0 auto;
+            padding: 0.5rem;
+        }
+
+        .receipt {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .receipt-header {
+            background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%);
+            color: white;
+            padding: 2rem;
+            text-align: center;
+        }
+
+        .receipt-header h1 {
+            margin: 0;
+            font-size: 1.5rem;
+        }
+
+        .receipt-header .checkmark {
+            font-size: 3rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .receipt-header .order-number {
+            font-family: monospace;
+            font-size: 1.25rem;
+            background: rgba(255, 255, 255, 0.2);
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            margin-top: 1rem;
+        }
+
+        .receipt-body {
+            padding: 1.5rem;
+        }
+
+        .receipt-section {
+            border-bottom: 1px dashed #e2e8f0;
+            padding-bottom: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .receipt-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+        }
+
+        .receipt-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.25rem 0;
+        }
+
+        .receipt-row.total {
+            font-weight: 700;
+            font-size: 1.25rem;
+            padding-top: 0.5rem;
+        }
+
+        .receipt-item {
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .receipt-item:last-child {
+            border-bottom: none;
+        }
+
+        .receipt-item-name {
+            font-weight: 500;
+        }
+
+        .receipt-item-detail {
+            color: #334155;
+            font-size: 1.1rem;
+            font-weight: 500;
+        }
+
+        .receipt-footer {
+            background: #f8fafc;
+            padding: 1.5rem;
+            text-align: center;
+        }
+
+        .receipt-actions {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: center;
+            margin-top: 1rem;
+        }
+
+        @media print {
+            body {
+                background: white;
+            }
+
+            .receipt-container {
+                margin: 0;
+                max-width: 100%;
+            }
+
+            .receipt {
+                box-shadow: none;
+            }
+
+            .receipt-actions,
+            .no-print {
+                display: none !important;
+            }
+        }
+
+        /* Mobile styles for small Android scanners */
+        @media (max-width: 480px) {
+            .receipt-header {
+                padding: 1rem;
+            }
+
+            .receipt-header .checkmark {
+                font-size: 2rem;
+                margin-bottom: 0.25rem;
+            }
+
+            .receipt-header h1 {
+                font-size: 1.2rem;
+            }
+
+            .receipt-header .order-number {
+                font-size: 1rem;
+                padding: 0.4rem 0.8rem;
+                margin-top: 0.5rem;
+            }
+
+            .receipt-body {
+                padding: 1rem;
+            }
+
+            .receipt-section {
+                padding-bottom: 0.75rem;
+                margin-bottom: 0.75rem;
+            }
+
+            .receipt-row.total {
+                font-size: 1.1rem;
+            }
+
+            .receipt-footer {
+                padding: 1rem;
+            }
+
+            .receipt-actions {
+                flex-direction: column;
+            }
+
+            .receipt-actions .btn {
+                width: 100%;
+                padding: 0.75rem;
+                font-size: 1rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="receipt-container">
+        <div class="receipt">
+            <div class="receipt-header">
+                <div class="checkmark">✓</div>
+                <h1>Sale Complete!</h1>
+                {% if org_name %}
+                <div class="fw-bold">{{ org_name }}</div>
+                {% endif %}
+                {% if receipt_store_name %}
+                <div class="small">{{ receipt_store_name }}</div>
+                {% endif %}
+                {% if receipt_header %}
+                <div class="small mt-1" style="white-space: pre-line; opacity: 0.9;">{{ receipt_header }}</div>
+                {% endif %}
+                <div class="order-number">{{ order.order_number }}</div>
+            </div>
+
+            <div class="receipt-body">
+                <!-- Order Details -->
+                <div class="receipt-section">
+                    <div class="receipt-row">
+                        <span class="text-muted">Date</span>
+                        <span>{{ order.created_at | local_time }}</span>
+                    </div>
+                    <div class="receipt-row">
+                        <span class="text-muted">Operator</span>
+                        <span>{{ order.operator_name }}</span>
+                    </div>
+                    <div class="receipt-row">
+                        <span class="text-muted">Payment</span>
+                        <span>{{ order.payment_method|capitalize }}</span>
+                    </div>
+                </div>
+
+                <!-- Items -->
+                <div class="receipt-section">
+                    <strong class="d-block mb-2">Items</strong>
+                    {% for item in items %}
+                    <div class="receipt-item">
+                        <div class="d-flex justify-content-between">
+                            <span class="receipt-item-name">{{ item.name }}</span>
+                            <span>${{ "%.2f"|format(item.line_total) }}</span>
+                        </div>
+                        <div class="receipt-item-detail">
+                            {{ item.sku }} × {{ item.quantity }} @ ${{ "%.2f"|format(item.unit_price) }}
+                            {% if item.discount_amount %}
+                            <span class="text-warning">(−${{ "%.2f"|format(item.discount_amount) }})</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <!-- Totals -->
+                <div class="receipt-section">
+                    <div class="receipt-row">
+                        <span>Subtotal</span>
+                        <span>${{ "%.2f"|format(order.subtotal) }}</span>
+                    </div>
+                    {% if order.discount_amount > 0 %}
+                    <div class="receipt-row text-warning">
+                        <span>Discount</span>
+                        <span>−${{ "%.2f"|format(order.discount_amount) }}</span>
+                    </div>
+                    {% endif %}
+                    <div class="receipt-row">
+                        <span>Tax ({{ "%.1f"|format(order.tax_rate * 100) }}%)</span>
+                        <span>${{ "%.2f"|format(order.tax_amount) }}</span>
+                    </div>
+                    <div class="receipt-row total">
+                        <span>Total</span>
+                        <span>${{ "%.2f"|format(order.total) }}</span>
+                    </div>
+                </div>
+
+                <!-- Payment Details -->
+                {% if payment_details %}
+                <div class="receipt-section">
+                    {% if order.payment_method == 'cash' %}
+                    <div class="receipt-row">
+                        <span>Cash Tendered</span>
+                        <span>${{ "%.2f"|format(payment_details.tendered) }}</span>
+                    </div>
+                    <div class="receipt-row">
+                        <span>Change</span>
+                        <span>${{ "%.2f"|format(payment_details.change) }}</span>
+                    </div>
+                    {% elif order.payment_method == 'split' %}
+                    {% if payment_details.cash > 0 %}
+                    <div class="receipt-row">
+                        <span>Cash</span>
+                        <span>${{ "%.2f"|format(payment_details.cash) }}</span>
+                    </div>
+                    {% endif %}
+                    {% for amount in payment_details.cards %}
+                    <div class="receipt-row">
+                        <span>Card {{ loop.index }}</span>
+                        <span>${{ "%.2f"|format(amount) }}</span>
+                    </div>
+                    {% endfor %}
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="receipt-footer">
+                {% if receipt_footer %}
+                <p class="text-muted mb-2" style="white-space: pre-line;">{{ receipt_footer }}</p>
+                {% else %}
+                <p class="text-muted mb-0">Thank you for your purchase!</p>
+                {% endif %}
+
+                <div class="receipt-actions no-print">
+                    <button onclick="window.print()" class="btn btn-outline-primary">🖨️ Print</button>
+                    <a href="{{ url_for('pos.receipt_print', order_number=order.order_number) }}" target="_blank"
+                        class="btn btn-outline-secondary">📄 Printable View</a>
+                    <a href="{{ url_for('pos.sales') }}" class="btn btn-success">New Sale →</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

@@ -2,21 +2,47 @@
 
 A self-hosted package and shipment management system for tracking incoming packages, deliveries, returns, and inventory.
 
-![Version](https://img.shields.io/badge/version-1.16.5-blue)
+![Version](https://img.shields.io/badge/version-2.1.18-blue)
 ![Python](https://img.shields.io/badge/python-3.11+-green)
 ![Flask](https://img.shields.io/badge/flask-2.3+-orange)
 
 ## Features
 
-- 📦 **Package Scanning** - Barcode/tracking number scanning with status tracking and history
-- 📊 **Dashboard** - Live stats for expected, received, past-due, and returned items
-- 🔄 **Return Management** - Track returns and refunds with reason logging
-- 📦 **Inventory Module** - Track items, quantities, locations, and stock levels
-- 👥 **Multi-User** - Role-based authentication (Admin/Staff)
-- 📧 **Email Ingestion** - Auto-import tracking from Amazon shipping emails
-- 🔔 **Webhook Alerts** - Priority package notifications to Slack/Discord
-- 🌙 **Dark Mode** - Eye-friendly scanning in low-light environments
-- 📱 **Mobile-Ready** - Responsive design works on phones/tablets
+### 📦 Receiving & Packages
+- **Package Scanning** - Barcode/tracking number scanning with status tracking
+- **Dashboard** - Live stats for expected, received, past-due, and returned items
+- **Return Management** - Track returns and refunds with reason logging
+- **Email Ingestion** - Auto-import tracking from Amazon shipping emails
+- **Webhook Alerts** - Priority package notifications to Slack/Discord
+
+### 📋 Inventory Management
+- **Comprehensive Tracking** - Track items, quantities, costs, and locations
+- **Stock Alerts** - Low stock notifications via webhook
+- **Visual Grid** - Overview of all inventory with filtering and sorting
+- **Quick Actions** - Rapid stock adjustments and label printing
+- **History Log** - Detailed audit trail of all inventory movements
+
+### 💳 Point of Sale (POS)
+- **Fast Checkout** - Barcode scanning, quick-add, and manual entry
+- **Payment Processing** - Support for Cash, Card, and Split payments
+- **Cash Management** - Cash drawer tracking, float in/out, and end-of-day reconciliation
+- **Discounts & Taxes** - Configurable tax rates and manager-approved discounts
+- **Receipts** - Professional digital and printable receipts (thermal printer optimized)
+
+### 📊 Analytics & Reporting
+- **Sales Reports** - Daily/Monthly sales breakdown with profit margin analysis
+- **Inventory Reports** - Valuation, turnover rate, and low stock reports
+- **End of Day** - Automated EOD email summaries with Z-Report data
+- **Visual Charts** - Interactive graphs for sales trends and category performance
+
+### 🛠️ System
+- **Multi-User** - Role-based authentication (Admin/Manager/Staff)
+- **Dark Mode** - Eye-friendly interface for low-light environments
+- **Mobile-Ready** - Responsive design for tablets and mobile scanners
+- **Secure** - CSRF protection, rate limiting, and secure session handling
+
+## 📘 Documentation
+**New to RSCP?** Check out the [**Detailed User Guide & Workflow**](USER_GUIDE.md) for a step-by-step tutorial on how to run your business with RSCP.
 
 ## Quick Start
 
@@ -130,6 +156,7 @@ MIT License - See LICENSE file for details.
 
 ## Version History
 
+- **2.1.18** - Full POS system implementation, robust Inventory tracking, advanced Analytics/Reporting, and receipt printer support.
 - **1.16.5** - Security audit fixes, performance optimizations, admin panel redesign, automated tests
 - **1.16.2** - Inventory module, ASIN tracking, audit sessions
 - **1.15.0** - First public release with security hardening

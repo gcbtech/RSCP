@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | POS Login</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2563eb 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .login-card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+            padding: 2.5rem;
+            width: 100%;
+            max-width: 400px;
+        }
+
+        .login-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .login-header .icon {
+            font-size: 3rem;
+        }
+
+        .login-header h1 {
+            font-size: 1.5rem;
+            margin-top: 0.5rem;
+        }
+
+        /* Login method tabs */
+        .login-tabs {
+            display: flex;
+            border-bottom: 2px solid #e2e8f0;
+            margin-bottom: 1.5rem;
+        }
+
+        .login-tab {
+            flex: 1;
+            padding: 0.75rem;
+            text-align: center;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-weight: 500;
+            color: #64748b;
+        }
+
+        .login-tab.active {
+            color: #2563eb;
+            border-bottom: 3px solid #2563eb;
+            margin-bottom: -2px;
+        }
+
+        .login-content {
+            display: none;
+        }
+
+        .login-content.active {
+            display: block;
+        }
+
+        /* Badge scan area */
+        .badge-scan {
+            text-align: center;
+            padding: 3rem 1rem;
+            border: 3px dashed #e2e8f0;
+            border-radius: 12px;
+            margin-bottom: 1rem;
+        }
+
+        .badge-scan .icon {
+            font-size: 4rem;
+            opacity: 0.5;
+        }
+
+        .badge-scan input {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* PIN input */
+        .pin-input {
+            display: flex;
+            justify-content: center;
+            gap: 0.5rem;
+            margin: 1rem 0;
+        }
+
+        .pin-digit {
+            width: 50px;
+            height: 60px;
+            text-align: center;
+            font-size: 1.5rem;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+        }
+
+        .pin-digit:focus {
+            border-color: #2563eb;
+            outline: none;
+        }
+
+        .numpad {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.5rem;
+            max-width: 250px;
+            margin: 1rem auto;
+        }
+
+        .numpad-btn {
+            padding: 1rem;
+            font-size: 1.5rem;
+            border: 1px solid #e2e8f0;
+            background: white;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        .numpad-btn:hover {
+            background: #f1f5f9;
+        }
+
+        .numpad-btn.clear {
+            color: #dc2626;
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 1rem;
+            font-size: 1.1rem;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            background: #2563eb;
+            color: white;
+            cursor: pointer;
+        }
+
+        .login-btn:hover {
+            background: #1d4ed8;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="login-card">
+        <div class="login-header">
+            <div class="icon">💳</div>
+            <h1>POS Login</h1>
+        </div>
+
+        {% with messages = get_flashed_messages() %}
+        {% if messages %}
+        <div class="alert alert-danger">{{ messages[0] }}</div>
+        {% endif %}
+        {% endwith %}
+
+        <div class="login-tabs">
+            <button class="login-tab active" onclick="showLogin('badge')">🪪 Badge</button>
+            <button class="login-tab" onclick="showLogin('pin')">🔢 PIN</button>
+            <button class="login-tab" onclick="showLogin('password')">🔑 Password</button>
+        </div>
+
+        <!-- Badge Login -->
+        <div id="badge-login" class="login-content active">
+            <form action="{{ url_for('pos.pos_login') }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="login_type" value="badge">
+
+                <div class="badge-scan" onclick="document.getElementById('badgeInput').focus()">
+                    <div class="icon">📷</div>
+                    <p class="text-muted">Scan your employee badge</p>
+                    <input type="text" name="badge_id" id="badgeInput" autofocus
+                        onkeydown="if(event.key==='Enter'){this.form.submit();}">
+                </div>
+                <p class="text-center text-muted small">Badge scanner should be focused on this page</p>
+            </form>
+        </div>
+
+        <!-- PIN Login -->
+        <div id="pin-login" class="login-content">
+            <form action="{{ url_for('pos.pos_login') }}" method="POST" id="pinForm">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="login_type" value="pin">
+
+                <div class="mb-3">
+                    <label class="form-label">Username</label>
+                    <input type="text" name="username" class="form-control" placeholder="Enter username" required>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">PIN</label>
+                    <input type="password" name="pin" id="pinInput" class="form-control" pattern="[0-9]*"
+                        inputmode="numeric" maxlength="6" placeholder="Enter PIN" required>
+                </div>
+
+                <div class="numpad">
+                    <button type="button" class="numpad-btn" onclick="addDigit(1)">1</button>
+                    <button type="button" class="numpad-btn" onclick="addDigit(2)">2</button>
+                    <button type="button" class="numpad-btn" onclick="addDigit(3)">3</button>
+                    <button type="button" class="numpad-btn" onclick="addDigit(4)">4</button>
+                    <button type="button" class="numpad-btn" onclick="addDigit(5)">5</button>
+                    <button type="button" class="numpad-btn" onclick="addDigit(6)">6</button>
+                    <button type="button" class="numpad-btn" onclick="addDigit(7)">7</button>
+                    <button type="button" class="numpad-btn" onclick="addDigit(8)">8</button>
+                    <button type="button" class="numpad-btn" onclick="addDigit(9)">9</button>
+                    <button type="button" class="numpad-btn clear" onclick="clearPin()">C</button>
+                    <button type="button" class="numpad-btn" onclick="addDigit(0)">0</button>
+                    <button type="button" class="numpad-btn" onclick="backspace()">←</button>
+                </div>
+
+                <button type="submit" class="login-btn">Login</button>
+            </form>
+        </div>
+
+        <!-- Password Login -->
+        <div id="password-login" class="login-content">
+            <form action="{{ url_for('pos.pos_login') }}" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="login_type" value="password">
+
+                <div class="mb-3">
+                    <label class="form-label">Username</label>
+                    <input type="text" name="username" class="form-control" placeholder="Enter username" required>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Password</label>
+                    <input type="password" name="password" class="form-control" placeholder="Enter password" required>
+                </div>
+
+                <button type="submit" class="login-btn">Login</button>
+            </form>
+        </div>
+
+        <div class="text-center mt-4">
+            <a href="{{ url_for('auth.login') }}" class="text-muted">← Back to main login</a>
+        </div>
+    </div>
+
+    <script>
+        function showLogin(type) {
+            document.querySelectorAll('.login-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.login-content').forEach(c => c.classList.remove('active'));
+
+            event.target.classList.add('active');
+            document.getElementById(type + '-login').classList.add('active');
+
+            // Focus appropriate input
+            if (type === 'badge') {
+                document.getElementById('badgeInput').focus();
+            }
+        }
+
+        function addDigit(d) {
+            const pin = document.getElementById('pinInput');
+            if (pin.value.length < 6) {
+                pin.value += d;
+            }
+        }
+
+        function clearPin() {
+            document.getElementById('pinInput').value = '';
+        }
+
+        function backspace() {
+            const pin = document.getElementById('pinInput');
+            pin.value = pin.value.slice(0, -1);
+        }
+    </script>
+</body>
+
+</html>

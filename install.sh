@@ -68,13 +68,34 @@ fi
 # Create install directory
 mkdir -p "$INSTALL_DIR"
 
-echo -e "${GREEN}[4/6]${NC} Downloading RSCP..."
+# Branch selection
+echo ""
+echo -e "${BLUE}Select installation branch:${NC}"
+echo "  1) main   - Stable release"
+echo "  2) Beta   - Latest features (may have bugs)"
+echo ""
+read -p "Enter choice [1/2] (default: 1): " branch_choice
+
+case $branch_choice in
+    2)
+        BRANCH="Beta"
+        echo -e "${YELLOW}Installing from Beta branch${NC}"
+        ;;
+    *)
+        BRANCH="main"
+        echo -e "${GREEN}Installing from main branch${NC}"
+        ;;
+esac
+
+echo -e "${GREEN}[4/6]${NC} Downloading RSCP ($BRANCH branch)..."
 if [ -d "$INSTALL_DIR/.git" ]; then
     echo "  Existing installation found, pulling updates..."
     cd "$INSTALL_DIR"
-    git pull
+    git fetch origin
+    git checkout "$BRANCH"
+    git pull origin "$BRANCH"
 else
-    git clone https://github.com/gcbtech/RSCP.git "$INSTALL_DIR"
+    git clone -b "$BRANCH" https://github.com/gcbtech/RSCP.git "$INSTALL_DIR"
     cd "$INSTALL_DIR"
 fi
 

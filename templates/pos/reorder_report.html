@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Smart Reorder Report | POS</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <style>
+        body {
+            background: #f1f5f9;
+        }
+
+        .report-header {
+            background: white;
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid #e2e8f0;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            border: none;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        @media print {
+            body {
+                background: white;
+            }
+
+            .btn,
+            .alert {
+                display: none !important;
+            }
+
+            .card {
+                border: 1px solid #ddd;
+                break-inside: avoid;
+                box-shadow: none !important;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+    <div class="report-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h2>📉 Smart Reorder Report</h2>
+                <p class="text-muted mb-0">Based on 30-Day Sales Velocity ({{ today.strftime('%B %d, %Y') }})</p>
+            </div>
+            <div>
+                <button onclick="window.print()" class="btn btn-secondary">🖨️ Print List</button>
+                <a href="{{ url_for('pos.management') }}" class="btn btn-outline-secondary">Back to Dashboard</a>
+            </div>
+        </div>
+    </div>
+
+    <div class="container-fluid pb-5">
+        <div class="card shadow-sm">
+            <div class="card-header bg-white">
+                <h5 class="mb-0 text-danger">⚠️ Recommended Restock List</h5>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="ps-3">SKU</th>
+                                <th>Item Name</th>
+                                <th>Supplier</th>
+                                <th class="text-center">Current Qty</th>
+                                <th class="text-center">Velocity <small class="text-muted">(units/day)</small></th>
+                                <th class="text-center">Days Cover</th>
+                                <th class="text-center table-warning fw-bold">Suggested Order</th>
+                                <th class="text-end pe-3">Est. Cost</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for item in recommendations %}
+                            <tr>
+                                <td class="ps-3 font-monospace text-muted">{{ item.sku }}</td>
+                                <td class="fw-bold">{{ item.name }}</td>
+                                <td>{{ item.supplier }}</td>
+                                <td class="text-center {% if item.qty == 0 %}text-danger fw-bold{% endif %}">{{ item.qty
+                                    }}</td>
+                                <td class="text-center">{{ "%.2f"|format(item.velocity) }}</td>
+                                <td class="text-center">
+                                    {% if item.days_cover < 7 %} <span class="badge bg-danger">{{
+                                        "%.1f"|format(item.days_cover) }} days</span>
+                                        {% elif item.days_cover < 14 %} <span class="badge bg-warning text-dark">{{
+                                            "%.1f"|format(item.days_cover) }} days</span>
+                                            {% else %}
+                                            {{ "%.1f"|format(item.days_cover) }} days
+                                            {% endif %}
+                                </td>
+                                <td class="text-center table-warning fw-bold h5 mb-0">{{ item.suggested }}</td>
+                                <td class="text-end pe-3 text-muted">${{ "%.2f"|format(item.cost_est) }}</td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="8" class="text-center py-5 text-muted">
+                                    <h5>✅ Inventory Healthy</h5>
+                                    No items currently require restocking based on sales velocity.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="alert alert-info mt-4">
+            <h6 class="alert-heading">ℹ️ How this is calculated:</h6>
+            <ul class="mb-0 small">
+                <li><strong>Sales Velocity:</strong> Average daily sales over the last 30 days.</li>
+                <li><strong>Days Cover:</strong> Current Quantity / Sales Velocity.</li>
+                <li><strong>Suggestion:</strong> Items with less than 14 days of stock are flagged. Suggested order
+                    brings stock level back to 30 days.</li>
+            </ul>
+        </div>
+    </div>
+</body>
+
+</html>

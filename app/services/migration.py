@@ -18,6 +18,30 @@ def ensure_db_ready():
         except Exception: 
             pass # Column likely already exists
         
+        # Add source_tracking column to inventory_transactions (for POS order references)
+        try:
+            conn.execute("ALTER TABLE inventory_transactions ADD COLUMN source_tracking TEXT")
+            conn.commit()
+            logger.info("Added source_tracking column to inventory_transactions.")
+        except Exception:
+            pass  # Column already exists
+        
+        # Add roles column to users table (for module access control)
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN roles TEXT DEFAULT '[]'")
+            conn.commit()
+            logger.info("Added roles column to users.")
+        except Exception:
+            pass  # Column already exists
+        
+        # Add secondary_ids column to inventory_items (for UPC, part number, etc.)
+        try:
+            conn.execute("ALTER TABLE inventory_items ADD COLUMN secondary_ids TEXT DEFAULT '{}'")
+            conn.commit()
+            logger.info("Added secondary_ids column to inventory_items.")
+        except Exception:
+            pass  # Column already exists
+        
         # V1.16.1: Add asin and source_url to packages table
         package_migrations = [
             ('asin', 'ALTER TABLE packages ADD COLUMN asin TEXT'),
@@ -48,6 +72,17 @@ def ensure_db_ready():
             )
         ''')
         conn.commit()
+        
+        # V1.18: Add badge_id to users table for POS badge scanning
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN badge_id TEXT UNIQUE")
+            conn.commit()
+            logger.info("Added badge_id column to users.")
+        except:
+            pass  # Column already exists
+        
+        # POS Module Tables (V1.18)
+        _create_pos_tables(conn)
             
     except Exception as e:
         logger.error(f"Migration Schema Check Error: {e}")
@@ -81,6 +116,7 @@ def _create_inventory_tables(conn):
                 supplier TEXT,
                 first_stock_date TEXT,
                 resupply_interval INTEGER,
+                keywords TEXT,
                 
                 -- Alert settings
                 alert_enabled BOOLEAN DEFAULT 0,
@@ -100,6 +136,7 @@ def _create_inventory_tables(conn):
             ('alert_threshold', 'ALTER TABLE inventory_items ADD COLUMN alert_threshold INTEGER DEFAULT 0'),
             ('buy_price', 'ALTER TABLE inventory_items ADD COLUMN buy_price REAL DEFAULT 0.0'),
             ('sell_price', 'ALTER TABLE inventory_items ADD COLUMN sell_price REAL DEFAULT 0.0'),
+            ('keywords', 'ALTER TABLE inventory_items ADD COLUMN keywords TEXT'),
         ]
         for col_name, sql in migrations:
             try:
@@ -113,6 +150,8 @@ def _create_inventory_tables(conn):
         conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_sku ON inventory_items(sku)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_asin ON inventory_items(asin)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_name ON inventory_items(name)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_quantity ON inventory_items(quantity)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_secondary ON inventory_items(secondary_ids)')
         
         # Inventory Transactions Table (audit trail)
         conn.execute('''
@@ -166,3 +205,188 @@ def _create_inventory_tables(conn):
         
     except Exception as e:
         logger.error(f"Error creating inventory tables: {e}")
+
+
+def _create_pos_tables(conn):
+    """Create POS module tables if they don't exist."""
+    try:
+        # POS Settings Table (tax rate, feature toggles)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
+        
+        # Insert default settings if not present
+        defaults = [
+            ('TAX_RATE', '0.0'),
+            ('REQUIRE_MANAGER_VOID', 'false'),
+            ('ALLOW_HOLD_ORDERS', 'true'),
+        ]
+        for key, value in defaults:
+            conn.execute('''
+                INSERT OR IGNORE INTO pos_settings (key, value) VALUES (?, ?)
+            ''', (key, value))
+        
+        # POS Orders Table (order header)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_number TEXT UNIQUE NOT NULL,
+                status TEXT DEFAULT 'completed',
+                subtotal REAL NOT NULL,
+                tax_rate REAL NOT NULL,
+                tax_amount REAL NOT NULL,
+                discount_amount REAL DEFAULT 0,
+                discount_type TEXT,
+                discount_reason TEXT,
+                total REAL NOT NULL,
+                
+                payment_method TEXT NOT NULL,
+                payment_details TEXT,
+                
+                operator_id INTEGER NOT NULL,
+                terminal_id TEXT DEFAULT 'POS-1',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (operator_id) REFERENCES users(id)
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_order_number ON pos_orders(order_number)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_order_date ON pos_orders(created_at)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_order_status ON pos_orders(status)')
+        
+        # POS Order Items Table (line items)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_order_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER NOT NULL,
+                inventory_item_id INTEGER,
+                sku TEXT NOT NULL,
+                name TEXT NOT NULL,
+                quantity INTEGER NOT NULL,
+                unit_price REAL NOT NULL,
+                discount_amount REAL DEFAULT 0,
+                discount_type TEXT,
+                line_total REAL NOT NULL,
+                FOREIGN KEY (order_id) REFERENCES pos_orders(id),
+                FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id)
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_item_order ON pos_order_items(order_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_item_sku ON pos_order_items(sku)')
+        
+        # POS Refunds Table
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_refunds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id INTEGER NOT NULL,
+                refund_type TEXT NOT NULL,
+                amount REAL NOT NULL,
+                reason TEXT NOT NULL,
+                reason_notes TEXT,
+                items_restocked INTEGER DEFAULT 0,
+                items_damaged INTEGER DEFAULT 0,
+                
+                manager_id INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (order_id) REFERENCES pos_orders(id),
+                FOREIGN KEY (manager_id) REFERENCES users(id)
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_refund_order ON pos_refunds(order_id)')
+        
+        # POS Refund Items Table (for partial refunds)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_refund_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                refund_id INTEGER NOT NULL,
+                order_item_id INTEGER NOT NULL,
+                quantity INTEGER NOT NULL,
+                amount REAL NOT NULL,
+                restock_action TEXT DEFAULT 'none',
+                FOREIGN KEY (refund_id) REFERENCES pos_refunds(id),
+                FOREIGN KEY (order_item_id) REFERENCES pos_order_items(id)
+            )
+        ''')
+        
+        # POS Held Orders Table (for hold/recall feature)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_held_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                operator_id INTEGER NOT NULL,
+                cart_data TEXT NOT NULL,
+                note TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (operator_id) REFERENCES users(id)
+            )
+        ''')
+        
+        # POS Audit Log Table (for full transaction audit trail)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                action TEXT NOT NULL,
+                user_id INTEGER,
+                user_name TEXT,
+                target_type TEXT,
+                target_id TEXT,
+                details TEXT,
+                ip_address TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        conn.commit()
+        logger.info("POS tables initialized.")
+        
+        # ========================================
+        # Federation Tables (Multi-Instance Linking)
+        # ========================================
+        
+        # Federation Peers Table (linked instances)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS federation_peers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                url TEXT NOT NULL UNIQUE,
+                api_key TEXT NOT NULL,
+                location_prefix TEXT,
+                status TEXT DEFAULT 'pending',
+                last_seen TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_by TEXT
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_federation_peer_url ON federation_peers(url)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_federation_peer_status ON federation_peers(status)')
+        
+        # Federation Transfers Table (pending/completed transfers)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS federation_transfers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                direction TEXT NOT NULL,
+                peer_id INTEGER NOT NULL,
+                item_id INTEGER,
+                item_sku TEXT NOT NULL,
+                item_data TEXT NOT NULL,
+                quantity INTEGER NOT NULL DEFAULT 1,
+                status TEXT DEFAULT 'pending',
+                requested_by TEXT,
+                requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                approved_by TEXT,
+                approved_at TIMESTAMP,
+                expires_at TIMESTAMP,
+                notes TEXT,
+                FOREIGN KEY (peer_id) REFERENCES federation_peers(id)
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_federation_transfer_status ON federation_transfers(status)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_federation_transfer_peer ON federation_transfers(peer_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_federation_transfer_expires ON federation_transfers(expires_at)')
+        
+        conn.commit()
+        logger.info("Federation tables initialized.")
+        
+    except Exception as e:
+        logger.error(f"Error creating POS tables: {e}")

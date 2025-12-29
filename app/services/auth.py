@@ -4,17 +4,33 @@ from app.services.db import get_db_connection, BASE_DIR
 # --- Shim Functions for Legacy Compatibility (main.py) ---
 def load_users():
     """Legacy function used by main.py login route."""
+    import json
     conn = get_db_connection()
     try:
         rows = conn.execute("SELECT * FROM users").fetchall()
         users = {}
         for r in rows:
+            # Parse roles from JSON (handle missing column gracefully)
+            roles = []
+            try:
+                roles_str = r['roles'] if 'roles' in r.keys() else None
+                if roles_str:
+                    roles = json.loads(roles_str)
+            except:
+                roles = []
+            
             users[r['username']] = {
                 "pin": r['password_hash'], # Legacy code might expect 'pin' key
-                "is_admin": bool(r['is_admin'])
+                "password_hash": r['password_hash'],
+                "pin_hash": r['pin_hash'] if 'pin_hash' in r.keys() else None,
+                "is_admin": bool(r['is_admin']),
+                "roles": roles,
+                "badge_id": r['badge_id'] if 'badge_id' in r.keys() else ''
             }
         return users
-    except:
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Error loading users: {e}")
         return {}
     finally:
         conn.close()
@@ -66,20 +82,41 @@ def update_user_admin_status(username, is_admin):
 # -------------------------------------------------------
 
 class User(UserMixin):
-    def __init__(self, id, username, is_admin=False):
+    def __init__(self, id, username, is_admin=False, roles=None):
         self.id = str(id)
         self.username = username
         self.is_admin = bool(is_admin)
+        self._roles = roles or []
+
+    @property
+    def roles(self):
+        return self._roles
+    
+    def has_role(self, role):
+        """Check if user has a specific role. Admins have all roles."""
+        if self.is_admin:
+            return True
+        return role in self._roles
 
     @staticmethod
     def get(user_id):
+        import json
         conn = get_db_connection()
         user = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
         conn.close()
         
         if not user:
             return None
-        return User(user['id'], user['username'], user['is_admin'])
+        
+        # Parse roles
+        roles = []
+        try:
+            if user['roles']:
+                roles = json.loads(user['roles'])
+        except:
+            roles = []
+        
+        return User(user['id'], user['username'], user['is_admin'], roles)
 
     @staticmethod
     def authenticate(username, password):
