@@ -12,30 +12,90 @@
             background-color: #f8f9fa;
         }
 
-        .log-row-error {
-            border-left: 4px solid #dc3545;
-            background-color: #fff5f5;
+        /* Log level row styling - distinct colors for each type */
+        .log-row-error,
+        .log-row-critical {
+            border-left: 5px solid #dc3545;
+            background-color: #fff0f0;
+        }
+
+        .log-row-critical {
+            background-color: #ffe0e0;
+            font-weight: 500;
+        }
+
+        .log-row-warning {
+            border-left: 5px solid #fd7e14;
+            background-color: #fff8e1;
         }
 
         .log-row-user_report {
-            border-left: 4px solid #ffc107;
-            background-color: #fffff0;
+            border-left: 5px solid #ffc107;
+            background-color: #fffde7;
         }
 
         .log-row-info {
-            border-left: 4px solid #0dcaf0;
+            border-left: 5px solid #0dcaf0;
+            background-color: #f0f9ff;
+        }
+
+        .log-row-debug {
+            border-left: 5px solid #6c757d;
+            background-color: #f8f9fa;
+            opacity: 0.85;
+        }
+
+        /* Level badges */
+        .badge-error {
+            background-color: #dc3545 !important;
+        }
+
+        .badge-critical {
+            background-color: #721c24 !important;
+        }
+
+        .badge-warning {
+            background-color: #fd7e14 !important;
+        }
+
+        .badge-user_report {
+            background-color: #ffc107 !important;
+            color: #000 !important;
+        }
+
+        .badge-info {
+            background-color: #0dcaf0 !important;
+            color: #000 !important;
+        }
+
+        .badge-debug {
+            background-color: #6c757d !important;
         }
 
         .trace-box {
-            background: #eee;
-            padding: 10px;
-            border-radius: 4px;
-            font-family: monospace;
-            font-size: 0.85rem;
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.82rem;
             max-height: 300px;
             overflow-y: auto;
             white-space: pre-wrap;
             display: none;
+            margin-top: 8px;
+            border: 1px solid #444;
+        }
+
+        .log-message {
+            max-width: 400px;
+            word-break: break-word;
+        }
+
+        .log-source {
+            font-family: 'Consolas', monospace;
+            font-size: 0.8rem;
+            color: #6c757d;
         }
     </style>
 </head>
@@ -52,11 +112,12 @@
                 <div class="d-flex gap-2">
                     <a href="{{ url_for('admin.admin_panel') }}" class="btn btn-outline-secondary">Back to Admin</a>
 
-                    <a href="{{ url_for('admin.export_logs') }}" class="btn btn-success">Export CSV</a>
+                    <a href="{{ url_for('admin.export_logs') }}" class="btn btn-success">📥 Export CSV</a>
                     <form action="{{ url_for('admin.clear_logs') }}" method="POST"
-                        onsubmit="return confirm('Are you sure you want to delete ALL logs?');">
+                        onsubmit="return confirm('This will delete logs older than 7 days. Continue?');"
+                        class="d-inline">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="btn btn-danger">Clear Logs</button>
+                        <button type="submit" class="btn btn-outline-danger">🗑️ Clear Old Logs</button>
                     </form>
                     <a href="{{ url_for('admin.admin_logs') }}" class="btn btn-primary">Refresh</a>
                 </div>
@@ -65,7 +126,41 @@
             <div class="card shadow-sm">
                 <div class="card-header bg-dark text-white d-flex justify-content-between">
                     <span class="fw-bold">System Logs</span>
-                    <span class="badge bg-secondary">{{ logs|length }} Entries</span>
+                    <span class="badge bg-secondary">{{ total_logs|default(logs|length) }} Total Entries (Page {{
+                        current_page|default(1) }} of {{ total_pages|default(1) }})</span>
+                </div>
+
+                <!-- Filters -->
+                <div class="card-body border-bottom">
+                    <form class="row g-2 align-items-end" method="GET" action="{{ url_for('admin.admin_logs') }}">
+                        <div class="col-auto">
+                            <label class="form-label small mb-1">Level</label>
+                            <select name="level" class="form-select form-select-sm">
+                                <option value="">All Levels</option>
+                                {% for lvl in levels|default([]) %}
+                                <option value="{{ lvl }}" {% if filter_level==lvl %}selected{% endif %}>{{ lvl }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-auto">
+                            <label class="form-label small mb-1">Source</label>
+                            <select name="source" class="form-select form-select-sm">
+                                <option value="">All Sources</option>
+                                {% for src in sources|default([]) %}
+                                <option value="{{ src }}" {% if filter_source==src %}selected{% endif %}>{{ src }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-auto">
+                            <button type="submit" class="btn btn-primary btn-sm">Apply Filters</button>
+                            {% if filter_level or filter_source %}
+                            <a href="{{ url_for('admin.admin_logs') }}"
+                                class="btn btn-outline-secondary btn-sm">Clear</a>
+                            {% endif %}
+                        </div>
+                    </form>
                 </div>
                 <div class="card-body p-0">
                     <div class="table-responsive">
@@ -83,10 +178,8 @@
                                 {% for log in logs %}
                                 <tr class="log-row-{{ log.level|lower }}">
                                     <td class="small">{{ log.timestamp }}</td>
-                                    <td><span
-                                            class="badge bg-{{ 'danger' if log.level=='ERROR' else 'warning' if log.level=='USER_REPORT' else 'info' }}">{{
-                                            log.level }}</span></td>
-                                    <td class="small">{{ log.source }}</td>
+                                    <td><span class="badge badge-{{ log.level|lower }}">{{ log.level }}</span></td>
+                                    <td class="small log-source">{{ log.source }}</td>
                                     <td class="small">{{ log.user_id or '-' }}</td>
                                     <td>
                                         <div class="fw-bold text-break">{{ log.message }}</div>
@@ -107,6 +200,45 @@
                         </table>
                     </div>
                 </div>
+
+                <!-- Pagination -->
+                {% if total_pages|default(1) > 1 %}
+                <div class="card-footer d-flex justify-content-between align-items-center">
+                    <small class="text-muted">Showing {{ logs|length }} of {{ total_logs }} entries</small>
+                    <nav>
+                        <ul class="pagination pagination-sm mb-0">
+                            {% if current_page > 1 %}
+                            <li class="page-item">
+                                <a class="page-link"
+                                    href="{{ url_for('admin.admin_logs', page=current_page-1, level=filter_level, source=filter_source) }}">«
+                                    Prev</a>
+                            </li>
+                            {% endif %}
+
+                            {% for p in range(1, total_pages + 1) %}
+                            {% if p == current_page %}
+                            <li class="page-item active"><span class="page-link">{{ p }}</span></li>
+                            {% elif p <= 3 or p> total_pages - 2 or (p >= current_page - 1 and p <= current_page + 1) %}
+                                    <li class="page-item"><a class="page-link"
+                                        href="{{ url_for('admin.admin_logs', page=p, level=filter_level, source=filter_source) }}">{{
+                                        p }}</a></li>
+                                    {% elif p == 4 and current_page > 5 %}
+                                    <li class="page-item disabled"><span class="page-link">...</span></li>
+                                    {% elif p == total_pages - 2 and current_page < total_pages - 4 %} <li
+                                        class="page-item disabled"><span class="page-link">...</span></li>
+                                        {% endif %}
+                                        {% endfor %}
+
+                                        {% if current_page < total_pages %} <li class="page-item">
+                                            <a class="page-link"
+                                                href="{{ url_for('admin.admin_logs', page=current_page+1, level=filter_level, source=filter_source) }}">Next
+                                                »</a>
+                                            </li>
+                                            {% endif %}
+                        </ul>
+                    </nav>
+                </div>
+                {% endif %}
             </div>
         </div>
     </div>
