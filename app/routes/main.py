@@ -90,7 +90,8 @@ def setup_wizard():
         try:
             with atomic_write(CONFIG_FILE, 'w') as f:
                 json.dump(config_data, f, indent=4)
-        except: pass
+        except Exception as e:
+            logger.error(f"Failed to write config file during setup: {e}")
         
         # Create Admin user with custom username
         admin_user = request.form.get('admin_user', 'Admin').strip()
@@ -180,8 +181,8 @@ def scan_page_legacy():
                          inv_item = conn.execute(
                              "SELECT * FROM inventory_items WHERE sku = ?", (tracking,)
                          ).fetchone()
-                 except:
-                     pass
+                 except Exception as e:
+                     logger.warning(f"Inventory SKU lookup failed during scan: {e}")
                  
                  if inv_item:
                      # Inventory mode - pass item to template

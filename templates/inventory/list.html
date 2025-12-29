@@ -535,44 +535,45 @@
     {% endif %}
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    // Search filter with federated search support
-    const searchInput = document.getElementById('searchInput');
-    const crossSearchToggle = document.getElementById('crossSearchToggle');
-    let searchTimeout;
+    <script>
+        // Search filter with federated search support
+        const searchInput = document.getElementById('searchInput');
+        const crossSearchToggle = document.getElementById('crossSearchToggle');
+        let searchTimeout;
 
-    searchInput.addEventListener('input', function () {
-    const filter = this.value.toLowerCase();
+        searchInput.addEventListener('input', function () {
+            const filter = this.value.toLowerCase();
 
-    // Local filter
-    const rows = document.querySelectorAll('#inventoryTable tbody tr');
-    rows.forEach(row => {
-    const text = row.textContent.toLowerCase();
-    row.style.display = text.includes(filter) ? '' : 'none';
-    });
+            // Local filter
+            const rows = document.querySelectorAll('#inventoryTable tbody tr');
+            rows.forEach(row => {
+                const text = row.textContent.toLowerCase();
+                row.style.display = text.includes(filter) ? '' : 'none';
+            });
 
-    // Federated search (debounced)
-    if (crossSearchToggle && crossSearchToggle.checked && filter.length >= 2) {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => performFederatedSearch(filter), 500);
-    } else {
-    document.getElementById('federatedResults').style.display = 'none';
-    }
-    });
+            // Federated search (debounced)
+            if (crossSearchToggle && crossSearchToggle.checked && filter.length >= 2) {
+                clearTimeout(searchTimeout);
+                searchTimeout = setTimeout(() => performFederatedSearch(filter), 500);
+            } else {
+                document.getElementById('federatedResults').style.display = 'none';
+            }
+        });
 
-    function performFederatedSearch(query) {
-    const resultsDiv = document.getElementById('federatedResults');
-    resultsDiv.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Searching linked locations...';
-    resultsDiv.style.display = 'block';
+        function performFederatedSearch(query) {
+            const resultsDiv = document.getElementById('federatedResults');
+            resultsDiv.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Searching linked locations...';
+            resultsDiv.style.display = 'block';
 
-    fetch('/inventory/federated-search?q=' + encodeURIComponent(query))
-    .then(r => r.json())
-    .then(data => {
-    if (!data.results || data.results.length === 0) {
-    resultsDiv.innerHTML = '<span class="text-muted">No results from linked locations</span>';
-    return;
-    }
+            fetch('/inventory/federated-search?q=' + encodeURIComponent(query))
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.results || data.results.length === 0) {
+                        resultsDiv.innerHTML = '<span class="text-muted">No results from linked locations</span>';
+                        return;
+                    }
 
-    resultsDiv.innerHTML = `
+                    resultsDiv.innerHTML = `
     <div class="card">
         <div class="card-header py-2 bg-light">
             <strong>🔗 Results from Other Locations</strong>
@@ -608,117 +609,117 @@
         </div>
     </div>
     `;
-    })
-    .catch(err => {
-    resultsDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
-    });
-    }
+                })
+                .catch(err => {
+                    resultsDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
+                });
+        }
 
-    function requestTransfer(sku, source) {
-    const qty = prompt('Quantity to request:', '1');
-    if (!qty || isNaN(parseInt(qty))) return;
+        function requestTransfer(sku, source) {
+            const qty = prompt('Quantity to request:', '1');
+            if (!qty || isNaN(parseInt(qty))) return;
 
-    fetch('/inventory/request-transfer', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sku, source, quantity: parseInt(qty) })
-    })
-    .then(r => r.json())
-    .then(data => {
-    if (data.success) {
-    alert('Transfer requested! Awaiting approval from ' + source);
-    } else {
-    alert('Error: ' + (data.error || 'Failed to request transfer'));
-    }
-    });
-    }
+            fetch('/inventory/request-transfer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sku, source, quantity: parseInt(qty) })
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Transfer requested! Awaiting approval from ' + source);
+                    } else {
+                        alert('Error: ' + (data.error || 'Failed to request transfer'));
+                    }
+                });
+        }
 
-    // Custom reason toggle
-    document.querySelectorAll('[id^="reasonSelect"]').forEach(select => {
-    select.addEventListener('change', function () {
-    const itemId = this.id.replace('reasonSelect', '');
-    const customInput = document.getElementById('customReason' + itemId);
-    if (this.value === 'custom') {
-    customInput.style.display = 'block';
-    customInput.name = 'reason';
-    this.name = '';
-    } else {
-    customInput.style.display = 'none';
-    customInput.name = '';
-    this.name = 'reason';
-    }
-    });
-    });
+        // Custom reason toggle
+        document.querySelectorAll('[id^="reasonSelect"]').forEach(select => {
+            select.addEventListener('change', function () {
+                const itemId = this.id.replace('reasonSelect', '');
+                const customInput = document.getElementById('customReason' + itemId);
+                if (this.value === 'custom') {
+                    customInput.style.display = 'block';
+                    customInput.name = 'reason';
+                    this.name = '';
+                } else {
+                    customInput.style.display = 'none';
+                    customInput.name = '';
+                    this.name = 'reason';
+                }
+            });
+        });
 
-    // Dark mode
-    if (localStorage.getItem('rscp_darkmode') === 'true') {
-    document.body.classList.add('dark-mode');
-    }
+        // Dark mode
+        if (localStorage.getItem('rscp_darkmode') === 'true') {
+            document.body.classList.add('dark-mode');
+        }
 
-    // Image modal
-    function showImage(url, title) {
-    document.getElementById('modalImage').src = url;
-    document.getElementById('imageModalLabel').textContent = title || 'Image';
-    new bootstrap.Modal(document.getElementById('imageModal')).show();
-    }
+        // Image modal
+        function showImage(url, title) {
+            document.getElementById('modalImage').src = url;
+            document.getElementById('imageModalLabel').textContent = title || 'Image';
+            new bootstrap.Modal(document.getElementById('imageModal')).show();
+        }
 
-    function copyToClipboard(text, element) {
-    navigator.clipboard.writeText(text).then(function () {
-    const originalTitle = element.getAttribute('title');
+        function copyToClipboard(text, element) {
+            navigator.clipboard.writeText(text).then(function () {
+                const originalTitle = element.getAttribute('title');
 
-    // Visual feedback
-    const tooltip = new bootstrap.Tooltip(element, {
-    title: "Copied!",
-    trigger: 'manual'
-    });
-    tooltip.show();
+                // Visual feedback
+                const tooltip = new bootstrap.Tooltip(element, {
+                    title: "Copied!",
+                    trigger: 'manual'
+                });
+                tooltip.show();
 
-    setTimeout(() => {
-    tooltip.dispose();
-    element.setAttribute('title', originalTitle); // Restore original title
-    }, 1000);
-    }, function (err) {
-    console.error('Async: Could not copy text: ', err);
-    });
-    }
+                setTimeout(() => {
+                    tooltip.dispose();
+                    element.setAttribute('title', originalTitle); // Restore original title
+                }, 1000);
+            }, function (err) {
+                console.error('Async: Could not copy text: ', err);
+            });
+        }
 
-    // Scroll position preservation
-    // Use event delegation to capture clicks on edit links (works even for dynamically loaded content)
-    document.addEventListener('click', function (e) {
-    const link = e.target.closest('a[href*="/inventory/edit/"]');
-    if (link) {
-    localStorage.setItem('inventory_scroll_position', window.scrollY);
-    }
-    });
+        // Scroll position preservation
+        // Use event delegation to capture clicks on edit links (works even for dynamically loaded content)
+        document.addEventListener('click', function (e) {
+            const link = e.target.closest('a[href*="/inventory/edit/"]');
+            if (link) {
+                localStorage.setItem('inventory_scroll_position', window.scrollY);
+            }
+        });
 
-    // Restore scroll position on page load if coming back from edit
-    // Use setTimeout to ensure page has fully rendered including images
-    window.addEventListener('load', function () {
-    const savedScrollPos = localStorage.getItem('inventory_scroll_position');
-    if (savedScrollPos) {
-    setTimeout(function () {
-    window.scrollTo({
-    top: parseInt(savedScrollPos),
-    behavior: 'instant'
-    });
-    localStorage.removeItem('inventory_scroll_position');
-    }, 100);
-    }
+        // Restore scroll position on page load if coming back from edit
+        // Use setTimeout to ensure page has fully rendered including images
+        window.addEventListener('load', function () {
+            const savedScrollPos = localStorage.getItem('inventory_scroll_position');
+            if (savedScrollPos) {
+                setTimeout(function () {
+                    window.scrollTo({
+                        top: parseInt(savedScrollPos),
+                        behavior: 'instant'
+                    });
+                    localStorage.removeItem('inventory_scroll_position');
+                }, 100);
+            }
 
-    // Auto Copy SKU from URL (New Item)
-    const urlParams = new URLSearchParams(window.location.search);
-    const newSku = urlParams.get('new_sku');
-    if (newSku) {
-    navigator.clipboard.writeText(newSku).then(() => {
-    // Remove param from URL without reload
-    const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
-    window.history.replaceState({}, document.title, newUrl);
+            // Auto Copy SKU from URL (New Item)
+            const urlParams = new URLSearchParams(window.location.search);
+            const newSku = urlParams.get('new_sku');
+            if (newSku) {
+                navigator.clipboard.writeText(newSku).then(() => {
+                    // Remove param from URL without reload
+                    const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+                    window.history.replaceState({}, document.title, newUrl);
 
-    // Show a non-blocking toast notification
-    const toastDiv = document.createElement('div');
-    toastDiv.className = 'position-fixed bottom-0 end-0 p-3';
-    toastDiv.style.zIndex = '5000';
-    toastDiv.innerHTML = `
+                    // Show a non-blocking toast notification
+                    const toastDiv = document.createElement('div');
+                    toastDiv.className = 'position-fixed bottom-0 end-0 p-3';
+                    toastDiv.style.zIndex = '5000';
+                    toastDiv.innerHTML = `
     <div class="toast show align-items-center text-white bg-success border-0" role="alert">
         <div class="d-flex">
             <div class="toast-body">
@@ -728,11 +729,11 @@
         </div>
     </div>
     `;
-    document.body.appendChild(toastDiv);
-    setTimeout(() => toastDiv.remove(), 4000);
-    });
-    }
-    });
+                    document.body.appendChild(toastDiv);
+                    setTimeout(() => toastDiv.remove(), 4000);
+                });
+            }
+        });
     </script>
 
     <!-- Image Modal -->

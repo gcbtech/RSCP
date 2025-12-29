@@ -1,5 +1,8 @@
 from flask_login import UserMixin
+import logging
 from app.services.db import get_db_connection, BASE_DIR
+
+logger = logging.getLogger(__name__)
 
 # --- Shim Functions for Legacy Compatibility (main.py) ---
 def load_users():
@@ -16,7 +19,8 @@ def load_users():
                 roles_str = r['roles'] if 'roles' in r.keys() else None
                 if roles_str:
                     roles = json.loads(roles_str)
-            except:
+            except Exception as e:
+                logger.warning(f"Failed to parse roles for user {r['username']}: {e}")
                 roles = []
             
             users[r['username']] = {
@@ -42,8 +46,8 @@ def create_user(username, password_hash, is_admin=False):
         conn.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)", 
                     (username, password_hash, is_admin))
         conn.commit()
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Failed to create user '{username}': {e}")
     finally:
         conn.close()
 
@@ -53,8 +57,8 @@ def delete_user(username):
     try:
         conn.execute("DELETE FROM users WHERE username = ?", (username,))
         conn.commit()
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Failed to delete user '{username}': {e}")
     finally:
         conn.close()
 
@@ -64,8 +68,8 @@ def update_user_password(username, password_hash):
     try:
         conn.execute("UPDATE users SET password_hash = ? WHERE username = ?", (password_hash, username))
         conn.commit()
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Failed to update password for user '{username}': {e}")
     finally:
         conn.close()
 
@@ -75,8 +79,8 @@ def update_user_admin_status(username, is_admin):
     try:
         conn.execute("UPDATE users SET is_admin = ? WHERE username = ?", (is_admin, username))
         conn.commit()
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Failed to update admin status for user '{username}': {e}")
     finally:
         conn.close()
 # -------------------------------------------------------
@@ -113,7 +117,8 @@ class User(UserMixin):
         try:
             if user['roles']:
                 roles = json.loads(user['roles'])
-        except:
+        except Exception as e:
+            logger.warning(f"Failed to parse roles for user ID {user_id}: {e}")
             roles = []
         
         return User(user['id'], user['username'], user['is_admin'], roles)
