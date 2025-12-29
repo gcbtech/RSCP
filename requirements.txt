@@ -1,5 +1,6 @@
 # RSCP Dependencies
 Flask>=2.3.0
+Flask-Login>=0.6.0
 pandas>=2.0.0
 werkzeug>=2.3.0
 beautifulsoup4>=4.12.0
