@@ -100,7 +100,8 @@ def get_file_age(filepath: str) -> float:
     try:
         stats = os.stat(filepath)
         return round((time.time() - stats.st_mtime) / 3600, 1)
-    except: return 999.0
+    except OSError:
+        return 999.0
 
 def sync_manifest():
     """Reads manifest.csv and updates the packages table (Uses CSV module)."""
@@ -178,7 +179,8 @@ def sync_manifest():
                             if d_dt == today: status = 'expected'
                             elif d_dt < today: status = 'past_due'
                             # future dates remain 'on_time'
-                    except: pass
+                    except ValueError:
+                        pass  # Date parsing failed
                     
                     # Trim Check
                     if do_trim and status == 'past_due' and existing['date_scanned']: 
@@ -187,7 +189,8 @@ def sync_manifest():
                             if d_dt < sixty_days_ago: 
                                 cur.execute("DELETE FROM packages WHERE id = ?", (existing['id'],))
                                 continue
-                        except: pass
+                        except ValueError:
+                            pass  # Date parsing failed
 
                     if existing['status'] in ['expected', 'past_due', 'pending', 'on_time', 'received']:
                          if existing['date_scanned']:
@@ -207,7 +210,8 @@ def sync_manifest():
                             if d_dt == today: status = 'expected'
                             elif d_dt < today: status = 'past_due'
                             else: status = 'on_time'
-                    except: pass
+                    except ValueError:
+                        pass  # Date parsing failed
 
                     cur.execute('''
                         INSERT INTO packages (tracking_number, item_name, date_expected, quantity, image_url, status, asin, source_url)

@@ -52,7 +52,7 @@ def ensure_db_ready():
                 conn.execute(sql)
                 conn.commit()
                 logger.info(f"Added {col_name} column to packages.")
-            except:
+            except sqlite3.OperationalError:
                 pass  # Column already exists
         
         # Inventory Module Tables (V1.16)
@@ -78,7 +78,7 @@ def ensure_db_ready():
             conn.execute("ALTER TABLE users ADD COLUMN badge_id TEXT UNIQUE")
             conn.commit()
             logger.info("Added badge_id column to users.")
-        except:
+        except sqlite3.OperationalError:
             pass  # Column already exists
         
         # POS Module Tables (V1.18)
@@ -143,7 +143,7 @@ def _create_inventory_tables(conn):
                 conn.execute(sql)
                 conn.commit()
                 logger.info(f"Added {col_name} column to inventory_items.")
-            except:
+            except sqlite3.OperationalError:
                 pass  # Column already exists
         
         # Indexes for inventory_items

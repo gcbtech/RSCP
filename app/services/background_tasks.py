@@ -142,7 +142,8 @@ def email_ingest_job():
                             d_dt = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
                             if d_dt == today: status = 'expected'
                             elif d_dt < today: status = 'past_due'
-                    except: pass
+                    except ValueError:
+                        pass  # Date parsing failed
                     
                     # Insert or Ignore
                     try:
@@ -162,7 +163,8 @@ def email_ingest_job():
                         with open(MANIFEST_FILE, 'a') as f:
                             for item in items:
                                 f.write(f"{item['tracking']},{item.get('name','Item')},1,{item.get('date','Pending')},{item.get('image_url','')}\n")
-                    except: pass
+                    except IOError as e:
+                        logger.warning(f"[Auto-Ingest] Could not update manifest CSV: {e}")
                     
             finally:
                 conn.close()
@@ -200,8 +202,47 @@ def start_scheduler():
     """Start the APScheduler with all background jobs.
     
     Called once at application startup from app.py.
+    Uses a file-based lock to ensure only one worker starts the scheduler
+    when running with multiple gunicorn workers.
     """
     global scheduler, SYNC_STATUS
+    
+    # Already running check
+    if scheduler is not None and SYNC_STATUS['scheduler_running']:
+        logger.debug("[Background] Scheduler already running in this process, skipping")
+        return
+    
+    # Try to acquire lock (only one worker should start scheduler)
+    lock_file_path = '/tmp/rscp_scheduler.lock'
+    
+    try:
+        # Try to create lock file exclusively
+        lock_fd = os.open(lock_file_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(lock_fd, str(os.getpid()).encode())
+        os.close(lock_fd)
+        logger.info("[Background] This worker acquired scheduler lock")
+    except FileExistsError:
+        # Another worker already has the lock - check if it's still running
+        try:
+            with open(lock_file_path, 'r') as f:
+                pid = int(f.read().strip())
+            # Check if that process is still alive
+            os.kill(pid, 0)  # Doesn't actually kill, just checks
+            logger.info(f"[Background] Scheduler owned by worker PID {pid}, skipping")
+            return
+        except (ProcessLookupError, ValueError, FileNotFoundError):
+            # Process died or lock file is stale, take over
+            try:
+                os.remove(lock_file_path)
+                lock_fd = os.open(lock_file_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(lock_fd, str(os.getpid()).encode())
+                os.close(lock_fd)
+                logger.info("[Background] Took over stale scheduler lock")
+            except:
+                logger.info("[Background] Could not acquire lock, skipping scheduler")
+                return
+    except Exception as e:
+        logger.warning(f"[Background] Lock error: {e}, starting scheduler anyway (dev mode?)")
     
     if APSCHEDULER_AVAILABLE:
         scheduler = BackgroundScheduler(
@@ -247,13 +288,23 @@ def start_scheduler():
 
 
 def shutdown_scheduler():
-    """Gracefully shutdown the scheduler."""
+    """Gracefully shutdown the scheduler and release the lock file."""
     global scheduler, SYNC_STATUS
     
     if scheduler and SYNC_STATUS['scheduler_running']:
         logger.info("[Background] Shutting down scheduler...")
         scheduler.shutdown(wait=False)
         SYNC_STATUS['scheduler_running'] = False
+        
+        # Clean up lock file
+        lock_file_path = '/tmp/rscp_scheduler.lock'
+        try:
+            if os.path.exists(lock_file_path):
+                os.remove(lock_file_path)
+                logger.debug("[Background] Scheduler lock file removed")
+        except Exception as e:
+            logger.warning(f"[Background] Could not remove lock file: {e}")
+        
         logger.info("[Background] Scheduler stopped.")
 
 

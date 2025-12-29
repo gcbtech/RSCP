@@ -131,7 +131,7 @@ def save_margin_settings():
     enabled = request.form.get('margin_enabled') == 'on'
     try:
         percent = float(request.form.get('margin_percent', 20))
-    except:
+    except ValueError:
         percent = 20
     
     save_config_value('PREFERRED_MARGIN_ENABLED', enabled)
@@ -233,12 +233,12 @@ def save_pos_approval_settings():
     
     try:
         max_discount_percent = float(request.form.get('max_discount_percent', 10))
-    except:
+    except ValueError:
         max_discount_percent = 10
     
     try:
         max_discount_amount = float(request.form.get('max_discount_amount', 20))
-    except:
+    except ValueError:
         max_discount_amount = 20
     
     require_manager_refund = request.form.get('require_manager_refund') == 'on'

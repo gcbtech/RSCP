@@ -171,7 +171,7 @@ def upload_preview():
         else:
             try:
                 df = pd.read_csv(file, encoding='utf-8')
-            except:
+            except UnicodeDecodeError:
                 file.seek(0)
                 df = pd.read_csv(file, encoding='cp1252')
         
@@ -306,8 +306,8 @@ def upload_confirm():
         # Cleanup temp file
         try:
             os.remove(preview['temp_file'])
-        except:
-            pass
+        except OSError:
+            pass  # Temp file already removed
         
         # Clear session
         session.pop('upload_preview', None)
@@ -328,8 +328,8 @@ def upload_cancel():
     if preview and preview.get('temp_file'):
         try:
             os.remove(preview['temp_file'])
-        except:
-            pass
+        except OSError:
+            pass  # Temp file already removed
     flash("Import cancelled.")
     return redirect(url_for('admin.admin_panel'))
 

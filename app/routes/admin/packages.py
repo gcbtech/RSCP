@@ -111,8 +111,8 @@ def admin_panel():
             'POS_EMAIL_USER': get_pos_setting('POS_EMAIL_USER', ''),
             'POS_EMAIL_RECIPIENTS': get_pos_setting('POS_EMAIL_RECIPIENTS', ''),
         }
-    except:
-        pass
+    except Exception as e:
+        logger.warning(f"Error loading POS settings for admin panel: {e}")
     
     return render_template('admin.html', 
                            packages=packages, 
@@ -152,7 +152,8 @@ def add_manual_item():
                     dt_obj = datetime.datetime.strptime(date_input, '%Y-%m-%d').date()
                     if dt_obj == today: status = 'expected'
                     elif dt_obj < today: status = 'past_due'
-                except: pass
+                except ValueError:
+                    pass  # Date parsing failed
             
             conn.execute('''
                 INSERT INTO packages (tracking_number, item_name, date_expected, quantity, status, source, priority, manual_date)
@@ -191,7 +192,8 @@ def delete_package_from_db(tracking):
             df = df[df['TrackingNumber'].astype(str).str.strip() != tracking]
             with atomic_write(MANIFEST_FILE, 'w') as f:
                 df.to_csv(f, index=False)
-        except: pass
+        except Exception as e:
+            logger.warning(f"Could not remove package from manifest: {e}")
         
     return redirect(url_for('admin.admin_panel'))
 
