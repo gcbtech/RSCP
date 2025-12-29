@@ -41,7 +41,7 @@ def index():
         return redirect(url_for('auth.login'))
     
     config = load_config()
-    inv_enabled = config.get('INVENTORY_MODULE_ENABLED', False)
+    inv_enabled = config.get('INVENTORY_ENABLED', False)
     pos_enabled = config.get('POS_ENABLED', False)
     
     return render_template('gateway.html', inventory_enabled=inv_enabled, pos_enabled=pos_enabled)
