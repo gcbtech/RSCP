@@ -1301,7 +1301,58 @@
                                         <label class="form-check-label" for="webhookInventorySwitch">Enable</label>
                                     </div>
 
-                                    <button class="btn btn-primary w-100" type="submit">Save</button>
+                                    <button class="btn btn-primary w-100" type="submit">Save Webhooks</button>
+                                </form>
+
+                                <hr class="my-3">
+
+                                <!-- In-App Notifications -->
+                                <form action="/admin/save_inapp_notifications" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                                    <div class="section-title">🔔 In-App Notifications</div>
+                                    <p class="small text-muted mb-2">
+                                        Show notifications in the sidebar bell icon.
+                                    </p>
+
+                                    <div class="form-check form-switch mb-2">
+                                        <input class="form-check-input" type="checkbox" name="notify_low_stock"
+                                            id="notifyLowStock" {% if config.get('NOTIFY_LOW_STOCK', False) %}checked{%
+                                            endif %}>
+                                        <label class="form-check-label" for="notifyLowStock">⚠️ Low Stock Alerts</label>
+                                    </div>
+
+                                    <div class="form-check form-switch mb-2">
+                                        <input class="form-check-input" type="checkbox" name="notify_oos" id="notifyOOS"
+                                            {% if config.get('NOTIFY_OOS', False) %}checked{% endif %}>
+                                        <label class="form-check-label" for="notifyOOS">🚨 Out of Stock Alerts</label>
+                                    </div>
+
+                                    <div class="form-check form-switch mb-2">
+                                        <input class="form-check-input" type="checkbox" name="notify_federation"
+                                            id="notifyFederation" {% if config.get('NOTIFY_FEDERATION', False)
+                                            %}checked{% endif %}>
+                                        <label class="form-check-label" for="notifyFederation">🔗 Federation Transfer
+                                            Requests</label>
+                                    </div>
+
+                                    <div class="form-check form-switch mb-2">
+                                        <input class="form-check-input" type="checkbox" name="notify_priority_packages"
+                                            id="notifyPriorityPkg" {% if config.get('NOTIFY_PRIORITY_PACKAGES', False)
+                                            %}checked{% endif %}>
+                                        <label class="form-check-label" for="notifyPriorityPkg">⭐ Priority Package
+                                            Arrivals</label>
+                                    </div>
+
+                                    <div class="form-check form-switch mb-3">
+                                        <input class="form-check-input" type="checkbox" name="notify_normal_packages"
+                                            id="notifyNormalPkg" {% if config.get('NOTIFY_NORMAL_PACKAGES', False)
+                                            %}checked{% endif %}>
+                                        <label class="form-check-label" for="notifyNormalPkg">📦 Normal Package
+                                            Arrivals</label>
+                                    </div>
+
+                                    <button class="btn btn-success w-100" type="submit">Save In-App Settings</button>
                                 </form>
                             </div>
                         </div>

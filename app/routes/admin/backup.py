@@ -296,6 +296,33 @@ def save_notifications():
     return redirect(url_for('admin.admin_panel', tab='settings'))
 
 
+@admin_bp.route('/save_inapp_notifications', methods=['POST'])
+def save_inapp_notifications():
+    """Save in-app notification toggle settings."""
+    error = require_admin()
+    if error:
+        return error
+    
+    # Get form values
+    low_stock = request.form.get('notify_low_stock') == 'on'
+    oos = request.form.get('notify_oos') == 'on'
+    federation = request.form.get('notify_federation') == 'on'
+    priority_pkg = request.form.get('notify_priority_packages') == 'on'
+    normal_pkg = request.form.get('notify_normal_packages') == 'on'
+    
+    logger.info(f"Saving in-app notifications: low_stock={low_stock}, oos={oos}, federation={federation}, priority={priority_pkg}, normal={normal_pkg}")
+    
+    # Save each toggle setting
+    save_config_value('NOTIFY_LOW_STOCK', low_stock)
+    save_config_value('NOTIFY_OOS', oos)
+    save_config_value('NOTIFY_FEDERATION', federation)
+    save_config_value('NOTIFY_PRIORITY_PACKAGES', priority_pkg)
+    save_config_value('NOTIFY_NORMAL_PACKAGES', normal_pkg)
+    
+    flash("In-app notification settings saved.")
+    return redirect(url_for('admin.admin_panel', tab='settings'))
+
+
 @admin_bp.route('/save_session_timeout', methods=['POST'])
 def save_session_timeout():
     """Save session timeout settings."""
