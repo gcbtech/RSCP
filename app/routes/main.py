@@ -88,18 +88,15 @@ def setup_wizard():
                 json.dump(config_data, f, indent=4)
         except: pass
         
-        # Create Admin user
+        # Create Users
         create_user("Admin", config_data["ADMIN_HASH"], is_admin=True) 
         
-        # Create Staff user (always create, PIN is optional)
         staff_user = request.form.get('first_user', 'Staff').strip()
         staff_pin = request.form.get('first_pin', '').strip()
         
-        # Create staff user - PIN is stored separately, password is empty (login via PIN)
-        if staff_user:
-            # Staff users use PIN for login, not password
-            staff_hash = generate_password_hash(staff_pin) if staff_pin else None
-            create_user(staff_user, staff_hash, is_admin=False, pin_hash=generate_password_hash(staff_pin) if staff_pin else None)
+        if staff_pin:
+            # Create staff user with PIN as password
+            create_user(staff_user, generate_password_hash(staff_pin), is_admin=False)
             
         return redirect(url_for('auth.login'))
         

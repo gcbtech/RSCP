@@ -35,12 +35,12 @@ def load_users():
     finally:
         conn.close()
 
-def create_user(username, password_hash, is_admin=False, pin_hash=None):
+def create_user(username, password_hash, is_admin=False):
     """Legacy function used by main.py setup wizard."""
     conn = get_db_connection()
     try:
-        conn.execute("INSERT INTO users (username, password_hash, is_admin, pin_hash) VALUES (?, ?, ?, ?)", 
-                    (username, password_hash, is_admin, pin_hash))
+        conn.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)", 
+                    (username, password_hash, is_admin))
         conn.commit()
     except:
         pass
