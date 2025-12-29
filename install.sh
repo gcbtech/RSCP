@@ -74,12 +74,12 @@ echo -e "${BLUE}Select installation branch:${NC}"
 echo "  1) main   - Stable release"
 echo "  2) Beta   - Latest features (may have bugs)"
 echo ""
-read -p "Enter choice [1/2] (default: 1): " branch_choice
+read -p "Enter choice [1/2] (default: 1): " branch_choice < /dev/tty
 
 case $branch_choice in
     2)
-        BRANCH="Beta"
-        echo -e "${YELLOW}Installing from Beta branch${NC}"
+        BRANCH="beta"
+        echo -e "${YELLOW}Installing from beta branch${NC}"
         ;;
     *)
         BRANCH="main"
