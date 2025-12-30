@@ -281,15 +281,19 @@ def add_peer():
     if not data.get('name') or not data.get('url'):
         return jsonify({'error': 'Name and URL are required'}), 400
     
-    # Generate API key for this peer
+    # Generate API key for this peer (they use this to call US)
     api_key = generate_api_key()
+    
+    # The remote_api_key is the key THEY give US to call THEM
+    remote_api_key = data.get('remote_api_key', '').strip() or None
     
     conn = get_db_connection()
     try:
         conn.execute('''
-            INSERT INTO federation_peers (name, url, api_key, status, created_by)
-            VALUES (?, ?, ?, 'pending', ?)
-        ''', (data['name'], data['url'].rstrip('/'), api_key, current_user.username))
+            INSERT INTO federation_peers (name, url, api_key, remote_api_key, status, created_by)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (data['name'], data['url'].rstrip('/'), api_key, remote_api_key, 
+              'active' if remote_api_key else 'pending', current_user.username))
         conn.commit()
         
         peer_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
@@ -297,7 +301,7 @@ def add_peer():
         return jsonify({
             'id': peer_id,
             'api_key': api_key,
-            'message': 'Peer added. Share API key with the remote instance to complete linking.'
+            'message': 'Peer added. Share YOUR API key with them, and enter THEIR API key to complete linking.'
         })
     finally:
         conn.close()
@@ -319,6 +323,32 @@ def remove_peer(peer_id):
         conn.close()
 
 
+@federation_bp.route('/admin/peers/<int:peer_id>/remote-key', methods=['POST'])
+@login_required
+def set_remote_key(peer_id):
+    """Set the remote API key for a federation peer (admin only)."""
+    if not current_user.is_admin:
+        return jsonify({'error': 'Admin access required'}), 403
+    
+    data = request.get_json()
+    remote_key = data.get('remote_api_key', '').strip()
+    
+    if not remote_key:
+        return jsonify({'error': 'Remote API key is required'}), 400
+    
+    conn = get_db_connection()
+    try:
+        conn.execute('''
+            UPDATE federation_peers 
+            SET remote_api_key = ?, status = 'active'
+            WHERE id = ?
+        ''', (remote_key, peer_id))
+        conn.commit()
+        return jsonify({'success': True, 'message': 'Remote API key saved. You can now test the connection.'})
+    finally:
+        conn.close()
+
+
 @federation_bp.route('/admin/peers/<int:peer_id>/test', methods=['POST'])
 @login_required
 def test_peer_connection(peer_id):
@@ -333,11 +363,19 @@ def test_peer_connection(peer_id):
         if not peer:
             return jsonify({'error': 'Peer not found'}), 404
         
+        # Use remote_api_key (THEIR key) to call THEM
+        remote_key = peer['remote_api_key']
+        if not remote_key:
+            return jsonify({
+                'success': False,
+                'error': 'No remote API key configured. Enter the API key from the remote instance.'
+            })
+        
         import requests
         try:
             response = requests.get(
                 f"{peer['url']}/api/federation/ping",
-                headers={'X-API-Key': peer['api_key']},
+                headers={'X-API-Key': remote_key},
                 timeout=10
             )
             

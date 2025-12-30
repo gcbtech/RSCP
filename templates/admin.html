@@ -1013,19 +1013,27 @@
                             </div>
                             <div class="card-body">
                                 <form id="addPeerForm" class="row g-2">
-                                    <div class="col-md-4">
+                                    <div class="col-md-3">
                                         <input type="text" id="peerName" class="form-control"
                                             placeholder="Name (e.g. Warehouse B)">
                                     </div>
-                                    <div class="col-md-6">
+                                    <div class="col-md-4">
                                         <input type="url" id="peerUrl" class="form-control"
                                             placeholder="URL (e.g. https://192.168.1.50:5000)">
+                                    </div>
+                                    <div class="col-md-3">
+                                        <input type="text" id="peerRemoteKey" class="form-control"
+                                            placeholder="Their API Key (optional)">
                                     </div>
                                     <div class="col-md-2">
                                         <button type="button" class="btn btn-success w-100"
                                             onclick="addPeer()">Add</button>
                                     </div>
                                 </form>
+                                <small class="text-muted mt-1">
+                                    Enter the remote instance's API key if you have it, or add it later via "Set Key"
+                                    button.
+                                </small>
                                 <div id="addPeerStatus" class="mt-2"></div>
                             </div>
                         </div>
@@ -1741,10 +1749,12 @@
                                 <span class="badge ${p.status === 'active' ? 'bg-success' : 'bg-warning'}">
                                     ${p.status}
                                 </span>
+                                ${p.status === 'pending' ? '<br><small class="text-muted">Needs their API key</small>' : ''}
                             </td>
                             <td>
                                 <button class="btn btn-sm btn-outline-primary" onclick="testPeer(${p.id})">Test</button>
-                                <button class="btn btn-sm btn-outline-info" onclick="showApiKey(${p.id}, '${p.api_key}')">Key</button>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="setRemoteKey(${p.id})" title="Enter their API key">Set Key</button>
+                                <button class="btn btn-sm btn-outline-info" onclick="showApiKey(${p.id}, '${p.api_key}')" title="Your key to share">My Key</button>
                                 <button class="btn btn-sm btn-outline-danger" onclick="removePeer(${p.id})">Remove</button>
                             </td>
                         </tr>
@@ -1755,9 +1765,30 @@
                 });
         }
 
+        function setRemoteKey(id) {
+            const key = prompt('Enter the API key from the remote instance:');
+            if (!key) return;
+
+            fetch(`/api/federation/admin/peers/${id}/remote-key`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ remote_api_key: key })
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        alert(data.message);
+                        loadPeers();
+                    } else {
+                        alert('Error: ' + data.error);
+                    }
+                });
+        }
+
         function addPeer() {
             const name = document.getElementById('peerName').value.trim();
             const url = document.getElementById('peerUrl').value.trim();
+            const remoteKey = document.getElementById('peerRemoteKey').value.trim();
             const statusDiv = document.getElementById('addPeerStatus');
 
             if (!name || !url) {
@@ -1771,16 +1802,17 @@
                     'Content-Type': 'application/json',
                     'X-CSRFToken': document.querySelector('input[name="csrf_token"]')?.value || ''
                 },
-                body: JSON.stringify({ name, url })
+                body: JSON.stringify({ name, url, remote_api_key: remoteKey })
             })
                 .then(r => r.json())
                 .then(data => {
                     if (data.error) {
                         statusDiv.innerHTML = `<span class="text-danger">${data.error}</span>`;
                     } else {
-                        statusDiv.innerHTML = `<span class="text-success">Added! API Key: <code>${data.api_key}</code></span>`;
+                        statusDiv.innerHTML = `<span class="text-success">Added! Your API Key to share: <code>${data.api_key}</code></span>`;
                         document.getElementById('peerName').value = '';
                         document.getElementById('peerUrl').value = '';
+                        document.getElementById('peerRemoteKey').value = '';
                         loadPeers();
                     }
                 })

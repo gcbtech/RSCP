@@ -118,6 +118,14 @@ def ensure_db_ready():
         except sqlite3.OperationalError:
             pass  # Column already exists
         
+        # V1.21: Add remote_api_key to federation_peers for bidirectional linking
+        try:
+            conn.execute("ALTER TABLE federation_peers ADD COLUMN remote_api_key TEXT")
+            conn.commit()
+            logger.info("Added remote_api_key column to federation_peers.")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        
         # POS Module Tables (V1.18)
         _create_pos_tables(conn)
             
