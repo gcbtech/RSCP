@@ -324,16 +324,30 @@
 
     <!-- Search -->
     <div class="mb-3">
-        <div class="input-group">
-            <input type="text" id="searchInput" class="form-control" placeholder="Search inventory...">
-            {% if config.FEDERATION_CROSS_SEARCH_ENABLED %}
-            <span class="input-group-text bg-light">
-                <input class="form-check-input mt-0 me-1" type="checkbox" id="crossSearchToggle"
-                    title="Search linked locations">
-                <label class="form-check-label small" for="crossSearchToggle">🔗 All Locations</label>
-            </span>
-            {% endif %}
+        <form action="{{ url_for('inventory.list_items') }}" method="GET" class="d-flex">
+            <div class="input-group">
+                <input type="text" id="searchInput" name="q" class="form-control"
+                    placeholder="Search all inventory (name, SKU, location, category)..."
+                    value="{{ search_query or '' }}">
+                {% if config.FEDERATION_CROSS_SEARCH_ENABLED %}
+                <span class="input-group-text bg-light">
+                    <input class="form-check-input mt-0 me-1" type="checkbox" id="crossSearchToggle"
+                        title="Search linked locations">
+                    <label class="form-check-label small" for="crossSearchToggle">🔗 All Locations</label>
+                </span>
+                {% endif %}
+                <button type="submit" class="btn btn-primary">🔍 Search</button>
+                {% if search_query %}
+                <a href="{{ url_for('inventory.list_items') }}" class="btn btn-outline-secondary">✕ Clear</a>
+                {% endif %}
+            </div>
+        </form>
+        {% if search_query %}
+        <div class="mt-2 text-muted">
+            <small>Showing {{ total_items }} result{{ 's' if total_items != 1 else '' }} for "{{ search_query
+                }}"</small>
         </div>
+        {% endif %}
         <div id="federatedResults" class="mt-2" style="display: none;"></div>
     </div>
 

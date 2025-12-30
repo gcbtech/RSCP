@@ -164,10 +164,13 @@
                                 <br><small class="text-muted">SKU: {{ item.sku }}</small>
                             </td>
                             <td>
-                                <span
-                                    class="badge {% if item.quantity == 0 %}bg-danger{% elif item.quantity <= 5 %}bg-warning text-dark{% else %}bg-success{% endif %}">
-                                    {{ item.quantity }}
-                                </span>
+                                {% if item.quantity <= 0 %} <span class="badge bg-danger">{{ item.quantity }}</span>
+                                    {% elif item.alert_enabled and item.alert_threshold and item.quantity <=
+                                        item.alert_threshold %} <span class="badge bg-warning text-dark">{{
+                                        item.quantity }}</span>
+                                        {% else %}
+                                        <span class="badge bg-success">{{ item.quantity }}</span>
+                                        {% endif %}
                             </td>
                             <td>
                                 <div class="form-check form-switch">

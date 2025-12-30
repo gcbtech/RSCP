@@ -98,7 +98,7 @@
                                 <td class="text-danger fw-bold">-${{ "%.2f"|format(r.amount) }}</td>
                                 <td>{{ r.reason }}</td>
                                 <td>{{ r.manager_name }}</td>
-                                <td>{{ r.created_at[:16] }}</td>
+                                <td>{{ r.created_at | local_time }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>

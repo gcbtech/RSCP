@@ -178,6 +178,25 @@ def receive_transfer_request():
         
         transfer_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
         
+        # In-app notification for incoming transfer
+        try:
+            from app.services.data_manager import load_config
+            from app.routes.notifications import create_notification
+            conf = load_config() or {}
+            
+            if conf.get('NOTIFY_FEDERATION', False):
+                item_data = data['item_data']
+                item_name = item_data.get('name', data['sku'])
+                create_notification(
+                    user_id=None,
+                    title=f"🔗 Incoming Transfer: {item_name}",
+                    message=f"Qty: {data['quantity']} from {data['requested_by']} - Expires in 72h",
+                    notification_type='info',
+                    link="/inventory/federation/admin"
+                )
+        except Exception as e:
+            logger.error(f"Federation notification error: {e}")
+        
         return jsonify({
             'status': 'pending',
             'transfer_id': transfer_id,

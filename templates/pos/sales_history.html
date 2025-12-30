@@ -79,7 +79,7 @@
                     {% for order in orders %}
                     <tr>
                         <td class="font-monospace">{{ order.order_number }}</td>
-                        <td>{{ order.created_at[:16] }}</td>
+                        <td>{{ order.created_at | local_time }}</td>
                         <td>{{ order.operator_name }}</td>
                         <td>
                             <span

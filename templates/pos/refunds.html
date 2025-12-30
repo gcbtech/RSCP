@@ -113,7 +113,7 @@
                 </div>
                 <div class="text-end">
                     <div class="fw-bold">${{ "%.2f"|format(order.total) }}</div>
-                    <small class="text-muted">{{ order.created_at[:16] }} • {{ order.operator_name }}</small>
+                    <small class="text-muted">{{ order.created_at | local_time }} • {{ order.operator_name }}</small>
                 </div>
                 <a href="{{ url_for('pos.refund_order', order_number=order.order_number) }}"
                     class="btn btn-sm btn-outline-primary">View</a>

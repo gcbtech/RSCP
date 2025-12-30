@@ -160,6 +160,28 @@ def add_manual_item():
                 VALUES (?, ?, ?, 1, ?, 'manual', ?, ?)
             ''', (tracking, name, date_input, status, 1 if is_priority else 0, date_input))
             conn.commit()
+            
+            # In-app notification for new package
+            try:
+                from app.services.data_manager import load_config
+                from app.routes.notifications import create_notification
+                conf = load_config() or {}
+                
+                should_notify = (is_priority and conf.get('NOTIFY_PRIORITY_PACKAGES', False)) or \
+                                (not is_priority and conf.get('NOTIFY_NORMAL_PACKAGES', False))
+                
+                if should_notify:
+                    priority_label = "🔴 PRIORITY" if is_priority else "📦"
+                    create_notification(
+                        user_id=None,
+                        title=f"{priority_label} Package Added: {name}",
+                        message=f"Tracking: {tracking}",
+                        notification_type='warning' if is_priority else 'info',
+                        link="/admin#packages"
+                    )
+            except Exception as e:
+                logger.error(f"Package notification error: {e}")
+            
             flash(f"Added {name}")
         except Exception as e:
             flash(f"Error adding item: {e}")

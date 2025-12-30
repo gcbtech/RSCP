@@ -14,8 +14,9 @@
             font-family: 'Courier New', monospace;
             width: 80mm;
             margin: 0 auto;
-            padding: 10mm;
-            font-size: 12px;
+            padding: 4mm;
+            font-size: 13px;
+            font-weight: 500;
         }
 
         .header {
@@ -26,12 +27,13 @@
         }
 
         .header h1 {
-            font-size: 18px;
+            font-size: 20px;
+            font-weight: bold;
             margin-bottom: 4px;
         }
 
         .order-number {
-            font-size: 14px;
+            font-size: 16px;
             font-weight: bold;
         }
 
@@ -56,29 +58,36 @@
 
         .item-name {
             font-weight: bold;
+            font-size: 14px;
         }
 
         .item-detail {
-            font-size: 10px;
-            color: #666;
+            font-size: 13px;
+            font-weight: 600;
+            color: #000;
+        }
+
+        .item-price {
+            font-weight: bold;
+            font-size: 14px;
         }
 
         .total-row {
             font-weight: bold;
-            font-size: 16px;
+            font-size: 18px;
             margin-top: 8px;
         }
 
         .footer {
             text-align: center;
             padding-top: 12px;
-            font-size: 10px;
+            font-size: 11px;
         }
 
         @media print {
             body {
                 width: 100%;
-                padding: 0;
+                padding: 2mm;
             }
         }
     </style>
@@ -89,15 +98,21 @@
         {% if org_name %}
         <h1>{{ org_name }}</h1>
         {% if receipt_store_name %}
-        <div>{{ receipt_store_name }}</div>
+        <div
+            style="{% if receipt_store_name_bold %}font-weight: bold;{% endif %}{% if receipt_store_name_italic %}font-style: italic;{% endif %}">
+            {{ receipt_store_name }}</div>
         {% endif %}
         {% elif receipt_store_name %}
-        <h1>{{ receipt_store_name }}</h1>
+        <h1
+            style="{% if receipt_store_name_bold %}font-weight: bold;{% endif %}{% if receipt_store_name_italic %}font-style: italic;{% endif %}">
+            {{ receipt_store_name }}</h1>
         {% else %}
         <h1>Receipt</h1>
         {% endif %}
         {% if receipt_header %}
-        <div style="white-space: pre-line; font-size: 10px; margin-top: 4px;">{{ receipt_header }}</div>
+        <div
+            style="white-space: pre-line; font-size: 10px; margin-top: 4px;{% if receipt_header_bold %} font-weight: bold;{% endif %}{% if receipt_header_italic %} font-style: italic;{% endif %}">
+            {{ receipt_header }}</div>
         {% endif %}
         <div class="order-number">{{ order.order_number }}</div>
         <div>{{ order.created_at | local_time }}</div>
@@ -165,7 +180,9 @@
 
     <div class="footer">
         {% if receipt_footer %}
-        <p style="white-space: pre-line;">{{ receipt_footer }}</p>
+        <p
+            style="white-space: pre-line;{% if receipt_footer_bold %} font-weight: bold;{% endif %}{% if receipt_footer_italic %} font-style: italic;{% endif %}">
+            {{ receipt_footer }}</p>
         {% else %}
         <p>Thank you for your purchase!</p>
         {% endif %}

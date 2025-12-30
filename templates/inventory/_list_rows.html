@@ -88,6 +88,8 @@
                 title="Buy on Amazon">🛒</a>
             {% elif item.source_url and item.source_url != 'None' %}
             <a href="{{ item.source_url }}" target="_blank" class="btn btn-outline-warning" title="Purchase">🛒</a>
+            {% else %}
+            <button class="btn btn-outline-secondary" disabled title="No purchase URL configured">🛒</button>
             {% endif %}
             <!-- Adjust Quantity -->
             <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#adjustModal{{ item.id }}">
@@ -101,9 +103,6 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-outline-danger">🗑️</button>
             </form>
-            <button class="btn btn-outline-dark" data-name="{{ item.name }}"
-                onclick="openLabelModal('{{ item.sku }}', this.getAttribute('data-name'), '{{ item.sell_price }}')"
-                title="Print Label">🖨️</button>
         </div>
     </td>
 </tr>

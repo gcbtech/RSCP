@@ -34,6 +34,25 @@ def ensure_db_ready():
         except Exception:
             pass  # Column already exists
         
+        # Migrate existing users to have proper roles based on is_admin flag
+        try:
+            # Set super_admin for admins who don't have roles yet
+            conn.execute("""
+                UPDATE users 
+                SET roles = '["super_admin"]' 
+                WHERE is_admin = 1 AND (roles IS NULL OR roles = '[]' OR roles = '')
+            """)
+            # Set operator for non-admins who don't have roles yet
+            conn.execute("""
+                UPDATE users 
+                SET roles = '["operator"]' 
+                WHERE is_admin = 0 AND (roles IS NULL OR roles = '[]' OR roles = '')
+            """)
+            conn.commit()
+            logger.info("Migrated existing users to role-based system.")
+        except Exception as e:
+            logger.warning(f"Role migration note: {e}")
+        
         # Add secondary_ids column to inventory_items (for UPC, part number, etc.)
         try:
             conn.execute("ALTER TABLE inventory_items ADD COLUMN secondary_ids TEXT DEFAULT '{}'")

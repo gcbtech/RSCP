@@ -544,7 +544,7 @@
                     <tbody>
                         {% for tx in transactions %}
                         <tr>
-                            <td>{{ tx.created_at[:16] }}</td>
+                            <td>{{ tx.created_at | local_time }}</td>
                             <td><small>{{ tx.user_id or 'System' }}</small></td>
                             <td>
                                 <span

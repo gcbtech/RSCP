@@ -30,6 +30,15 @@
             color: #666;
         }
 
+        /* White labels on colored card backgrounds */
+        .card-blue .stat-label,
+        .card-green .stat-label,
+        .card-red .stat-label,
+        .card-yellow .stat-label,
+        [style*="background: linear-gradient"] .stat-label {
+            color: white !important;
+        }
+
         .card-green {
             background: linear-gradient(135deg, #28a745, #20c997);
             color: white;

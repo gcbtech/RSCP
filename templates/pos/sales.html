@@ -651,7 +651,7 @@
                         <form action="{{ url_for('pos.cart_recall', held_id=held.id) }}" method="POST" class="d-inline">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn btn-sm btn-outline-primary me-1">
-                                {{ held.note or 'Order ' ~ held.id }} ({{ held.created_at[:16] }})
+                                {{ held.note or 'Order ' ~ held.id }} ({{ held.created_at | local_time }})
                             </button>
                         </form>
                         {% endfor %}

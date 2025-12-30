@@ -444,6 +444,14 @@ def settings():
         set_pos_setting('RECEIPT_HEADER', request.form.get('receipt_header', ''))
         set_pos_setting('RECEIPT_FOOTER', request.form.get('receipt_footer', ''))
         
+        # Receipt styling options
+        set_pos_setting('RECEIPT_STORE_NAME_BOLD', 'true' if request.form.get('receipt_store_name_bold') else 'false')
+        set_pos_setting('RECEIPT_STORE_NAME_ITALIC', 'true' if request.form.get('receipt_store_name_italic') else 'false')
+        set_pos_setting('RECEIPT_HEADER_BOLD', 'true' if request.form.get('receipt_header_bold') else 'false')
+        set_pos_setting('RECEIPT_HEADER_ITALIC', 'true' if request.form.get('receipt_header_italic') else 'false')
+        set_pos_setting('RECEIPT_FOOTER_BOLD', 'true' if request.form.get('receipt_footer_bold') else 'false')
+        set_pos_setting('RECEIPT_FOOTER_ITALIC', 'true' if request.form.get('receipt_footer_italic') else 'false')
+        
         flash('POS settings saved.')
         return redirect(url_for('pos.settings'))
     
@@ -458,7 +466,14 @@ def settings():
                            # Receipt branding
                            receipt_store_name=get_pos_setting('RECEIPT_STORE_NAME', ''),
                            receipt_header=get_pos_setting('RECEIPT_HEADER', ''),
-                           receipt_footer=get_pos_setting('RECEIPT_FOOTER', ''))
+                           receipt_footer=get_pos_setting('RECEIPT_FOOTER', ''),
+                           # Receipt styling
+                           receipt_store_name_bold=get_pos_setting('RECEIPT_STORE_NAME_BOLD', 'false') == 'true',
+                           receipt_store_name_italic=get_pos_setting('RECEIPT_STORE_NAME_ITALIC', 'false') == 'true',
+                           receipt_header_bold=get_pos_setting('RECEIPT_HEADER_BOLD', 'false') == 'true',
+                           receipt_header_italic=get_pos_setting('RECEIPT_HEADER_ITALIC', 'false') == 'true',
+                           receipt_footer_bold=get_pos_setting('RECEIPT_FOOTER_BOLD', 'false') == 'true',
+                           receipt_footer_italic=get_pos_setting('RECEIPT_FOOTER_ITALIC', 'false') == 'true')
 
 
 @pos_bp.route('/management/reports/daily')
@@ -491,9 +506,10 @@ def daily_report():
     except ValueError:
         report_date = date.today()
         report_date_str = report_date.strftime('%Y-%m-%d')
-        
-    start_dt = f"{report_date_str} 00:00:00"
-    end_dt = f"{report_date_str} 23:59:59"
+    
+    # Convert local date to UTC range for correct database queries
+    from app.utils.helpers import local_date_to_utc_range
+    start_dt, end_dt = local_date_to_utc_range(report_date_str)
 
     # 1. Summary Stats
     summary = conn.execute('''
@@ -595,9 +611,10 @@ def daily_report_print():
     except ValueError:
         report_date = date.today()
         report_date_str = report_date.strftime('%Y-%m-%d')
-        
-    start_dt = f"{report_date_str} 00:00:00"
-    end_dt = f"{report_date_str} 23:59:59"
+    
+    # Convert local date to UTC range for correct database queries
+    from app.utils.helpers import local_date_to_utc_range
+    start_dt, end_dt = local_date_to_utc_range(report_date_str)
 
     # 1. Summary Stats
     summary = conn.execute('''

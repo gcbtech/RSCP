@@ -1170,32 +1170,48 @@
                                     </form>
                                     {% endif %}
 
-                                    <!-- Module Access Roles -->
+                                    <!-- RBAC Roles -->
                                     <form action="/admin/set_user_roles/{{ name }}" method="POST" class="mt-2">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <div class="d-flex align-items-center gap-2 flex-wrap">
                                             <small class="text-muted">Roles:</small>
                                             <div class="form-check form-check-inline">
-                                                <input class="form-check-input" type="checkbox" name="role_receiving"
-                                                    id="role_recv_{{ loop.index }}" {{ 'checked' if 'receiving' in
+                                                <input class="form-check-input" type="checkbox" name="role_super_admin"
+                                                    id="role_super_{{ loop.index }}" {{ 'checked' if 'super_admin' in
                                                     (data.get('roles') or []) else '' }}>
-                                                <label class="form-check-label small"
-                                                    for="role_recv_{{ loop.index }}">📦
-                                                    Receiving</label>
+                                                <label class="form-check-label small text-danger"
+                                                    for="role_super_{{ loop.index }}">👑 Super Admin</label>
                                             </div>
                                             <div class="form-check form-check-inline">
-                                                <input class="form-check-input" type="checkbox" name="role_inventory"
-                                                    id="role_inv_{{ loop.index }}" {{ 'checked' if 'inventory' in
-                                                    (data.get('roles') or []) else '' }}>
+                                                <input class="form-check-input" type="checkbox"
+                                                    name="role_inventory_admin" id="role_inv_{{ loop.index }}"
+                                                    {{ 'checked' if 'inventory_admin' in (data.get('roles') or [])
+                                                    else '' }}>
                                                 <label class="form-check-label small" for="role_inv_{{ loop.index }}">📋
-                                                    Inventory</label>
+                                                    Inventory Admin</label>
                                             </div>
                                             <div class="form-check form-check-inline">
-                                                <input class="form-check-input" type="checkbox" name="role_pos"
-                                                    id="role_pos_{{ loop.index }}" {{ 'checked' if 'pos' in
+                                                <input class="form-check-input" type="checkbox" name="role_pos_admin"
+                                                    id="role_pos_{{ loop.index }}" {{ 'checked' if 'pos_admin' in
                                                     (data.get('roles') or []) else '' }}>
                                                 <label class="form-check-label small" for="role_pos_{{ loop.index }}">💳
-                                                    POS</label>
+                                                    POS Admin</label>
+                                            </div>
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="checkbox"
+                                                    name="role_receiving_admin" id="role_recv_{{ loop.index }}"
+                                                    {{ 'checked' if 'receiving_admin' in (data.get('roles') or [])
+                                                    else '' }}>
+                                                <label class="form-check-label small"
+                                                    for="role_recv_{{ loop.index }}">📦 Receiving Admin</label>
+                                            </div>
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="checkbox" name="role_operator"
+                                                    id="role_op_{{ loop.index }}" {{ 'checked' if 'operator' in
+                                                    (data.get('roles') or []) else '' }}>
+                                                <label class="form-check-label small text-muted"
+                                                    for="role_op_{{ loop.index }}">👤
+                                                    Operator</label>
                                             </div>
                                             <button class="btn btn-sm btn-outline-primary" type="submit">💾
                                                 Save</button>

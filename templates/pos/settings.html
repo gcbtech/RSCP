@@ -150,17 +150,53 @@
                         <label class="form-label fw-bold">Store Name</label>
                         <input type="text" name="receipt_store_name" class="form-control"
                             value="{{ receipt_store_name or '' }}" placeholder="e.g., Main Street Location">
+                        <div class="mt-2 d-flex gap-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="receipt_store_name_bold"
+                                    id="storeNameBold" {% if receipt_store_name_bold %}checked{% endif %}>
+                                <label class="form-check-label" for="storeNameBold"><strong>Bold</strong></label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="receipt_store_name_italic"
+                                    id="storeNameItalic" {% if receipt_store_name_italic %}checked{% endif %}>
+                                <label class="form-check-label" for="storeNameItalic"><em>Italic</em></label>
+                            </div>
+                        </div>
                         <small class="text-muted">Appears below the organization name on receipts</small>
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-bold">Receipt Header Message</label>
                         <textarea name="receipt_header" class="form-control" rows="2"
                             placeholder="e.g., Address, phone number, store hours">{{ receipt_header or '' }}</textarea>
+                        <div class="mt-2 d-flex gap-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="receipt_header_bold"
+                                    id="headerBold" {% if receipt_header_bold %}checked{% endif %}>
+                                <label class="form-check-label" for="headerBold"><strong>Bold</strong></label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="receipt_header_italic"
+                                    id="headerItalic" {% if receipt_header_italic %}checked{% endif %}>
+                                <label class="form-check-label" for="headerItalic"><em>Italic</em></label>
+                            </div>
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-bold">Receipt Footer Message</label>
                         <textarea name="receipt_footer" class="form-control" rows="2"
                             placeholder="e.g., Thank you for shopping with us! Return policy info">{{ receipt_footer or '' }}</textarea>
+                        <div class="mt-2 d-flex gap-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="receipt_footer_bold"
+                                    id="footerBold" {% if receipt_footer_bold %}checked{% endif %}>
+                                <label class="form-check-label" for="footerBold"><strong>Bold</strong></label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="receipt_footer_italic"
+                                    id="footerItalic" {% if receipt_footer_italic %}checked{% endif %}>
+                                <label class="form-check-label" for="footerItalic"><em>Italic</em></label>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

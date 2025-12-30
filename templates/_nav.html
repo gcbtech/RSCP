@@ -232,13 +232,14 @@
     <!-- POS MODE -->
     <a href="/pos"
         class="nav-link {% if request.path == '/pos' or request.path == '/pos/' or '/checkout' in request.path or '/receipt' in request.path %}active{% endif %}">
-        <span class="nav-icon"></span> Sales
+        <span class="nav-icon"></span> Checkout
     </a>
     {% if is_admin %}
     <a href="/pos/refunds" class="nav-link {% if '/refunds' in request.path %}active{% endif %}">
         <span class="nav-icon"></span> Refunds
     </a>
-    <a href="/pos/management" class="nav-link {% if '/management' in request.path %}active{% endif %}">
+    <a href="/pos/management"
+        class="nav-link {% if '/management' in request.path and '/settings' not in request.path %}active{% endif %}">
         <span class="nav-icon"></span> Reports
     </a>
     <a href="/pos/management/settings" class="nav-link {% if '/settings' in request.path %}active{% endif %}">

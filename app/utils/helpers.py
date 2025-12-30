@@ -108,3 +108,41 @@ def local_time_filter(value, fmt="%Y-%m-%d %H:%M"):
     except Exception as e:
         # Fallback to original string or empty if conversion fails
         return str(value)[:16]
+
+
+def local_date_to_utc_range(local_date_str: str):
+    """
+    Convert a local date string (YYYY-MM-DD) to UTC datetime range strings.
+    
+    Returns tuple of (start_utc, end_utc) as SQL-compatible datetime strings.
+    The range covers the full local day in UTC terms.
+    
+    Example: In MST (UTC-7), local Dec 27 00:00 = UTC Dec 27 07:00
+             and local Dec 27 23:59 = UTC Dec 28 06:59
+    """
+    from datetime import datetime, timezone, timedelta
+    
+    try:
+        # Parse the local date
+        local_date = datetime.strptime(local_date_str, '%Y-%m-%d')
+        
+        # Create local midnight as timezone-aware (using system local timezone)
+        local_start = local_date.replace(hour=0, minute=0, second=0, microsecond=0)
+        local_end = local_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+        
+        # Get local timezone offset using astimezone trick
+        local_tz = datetime.now().astimezone().tzinfo
+        local_start = local_start.replace(tzinfo=local_tz)
+        local_end = local_end.replace(tzinfo=local_tz)
+        
+        # Convert to UTC
+        utc_start = local_start.astimezone(timezone.utc)
+        utc_end = local_end.astimezone(timezone.utc)
+        
+        return (
+            utc_start.strftime('%Y-%m-%d %H:%M:%S'),
+            utc_end.strftime('%Y-%m-%d %H:%M:%S')
+        )
+    except Exception:
+        # Fallback: assume the input is already in the right format
+        return (f"{local_date_str} 00:00:00", f"{local_date_str} 23:59:59")

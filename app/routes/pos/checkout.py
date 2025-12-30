@@ -267,7 +267,13 @@ def receipt(order_number):
                            org_name=config.get('ORGANIZATION_NAME', ''),
                            receipt_store_name=get_pos_setting('RECEIPT_STORE_NAME', ''),
                            receipt_header=get_pos_setting('RECEIPT_HEADER', ''),
-                           receipt_footer=get_pos_setting('RECEIPT_FOOTER', ''))
+                           receipt_footer=get_pos_setting('RECEIPT_FOOTER', ''),
+                           receipt_store_name_bold=get_pos_setting('RECEIPT_STORE_NAME_BOLD', 'false') == 'true',
+                           receipt_store_name_italic=get_pos_setting('RECEIPT_STORE_NAME_ITALIC', 'false') == 'true',
+                           receipt_header_bold=get_pos_setting('RECEIPT_HEADER_BOLD', 'false') == 'true',
+                           receipt_header_italic=get_pos_setting('RECEIPT_HEADER_ITALIC', 'false') == 'true',
+                           receipt_footer_bold=get_pos_setting('RECEIPT_FOOTER_BOLD', 'false') == 'true',
+                           receipt_footer_italic=get_pos_setting('RECEIPT_FOOTER_ITALIC', 'false') == 'true')
 
 
 @pos_bp.route('/receipt/<order_number>/print')
@@ -310,4 +316,86 @@ def receipt_print(order_number):
                            org_name=config.get('ORGANIZATION_NAME', ''),
                            receipt_store_name=get_pos_setting('RECEIPT_STORE_NAME', ''),
                            receipt_header=get_pos_setting('RECEIPT_HEADER', ''),
-                           receipt_footer=get_pos_setting('RECEIPT_FOOTER', ''))
+                           receipt_footer=get_pos_setting('RECEIPT_FOOTER', ''),
+                           receipt_store_name_bold=get_pos_setting('RECEIPT_STORE_NAME_BOLD', 'false') == 'true',
+                           receipt_store_name_italic=get_pos_setting('RECEIPT_STORE_NAME_ITALIC', 'false') == 'true',
+                           receipt_header_bold=get_pos_setting('RECEIPT_HEADER_BOLD', 'false') == 'true',
+                           receipt_header_italic=get_pos_setting('RECEIPT_HEADER_ITALIC', 'false') == 'true',
+                           receipt_footer_bold=get_pos_setting('RECEIPT_FOOTER_BOLD', 'false') == 'true',
+                           receipt_footer_italic=get_pos_setting('RECEIPT_FOOTER_ITALIC', 'false') == 'true')
+
+
+@pos_bp.route('/order/<order_number>/delete', methods=['POST'])
+@login_required
+def delete_order(order_number):
+    """Delete an order (admin only)."""
+    # Admin check
+    if not current_user.is_admin:
+        flash('Only administrators can delete orders.')
+        return redirect(url_for('pos.receipt', order_number=order_number))
+    
+    restore_inventory = request.form.get('restore_inventory') == 'on'
+    
+    from app.services.db import get_db_connection
+    conn = get_db_connection()
+    
+    try:
+        # Find the order
+        order = conn.execute('SELECT id FROM pos_orders WHERE order_number = ?', (order_number,)).fetchone()
+        
+        if not order:
+            flash('Order not found.')
+            return redirect(url_for('pos.management'))
+        
+        order_id = order['id']
+        
+        # If restoring inventory, get the order items and restore quantities
+        if restore_inventory:
+            order_items = conn.execute('''
+                SELECT sku, quantity FROM pos_order_items WHERE order_id = ?
+            ''', (order_id,)).fetchall()
+            
+            restored_count = 0
+            for item in order_items:
+                if item['sku']:
+                    # Add quantity back to inventory
+                    conn.execute('''
+                        UPDATE inventory_items 
+                        SET quantity = quantity + ? 
+                        WHERE sku = ?
+                    ''', (item['quantity'], item['sku']))
+                    restored_count += item['quantity']
+            
+            logger = logging.getLogger(__name__)
+            logger.info(f"Restored {restored_count} units to inventory for order {order_number}")
+        
+        # Delete associated items
+        conn.execute('DELETE FROM pos_order_items WHERE order_id = ?', (order_id,))
+        
+        # Delete associated refunds
+        conn.execute('DELETE FROM pos_refunds WHERE order_id = ?', (order_id,))
+        
+        # Delete the order
+        conn.execute('DELETE FROM pos_orders WHERE id = ?', (order_id,))
+        
+        conn.commit()
+        
+        logger = logging.getLogger(__name__)
+        logger.info(f"Order {order_number} deleted by admin {current_user.username}" + 
+                   (" with inventory restored" if restore_inventory else ""))
+        
+        if restore_inventory:
+            flash(f'Order {order_number} deleted and inventory quantities restored.')
+        else:
+            flash(f'Order {order_number} has been permanently deleted.')
+        return redirect(url_for('pos.sales_history'))
+        
+    except Exception as e:
+        conn.rollback()
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error deleting order {order_number}: {e}")
+        flash(f'Error deleting order: {str(e)}')
+        return redirect(url_for('pos.receipt', order_number=order_number))
+    finally:
+        conn.close()
+

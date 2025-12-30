@@ -131,10 +131,11 @@ def generate_thumbnail(image_url):
 
 @inventory_bp.route('/items')
 def list_items():
-    """List all inventory items with sorting and pagination support."""
+    """List all inventory items with sorting, pagination, and search support."""
     # Get sort parameters from query string
     sort_by = request.args.get('sort', 'name')
     order = request.args.get('order', 'asc')
+    search_query = request.args.get('q', '').strip()
     
     # Pagination parameters
     page = int(request.args.get('page', 1))
@@ -151,15 +152,34 @@ def list_items():
     
     conn = get_db_connection()
     try:
-        # Get total count for pagination
-        total = conn.execute('SELECT COUNT(*) FROM inventory_items').fetchone()[0]
-        total_pages = (total + per_page - 1) // per_page
+        # Build search condition
+        if search_query:
+            search_pattern = f'%{search_query}%'
+            search_clause = '''WHERE COALESCE(name, '') LIKE ? 
+                               OR COALESCE(sku, '') LIKE ? 
+                               OR COALESCE(location_area, '') LIKE ?'''
+            search_params = (search_pattern, search_pattern, search_pattern)
+            
+            # Get total count with search filter
+            total = conn.execute(f'SELECT COUNT(*) FROM inventory_items {search_clause}', search_params).fetchone()[0]
+            
+            items = conn.execute(f'''
+                SELECT * FROM inventory_items 
+                {search_clause}
+                ORDER BY {sort_by} {order_dir}
+                LIMIT ? OFFSET ?
+            ''', search_params + (per_page, offset)).fetchall()
+        else:
+            # No search - get all
+            total = conn.execute('SELECT COUNT(*) FROM inventory_items').fetchone()[0]
+            
+            items = conn.execute(f'''
+                SELECT * FROM inventory_items 
+                ORDER BY {sort_by} {order_dir}
+                LIMIT ? OFFSET ?
+            ''', (per_page, offset)).fetchall()
         
-        items = conn.execute(f'''
-            SELECT * FROM inventory_items 
-            ORDER BY {sort_by} {order_dir}
-            LIMIT ? OFFSET ?
-        ''', (per_page, offset)).fetchall()
+        total_pages = (total + per_page - 1) // per_page if total > 0 else 1
         
         # Generate thumbnails for list display
         items_with_thumbs = []
@@ -181,7 +201,8 @@ def list_items():
                                page=page,
                                per_page=per_page,
                                total_pages=total_pages,
-                               total_items=total)
+                               total_items=total,
+                               search_query=search_query)
     finally:
         conn.close()
 
@@ -636,6 +657,29 @@ def adjust_quantity(item_id):
                 
                 if new_qty <= threshold:
                     conf = load_config()
+                    
+                    # In-app notifications
+                    is_oos = new_qty <= 0
+                    notify_oos = conf.get('NOTIFY_OOS', False)
+                    notify_low = conf.get('NOTIFY_LOW_STOCK', False)
+                    
+                    if (is_oos and notify_oos) or (not is_oos and notify_low):
+                        try:
+                            from app.routes.notifications import create_notification
+                            status = "OUT OF STOCK" if is_oos else f"LOW STOCK ({new_qty})"
+                            title = f"📦 {status}: {item['name']}"
+                            message = f"SKU: {item['sku']} - {new_qty} remaining (threshold: {threshold})"
+                            create_notification(
+                                user_id=None,  # All users
+                                title=title,
+                                message=message,
+                                notification_type='warning' if not is_oos else 'error',
+                                link=f"/inventory/edit/{item_id}"
+                            )
+                        except Exception as e:
+                            logger.error(f"In-app notification error: {e}")
+                    
+                    # Webhook notification (existing)
                     if conf.get('WEBHOOK_ENABLED_INVENTORY') and conf.get('WEBHOOK_URL_INVENTORY'):
                         def send_stock_alert():
                             try:

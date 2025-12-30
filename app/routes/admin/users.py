@@ -221,34 +221,53 @@ def set_badge_id(username):
 
 @admin_bp.route('/set_user_roles/<username>', methods=['POST'])
 def set_user_roles(username):
-    """Set a user's module access roles."""
+    """Set a user's RBAC roles."""
     error = require_admin()
     if error:
         return error
     
+    # Prevent changing your own super_admin status
+    if username == current_user.username:
+        flash("Cannot change your own roles. Ask another super_admin.")
+        return redirect(url_for('admin.admin_panel', tab='settings'))
+    
+    # Cannot change built-in admin account
+    if username.lower() == 'admin':
+        flash("Cannot change roles for the built-in Admin account.")
+        return redirect(url_for('admin.admin_panel', tab='settings'))
+    
+    # Valid RBAC roles
+    valid_roles = ['super_admin', 'inventory_admin', 'pos_admin', 'receiving_admin', 'operator']
+    
     # Get selected roles from form (checkboxes)
     roles = []
-    if request.form.get('role_receiving'):
-        roles.append('receiving')
-    if request.form.get('role_inventory'):
-        roles.append('inventory')
-    if request.form.get('role_pos'):
-        roles.append('pos')
+    for role in valid_roles:
+        if request.form.get(f'role_{role}'):
+            roles.append(role)
+    
+    # Ensure at least operator role
+    if not roles:
+        roles = ['operator']
+    
+    # If has any admin role, don't need operator
+    admin_roles = [r for r in roles if r.endswith('_admin')]
+    if admin_roles and 'operator' in roles:
+        roles.remove('operator')
     
     try:
         import json
         from app.services.db import get_db_connection
         
         conn = get_db_connection()
-        conn.execute('UPDATE users SET roles = ? WHERE username = ?', 
-                     (json.dumps(roles), username))
+        
+        # Also update is_admin flag for backwards compatibility
+        is_admin = 'super_admin' in roles
+        conn.execute('UPDATE users SET roles = ?, is_admin = ? WHERE username = ?', 
+                     (json.dumps(roles), 1 if is_admin else 0, username))
         conn.commit()
         conn.close()
         
-        if roles:
-            flash(f"Roles for {username} updated: {', '.join(roles)}")
-        else:
-            flash(f"All module roles removed from {username}.")
+        flash(f"Roles for {username} updated: {', '.join(roles)}")
     except Exception as e:
         logger.error(f"Set Roles Error: {e}")
         flash(f"Error setting roles: {e}")

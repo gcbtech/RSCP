@@ -37,7 +37,8 @@
         <div class="d-flex justify-content-between align-items-center">
             <div>
                 <h2>↩️ Refund: {{ order.order_number }}</h2>
-                <small>{{ order.created_at[:16] }} • {{ order.operator_name }} • {{ order.payment_method|capitalize
+                <small>{{ order.created_at | local_time }} • {{ order.operator_name }} • {{
+                    order.payment_method|capitalize
                     }}</small>
             </div>
             <a href="{{ url_for('pos.refunds') }}" class="btn btn-outline-light">← Back</a>
@@ -144,7 +145,7 @@
                         <div class="mb-3 p-2 bg-light rounded">
                             <div class="d-flex justify-content-between">
                                 <strong class="text-danger">-${{ "%.2f"|format(refund.amount) }}</strong>
-                                <span class="text-muted small">{{ refund.created_at[:16] }}</span>
+                                <span class="text-muted small">{{ refund.created_at | local_time }}</span>
                             </div>
                             <div class="small">
                                 {{ refund.refund_type|capitalize }} • {{ refund.reason }} • By: {{ refund.manager_name
