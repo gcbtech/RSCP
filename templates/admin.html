@@ -1829,6 +1829,9 @@
                     } else {
                         alert(`Connection failed: ${data.error}`);
                     }
+                })
+                .catch(err => {
+                    alert(`Error testing connection: ${err.message}`);
                 });
         }
 
@@ -1839,7 +1842,18 @@
         function removePeer(id) {
             if (!confirm('Remove this linked instance?')) return;
             fetch(`/api/federation/admin/peers/${id}`, { method: 'DELETE' })
-                .then(() => loadPeers());
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        loadPeers();
+                    } else {
+                        alert('Error removing peer: ' + (data.error || 'Unknown error'));
+                    }
+                })
+                .catch(err => {
+                    alert('Error: ' + err.message);
+                    loadPeers();
+                });
         }
 
         function loadTransfers() {
