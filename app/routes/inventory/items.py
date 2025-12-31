@@ -868,9 +868,15 @@ def federated_search():
     
     def search_peer(peer):
         try:
+            # Use remote_api_key (THEIR key) to authenticate to THEM
+            remote_key = peer.get('remote_api_key')
+            if not remote_key:
+                logger.warning(f"Skipping {peer['name']} - no remote API key configured")
+                return []
+            
             response = http_requests.post(
                 f"{peer['url']}/api/federation/search",
-                headers={'X-API-Key': peer['api_key']},
+                headers={'X-API-Key': remote_key},
                 json={'query': query},
                 timeout=5
             )
@@ -916,11 +922,16 @@ def request_transfer():
         if not peer:
             return jsonify({'error': f'No active peer with prefix {source_prefix}'}), 404
         
+        # Check for remote API key
+        remote_key = peer['remote_api_key']
+        if not remote_key:
+            return jsonify({'error': f'Peer {source_prefix} has no remote API key configured'}), 400
+        
         # First, get the item details from the peer
         try:
             item_response = http_requests.get(
                 f"{peer['url']}/api/federation/items/{sku}",
-                headers={'X-API-Key': peer['api_key']},
+                headers={'X-API-Key': remote_key},
                 timeout=5
             )
             if item_response.status_code != 200:
@@ -933,7 +944,7 @@ def request_transfer():
         try:
             transfer_response = http_requests.post(
                 f"{peer['url']}/api/federation/transfer/request",
-                headers={'X-API-Key': peer['api_key']},
+                headers={'X-API-Key': remote_key},
                 json={
                     'sku': sku,
                     'item_data': item_data,

@@ -331,8 +331,9 @@
                     value="{{ search_query or '' }}">
                 {% if config.FEDERATION_CROSS_SEARCH_ENABLED %}
                 <span class="input-group-text bg-light">
-                    <input class="form-check-input mt-0 me-1" type="checkbox" id="crossSearchToggle"
-                        title="Search linked locations">
+                    <input class="form-check-input mt-0 me-1" type="checkbox" id="crossSearchToggle" name="federated"
+                        value="1" title="Search linked locations" {{ 'checked' if request.args.get('federated')=='1'
+                        else '' }}>
                     <label class="form-check-label small" for="crossSearchToggle">🔗 All Locations</label>
                 </span>
                 {% endif %}
@@ -574,6 +575,13 @@
             }
         });
 
+        // Auto-trigger federated search on page load if checkbox is checked and there's a query
+        document.addEventListener('DOMContentLoaded', function () {
+            if (crossSearchToggle && crossSearchToggle.checked && searchInput.value.length >= 2) {
+                performFederatedSearch(searchInput.value);
+            }
+        });
+
         function performFederatedSearch(query) {
             const resultsDiv = document.getElementById('federatedResults');
             resultsDiv.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Searching linked locations...';
@@ -633,9 +641,15 @@
             const qty = prompt('Quantity to request:', '1');
             if (!qty || isNaN(parseInt(qty))) return;
 
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content ||
+                document.querySelector('input[name="csrf_token"]')?.value || '';
+
             fetch('/inventory/request-transfer', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
                 body: JSON.stringify({ sku, source, quantity: parseInt(qty) })
             })
                 .then(r => r.json())
@@ -645,6 +659,9 @@
                     } else {
                         alert('Error: ' + (data.error || 'Failed to request transfer'));
                     }
+                })
+                .catch(err => {
+                    alert('Error requesting transfer: ' + err.message);
                 });
         }
 
