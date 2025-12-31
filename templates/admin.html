@@ -1769,9 +1769,13 @@
             const key = prompt('Enter the API key from the remote instance:');
             if (!key) return;
 
+            const csrfToken = document.querySelector('input[name="csrf_token"]')?.value || '';
             fetch(`/api/federation/admin/peers/${id}/remote-key`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
                 body: JSON.stringify({ remote_api_key: key })
             })
                 .then(r => r.json())
@@ -1820,7 +1824,11 @@
         }
 
         function testPeer(id) {
-            fetch(`/api/federation/admin/peers/${id}/test`, { method: 'POST' })
+            const csrfToken = document.querySelector('input[name="csrf_token"]')?.value || '';
+            fetch(`/api/federation/admin/peers/${id}/test`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': csrfToken }
+            })
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
@@ -1841,7 +1849,11 @@
 
         function removePeer(id) {
             if (!confirm('Remove this linked instance?')) return;
-            fetch(`/api/federation/admin/peers/${id}`, { method: 'DELETE' })
+            const csrfToken = document.querySelector('input[name="csrf_token"]')?.value || '';
+            fetch(`/api/federation/admin/peers/${id}`, {
+                method: 'DELETE',
+                headers: { 'X-CSRFToken': csrfToken }
+            })
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
