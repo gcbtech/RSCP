@@ -865,33 +865,55 @@ def federated_search():
         return jsonify({'results': []})
     
     all_results = []
+    debug_info = []
     
     def search_peer(peer):
+        peer_name = peer.get('name', 'Unknown')
         try:
             # Use remote_api_key (THEIR key) to authenticate to THEM
             remote_key = peer.get('remote_api_key')
             if not remote_key:
-                logger.warning(f"Skipping {peer['name']} - no remote API key configured")
-                return []
+                msg = f"Skipping {peer_name} - no remote API key configured"
+                logger.warning(msg)
+                return [], msg
+            
+            url = f"{peer['url']}/api/federation/search"
+            logger.info(f"Federated search to {peer_name}: {url}")
             
             response = http_requests.post(
-                f"{peer['url']}/api/federation/search",
+                url,
                 headers={'X-API-Key': remote_key},
                 json={'query': query},
                 timeout=5
             )
+            
+            logger.info(f"Response from {peer_name}: {response.status_code}")
+            
             if response.status_code == 200:
-                return response.json().get('results', [])
+                data = response.json()
+                results = data.get('results', [])
+                return results, f"{peer_name}: {len(results)} results"
+            else:
+                msg = f"{peer_name}: HTTP {response.status_code} - {response.text[:100]}"
+                logger.warning(msg)
+                return [], msg
         except Exception as e:
-            logger.warning(f"Federated search to {peer['name']} failed: {e}")
-        return []
+            msg = f"{peer_name}: Error - {e}"
+            logger.warning(f"Federated search to {peer_name} failed: {e}")
+            return [], msg
     
     with ThreadPoolExecutor(max_workers=5) as executor:
         futures = {executor.submit(search_peer, dict(p)): p for p in peers}
         for future in as_completed(futures):
-            all_results.extend(future.result())
+            results, debug_msg = future.result()
+            all_results.extend(results)
+            debug_info.append(debug_msg)
     
-    return jsonify({'results': all_results})
+    return jsonify({
+        'results': all_results,
+        'debug': debug_info,
+        'peers_checked': len(peers)
+    })
 
 
 @inventory_bp.route('/request-transfer', methods=['POST'])

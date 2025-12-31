@@ -590,8 +590,16 @@
             fetch('/inventory/federated-search?q=' + encodeURIComponent(query))
                 .then(r => r.json())
                 .then(data => {
+                    // Debug info
+                    const debugInfo = data.debug ? data.debug.join('<br>') : 'No debug info';
+                    const peersChecked = data.peers_checked || 0;
+
                     if (!data.results || data.results.length === 0) {
-                        resultsDiv.innerHTML = '<span class="text-muted">No results from linked locations</span>';
+                        resultsDiv.innerHTML = `
+                            <div class="alert alert-info mb-0">
+                                <strong>No results from ${peersChecked} linked location(s)</strong>
+                                <br><small class="text-muted">${debugInfo}</small>
+                            </div>`;
                         return;
                     }
 
