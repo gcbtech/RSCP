@@ -95,17 +95,15 @@ def search():
         
         conn = get_db_connection()
         try:
-            # Use COALESCE to handle potential NULL values
+            # Search only name and sku for maximum compatibility
             search_pattern = f'%{query}%'
             items = conn.execute('''
                 SELECT id, sku, name, quantity, sell_price, image_url, 
                        location_area, location_aisle, location_shelf, location_bin
                 FROM inventory_items 
-                WHERE COALESCE(name, '') LIKE ? 
-                   OR COALESCE(sku, '') LIKE ? 
-                   OR COALESCE(secondary_ids, '') LIKE ?
+                WHERE name LIKE ? OR sku LIKE ?
                 LIMIT 50
-            ''', (search_pattern, search_pattern, search_pattern)).fetchall()
+            ''', (search_pattern, search_pattern)).fetchall()
             
             results = []
             for item in items:

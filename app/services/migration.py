@@ -396,6 +396,7 @@ def _create_pos_tables(conn):
                 name TEXT NOT NULL,
                 url TEXT NOT NULL UNIQUE,
                 api_key TEXT NOT NULL,
+                remote_api_key TEXT,
                 location_prefix TEXT,
                 status TEXT DEFAULT 'pending',
                 last_seen TIMESTAMP,
