@@ -80,50 +80,58 @@ def ping():
 @require_api_key
 def search():
     """Search inventory on this instance."""
-    data = request.get_json()
-    query = data.get('query', '').strip()
-    
-    if not query or len(query) < 2:
-        return jsonify({'error': 'Query must be at least 2 characters'}), 400
-    
-    config = load_config()
-    
-    # Check if cross-search is enabled
-    if not config.get('FEDERATION_CROSS_SEARCH_ENABLED', False):
-        return jsonify({'error': 'Cross-search disabled on this instance'}), 403
-    
-    conn = get_db_connection()
     try:
-        items = conn.execute('''
-            SELECT id, sku, name, quantity, sell_price, image_url, 
-                   location_area, location_aisle, location_shelf, location_bin
-            FROM inventory_items 
-            WHERE name LIKE ? OR sku LIKE ? OR secondary_ids LIKE ?
-            LIMIT 50
-        ''', (f'%{query}%', f'%{query}%', f'%{query}%')).fetchall()
+        data = request.get_json()
+        query = data.get('query', '').strip() if data else ''
         
-        results = []
-        for item in items:
-            results.append({
-                'sku': item['sku'],
-                'name': item['name'],
-                'quantity': item['quantity'],
-                'price': item['sell_price'],
-                'image_url': item['image_url'],
-                'location': ' / '.join(filter(None, [
-                    item['location_area'], item['location_aisle'],
-                    item['location_shelf'], item['location_bin']
-                ])),
-                'source': config.get('LOCATION_PREFIX', 'RSCP')
+        if not query or len(query) < 2:
+            return jsonify({'error': 'Query must be at least 2 characters'}), 400
+        
+        config = load_config()
+        
+        # Check if cross-search is enabled
+        if not config.get('FEDERATION_CROSS_SEARCH_ENABLED', False):
+            return jsonify({'error': 'Cross-search disabled on this instance'}), 403
+        
+        conn = get_db_connection()
+        try:
+            # Use COALESCE to handle potential NULL values
+            search_pattern = f'%{query}%'
+            items = conn.execute('''
+                SELECT id, sku, name, quantity, sell_price, image_url, 
+                       location_area, location_aisle, location_shelf, location_bin
+                FROM inventory_items 
+                WHERE COALESCE(name, '') LIKE ? 
+                   OR COALESCE(sku, '') LIKE ? 
+                   OR COALESCE(secondary_ids, '') LIKE ?
+                LIMIT 50
+            ''', (search_pattern, search_pattern, search_pattern)).fetchall()
+            
+            results = []
+            for item in items:
+                results.append({
+                    'sku': item['sku'] or '',
+                    'name': item['name'] or '',
+                    'quantity': item['quantity'] or 0,
+                    'price': item['sell_price'],
+                    'image_url': item['image_url'],
+                    'location': ' / '.join(filter(None, [
+                        item['location_area'], item['location_aisle'],
+                        item['location_shelf'], item['location_bin']
+                    ])),
+                    'source': config.get('LOCATION_PREFIX', 'RSCP')
+                })
+            
+            return jsonify({
+                'source': config.get('LOCATION_PREFIX', 'RSCP'),
+                'source_name': config.get('ORG_NAME', 'RSCP'),
+                'results': results
             })
-        
-        return jsonify({
-            'source': config.get('LOCATION_PREFIX', 'RSCP'),
-            'source_name': config.get('ORG_NAME', 'RSCP'),
-            'results': results
-        })
-    finally:
-        conn.close()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Federation search error: {e}")
+        return jsonify({'error': str(e), 'results': []}), 500
 
 
 @federation_bp.route('/items/<sku>', methods=['GET'])
