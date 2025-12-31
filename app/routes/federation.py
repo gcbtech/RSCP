@@ -25,31 +25,35 @@ def require_api_key(f):
     """Decorator to require valid API key for federation endpoints."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        api_key = request.headers.get('X-API-Key')
-        if not api_key:
-            return jsonify({'error': 'Missing API key'}), 401
-        
-        conn = get_db_connection()
         try:
-            peer = conn.execute(
-                "SELECT * FROM federation_peers WHERE api_key = ? AND status = 'active'",
-                (api_key,)
-            ).fetchone()
+            api_key = request.headers.get('X-API-Key')
+            if not api_key:
+                return jsonify({'error': 'Missing API key'}), 401
             
-            if not peer:
-                return jsonify({'error': 'Invalid or inactive API key'}), 403
-            
-            # Update last_seen
-            conn.execute(
-                "UPDATE federation_peers SET last_seen = CURRENT_TIMESTAMP WHERE id = ?",
-                (peer['id'],)
-            )
-            conn.commit()
-            
-            g.peer = dict(peer)
-            return f(*args, **kwargs)
-        finally:
-            conn.close()
+            conn = get_db_connection()
+            try:
+                peer = conn.execute(
+                    "SELECT * FROM federation_peers WHERE api_key = ? AND status = 'active'",
+                    (api_key,)
+                ).fetchone()
+                
+                if not peer:
+                    return jsonify({'error': 'Invalid or inactive API key'}), 403
+                
+                # Update last_seen
+                conn.execute(
+                    "UPDATE federation_peers SET last_seen = CURRENT_TIMESTAMP WHERE id = ?",
+                    (peer['id'],)
+                )
+                conn.commit()
+                
+                g.peer = dict(peer)
+                return f(*args, **kwargs)
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.error(f"require_api_key error: {e}")
+            return jsonify({'error': f'Authentication error: {str(e)}'}), 500
     
     return decorated
 
@@ -62,6 +66,37 @@ def generate_api_key():
 # ============================================
 # Public Endpoints (authenticated via API key)
 # ============================================
+
+@federation_bp.route('/debug', methods=['GET'])
+def federation_debug():
+    """Debug endpoint (no auth) to check federation status."""
+    try:
+        config = load_config()
+        
+        conn = get_db_connection()
+        try:
+            # Check if table exists
+            table_check = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='federation_peers'"
+            ).fetchone()
+            
+            # Check if inventory_items exists
+            inv_check = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='inventory_items'"
+            ).fetchone()
+            
+            return jsonify({
+                'status': 'ok',
+                'cross_search_enabled': config.get('FEDERATION_CROSS_SEARCH_ENABLED', False),
+                'location_prefix': config.get('LOCATION_PREFIX', 'RSCP'),
+                'federation_peers_table_exists': table_check is not None,
+                'inventory_items_table_exists': inv_check is not None
+            })
+        finally:
+            conn.close()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 @federation_bp.route('/ping', methods=['GET'])
 @require_api_key
