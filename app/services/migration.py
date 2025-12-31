@@ -162,6 +162,8 @@ def _create_inventory_tables(conn):
                 first_stock_date TEXT,
                 resupply_interval INTEGER,
                 keywords TEXT,
+                secondary_ids TEXT,
+                description TEXT,
                 
                 -- Alert settings
                 alert_enabled BOOLEAN DEFAULT 0,
@@ -182,6 +184,8 @@ def _create_inventory_tables(conn):
             ('buy_price', 'ALTER TABLE inventory_items ADD COLUMN buy_price REAL DEFAULT 0.0'),
             ('sell_price', 'ALTER TABLE inventory_items ADD COLUMN sell_price REAL DEFAULT 0.0'),
             ('keywords', 'ALTER TABLE inventory_items ADD COLUMN keywords TEXT'),
+            ('secondary_ids', 'ALTER TABLE inventory_items ADD COLUMN secondary_ids TEXT'),
+            ('description', 'ALTER TABLE inventory_items ADD COLUMN description TEXT'),
         ]
         for col_name, sql in migrations:
             try:
