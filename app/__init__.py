@@ -136,6 +136,17 @@ def create_app():
     def unhandled_exception(e):
         # Catch-all for non-RscpError exceptions
         log_exception(e, source="UnhandledCrasher")
+        
+        # Return JSON for API routes
+        if request.path.startswith('/api/'):
+            from flask import jsonify
+            import traceback
+            return jsonify({
+                'error': str(e),
+                'error_type': type(e).__name__,
+                'traceback': traceback.format_exc()
+            }), 500
+        
         return render_template('error.html', 
                              error_code="RSCP-999", 
                              message="Internal Application Error",
@@ -216,7 +227,11 @@ def create_app():
     @app.before_request
     def check_csrf():
         # Skip CSRF for login/logout/setup (no session may exist yet)
-        if request.path in ['/login', '/logout', '/setup'] or request.path.startswith('/static'):
+        # Skip CSRF for /api/ routes (they use API key auth, not sessions)
+        # Skip CSRF for JSON-only federation routes
+        exempt_paths = ['/login', '/logout', '/setup', 
+                       '/inventory/request-transfer', '/inventory/federated-search']
+        if any(request.path == p for p in exempt_paths) or request.path.startswith('/static') or request.path.startswith('/api/'):
             return
         verify_csrf_token()
         
