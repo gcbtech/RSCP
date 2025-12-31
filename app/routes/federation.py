@@ -98,6 +98,76 @@ def federation_debug():
         return jsonify({'error': str(e)}), 500
 
 
+@federation_bp.route('/debug-peers', methods=['GET'])
+def debug_peers():
+    """Debug endpoint to check peers and their status."""
+    try:
+        conn = get_db_connection()
+        try:
+            peers = conn.execute('SELECT name, url, status, api_key, remote_api_key FROM federation_peers').fetchall()
+            
+            # Mask API keys for security (show first 8 chars)
+            result = []
+            for p in peers:
+                result.append({
+                    'name': p['name'],
+                    'url': p['url'],
+                    'status': p['status'],
+                    'api_key_preview': p['api_key'][:8] + '...' if p['api_key'] else None,
+                    'remote_api_key_set': p['remote_api_key'] is not None
+                })
+            
+            return jsonify({'peers': result, 'count': len(result)})
+        finally:
+            conn.close()
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@federation_bp.route('/debug-search', methods=['GET', 'POST'])
+def debug_search():
+    """Debug search endpoint (no auth) to test search logic."""
+    try:
+        # Get query from either GET or POST
+        if request.method == 'POST':
+            data = request.get_json() or {}
+            query = data.get('query', '')
+        else:
+            query = request.args.get('q', '')
+        
+        if not query or len(query) < 2:
+            return jsonify({'error': 'Query must be at least 2 chars', 'received_query': query})
+        
+        config = load_config()
+        
+        if not config.get('FEDERATION_CROSS_SEARCH_ENABLED', False):
+            return jsonify({'error': 'Cross-search disabled'})
+        
+        conn = get_db_connection()
+        try:
+            search_pattern = f'%{query}%'
+            items = conn.execute('''
+                SELECT id, sku, name, quantity, sell_price, image_url
+                FROM inventory_items 
+                WHERE name LIKE ? OR sku LIKE ?
+                LIMIT 10
+            ''', (search_pattern, search_pattern)).fetchall()
+            
+            results = [{'sku': i['sku'], 'name': i['name'], 'qty': i['quantity']} for i in items]
+            
+            return jsonify({
+                'success': True,
+                'query': query,
+                'result_count': len(results),
+                'results': results
+            })
+        finally:
+            conn.close()
+    except Exception as e:
+        import traceback
+        return jsonify({'error': str(e), 'traceback': traceback.format_exc()}), 500
+
+
 @federation_bp.route('/ping', methods=['GET'])
 @require_api_key
 def ping():
