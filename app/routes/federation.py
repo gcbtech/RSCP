@@ -124,6 +124,57 @@ def debug_peers():
         return jsonify({'error': str(e)}), 500
 
 
+@federation_bp.route('/debug-auth', methods=['GET', 'POST'])
+def debug_auth():
+    """Debug endpoint to test API key authentication."""
+    try:
+        # Get key from header or query param
+        api_key = request.headers.get('X-API-Key') or request.args.get('key', '')
+        
+        if not api_key:
+            return jsonify({
+                'error': 'No key provided',
+                'usage': 'Send X-API-Key header or ?key=YOUR_KEY'
+            })
+        
+        conn = get_db_connection()
+        try:
+            # Check if key exists
+            peer = conn.execute(
+                "SELECT id, name, status, api_key FROM federation_peers WHERE api_key = ?",
+                (api_key,)
+            ).fetchone()
+            
+            if not peer:
+                # Show what keys we DO have
+                all_keys = conn.execute("SELECT api_key FROM federation_peers").fetchall()
+                return jsonify({
+                    'error': 'Key not found',
+                    'key_preview': api_key[:8] + '...',
+                    'existing_keys': [k['api_key'][:8] + '...' for k in all_keys]
+                })
+            
+            # Check if active
+            if peer['status'] != 'active':
+                return jsonify({
+                    'error': 'Peer not active',
+                    'peer_name': peer['name'],
+                    'status': peer['status']
+                })
+            
+            return jsonify({
+                'success': True,
+                'peer_name': peer['name'],
+                'status': peer['status'],
+                'key_matches': True
+            })
+        finally:
+            conn.close()
+    except Exception as e:
+        import traceback
+        return jsonify({'error': str(e), 'traceback': traceback.format_exc()}), 500
+
+
 @federation_bp.route('/debug-search', methods=['GET', 'POST'])
 def debug_search():
     """Debug search endpoint (no auth) to test search logic."""

@@ -878,7 +878,8 @@ def federated_search():
                 return [], msg
             
             url = f"{peer['url']}/api/federation/search"
-            logger.info(f"Federated search to {peer_name}: {url}")
+            key_preview = remote_key[:8] + '...' if remote_key else 'None'
+            logger.info(f"Federated search to {peer_name}: {url} with key {key_preview}")
             
             response = http_requests.post(
                 url,
@@ -894,7 +895,7 @@ def federated_search():
                 results = data.get('results', [])
                 return results, f"{peer_name}: {len(results)} results"
             else:
-                msg = f"{peer_name}: HTTP {response.status_code} - {response.text[:100]}"
+                msg = f"{peer_name}: HTTP {response.status_code} (key: {key_preview}) - {response.text[:200]}"
                 logger.warning(msg)
                 return [], msg
         except Exception as e:
