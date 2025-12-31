@@ -309,7 +309,11 @@ def get_item(sku):
 @federation_bp.route('/transfer/request', methods=['POST'])
 @require_api_key
 def receive_transfer_request():
-    """Receive a transfer request from a peer."""
+    """Receive a transfer request from a peer.
+    
+    When peer B requests an item from us (A), we create an OUTGOING transfer
+    because we will be sending the item OUT to B.
+    """
     data = request.get_json()
     
     required = ['sku', 'item_data', 'quantity', 'requested_by']
@@ -322,11 +326,12 @@ def receive_transfer_request():
         # Calculate expiration (72 hours from now)
         expires_at = datetime.now() + timedelta(hours=TRANSFER_EXPIRATION_HOURS)
         
+        # Direction is 'outgoing' because we (source) are sending the item out
         conn.execute('''
             INSERT INTO federation_transfers 
             (direction, peer_id, item_sku, item_data, quantity, status, 
              requested_by, expires_at, notes)
-            VALUES ('incoming', ?, ?, ?, ?, 'pending', ?, ?, ?)
+            VALUES ('outgoing', ?, ?, ?, ?, 'pending', ?, ?, ?)
         ''', (
             g.peer['id'],
             data['sku'],
@@ -363,6 +368,93 @@ def receive_transfer_request():
             'status': 'pending',
             'transfer_id': transfer_id,
             'expires_at': expires_at.isoformat()
+        })
+    finally:
+        conn.close()
+
+
+@federation_bp.route('/transfer/complete', methods=['POST'])
+@require_api_key
+def receive_transfer_complete():
+    """Receive notification that a transfer has been completed by the source.
+    
+    The source instance calls this when they approve an outgoing transfer.
+    We add the item to our inventory.
+    """
+    data = request.get_json()
+    
+    required = ['sku', 'item_data', 'quantity']
+    for field in required:
+        if field not in data:
+            return jsonify({'error': f'Missing required field: {field}'}), 400
+    
+    sku = data['sku']
+    item_data = data['item_data']
+    quantity = data['quantity']
+    source = data.get('source', 'Unknown')
+    
+    conn = get_db_connection()
+    try:
+        # Check if item exists locally
+        existing_item = conn.execute(
+            'SELECT id, quantity FROM inventory_items WHERE sku = ?', (sku,)
+        ).fetchone()
+        
+        if existing_item:
+            new_quantity = existing_item['quantity'] + quantity
+            conn.execute(
+                'UPDATE inventory_items SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                (new_quantity, existing_item['id'])
+            )
+            item_id = existing_item['id']
+        else:
+            # Create new item
+            conn.execute('''
+                INSERT INTO inventory_items (
+                    sku, name, quantity, buy_price, sell_price,
+                    location_area, location_aisle, location_shelf, location_bin,
+                    supplier, asin, keywords, image_url, source_url
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                sku,
+                item_data.get('name'),
+                quantity,
+                item_data.get('buy_price', 0),
+                item_data.get('sell_price', 0),
+                item_data.get('location_area'),
+                item_data.get('location_aisle'),
+                item_data.get('location_shelf'),
+                item_data.get('location_bin'),
+                item_data.get('supplier'),
+                item_data.get('asin'),
+                item_data.get('keywords'),
+                item_data.get('image_url'),
+                item_data.get('source_url')
+            ))
+            item_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+        
+        # Log transaction
+        conn.execute('''
+            INSERT INTO inventory_transactions 
+            (inventory_item_id, quantity_change, reason, user_id, source_tracking)
+            VALUES (?, ?, ?, 'federation', ?)
+        ''', (item_id, quantity, f'Federation Transfer from {source}', f'peer:{g.peer["id"]}'))
+        
+        # Update any outgoing transfer we have for this
+        conn.execute('''
+            UPDATE federation_transfers 
+            SET status = 'completed', approved_at = CURRENT_TIMESTAMP
+            WHERE item_sku = ? AND peer_id = ? AND direction = 'outgoing' AND status = 'pending'
+        ''', (sku, g.peer['id']))
+        
+        conn.commit()
+        
+        logger.info(f"Received transfer of {quantity}x {sku} from {source}")
+        
+        return jsonify({
+            'success': True,
+            'item_id': item_id,
+            'message': f'Received {quantity}x {sku}'
         })
     finally:
         conn.close()
@@ -594,7 +686,13 @@ def list_transfers():
 @federation_bp.route('/admin/transfers/<int:transfer_id>/approve', methods=['POST'])
 @login_required
 def approve_transfer(transfer_id):
-    """Approve a pending transfer (admin only)."""
+    """Approve a pending transfer (admin only).
+    
+    For OUTGOING transfers: We decrease our quantity and notify the requester.
+    For INCOMING transfers: We add the item to our inventory.
+    """
+    import requests as http_requests
+    
     if not current_user.is_admin:
         return jsonify({'error': 'Admin access required'}), 403
     
@@ -618,44 +716,113 @@ def approve_transfer(transfer_id):
             conn.commit()
             return jsonify({'error': 'Transfer has expired'}), 400
         
-        # Process the transfer
         item_data = json.loads(transfer['item_data'])
+        sku = item_data.get('sku')
+        quantity = transfer['quantity']
         
-        # Create the item locally
-        conn.execute('''
-            INSERT INTO inventory_items (
-                sku, name, quantity, buy_price, sell_price,
-                location_area, location_aisle, location_shelf, location_bin,
-                supplier, asin, keywords, secondary_ids, description,
-                image_url, source_url
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            item_data.get('sku'),
-            item_data.get('name'),
-            transfer['quantity'],
-            item_data.get('buy_price', 0),
-            item_data.get('sell_price', 0),
-            item_data.get('location_area'),
-            item_data.get('location_aisle'),
-            item_data.get('location_shelf'),
-            item_data.get('location_bin'),
-            item_data.get('supplier'),
-            item_data.get('asin'),
-            item_data.get('keywords'),
-            item_data.get('secondary_ids'),
-            item_data.get('description'),
-            item_data.get('image_url'),
-            item_data.get('source_url')
-        ))
-        
-        new_item_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
-        
-        # Log transaction
-        conn.execute('''
-            INSERT INTO inventory_transactions 
-            (inventory_item_id, quantity_change, reason, user_id, source_tracking)
-            VALUES (?, ?, 'Federation Transfer', ?, ?)
-        ''', (new_item_id, transfer['quantity'], current_user.username, f'transfer:{transfer_id}'))
+        if transfer['direction'] == 'outgoing':
+            # OUTGOING: We are the source, decrease our quantity
+            
+            # Find and update local item
+            local_item = conn.execute(
+                'SELECT id, quantity FROM inventory_items WHERE sku = ?', (sku,)
+            ).fetchone()
+            
+            if not local_item:
+                return jsonify({'error': f'Item {sku} not found in local inventory'}), 404
+            
+            if local_item['quantity'] < quantity:
+                return jsonify({'error': f'Insufficient quantity. Have {local_item["quantity"]}, need {quantity}'}), 400
+            
+            # Decrease local quantity
+            new_quantity = local_item['quantity'] - quantity
+            conn.execute(
+                'UPDATE inventory_items SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                (new_quantity, local_item['id'])
+            )
+            
+            # Log outgoing transaction (negative quantity change)
+            conn.execute('''
+                INSERT INTO inventory_transactions 
+                (inventory_item_id, quantity_change, reason, user_id, source_tracking)
+                VALUES (?, ?, 'Federation Transfer Out', ?, ?)
+            ''', (local_item['id'], -quantity, current_user.username, f'transfer:{transfer_id}'))
+            
+            # Get peer info to notify them
+            peer = conn.execute(
+                'SELECT * FROM federation_peers WHERE id = ?', (transfer['peer_id'],)
+            ).fetchone()
+            
+            # Notify the requesting peer that their item is ready
+            if peer and peer['remote_api_key']:
+                try:
+                    http_requests.post(
+                        f"{peer['url']}/api/federation/transfer/complete",
+                        headers={'X-API-Key': peer['remote_api_key']},
+                        json={
+                            'sku': sku,
+                            'item_data': item_data,
+                            'quantity': quantity,
+                            'source': load_config().get('LOCATION_PREFIX', 'RSCP')
+                        },
+                        timeout=10
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not notify peer of transfer completion: {e}")
+            
+            message = f"Transfer approved - sent {quantity} of {sku} (remaining: {new_quantity})"
+            item_id = local_item['id']
+            
+        else:
+            # INCOMING: We are the destination, add to our inventory
+            existing_item = conn.execute(
+                'SELECT id, quantity FROM inventory_items WHERE sku = ?', (sku,)
+            ).fetchone()
+            
+            if existing_item:
+                new_quantity = existing_item['quantity'] + quantity
+                conn.execute(
+                    'UPDATE inventory_items SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                    (new_quantity, existing_item['id'])
+                )
+                item_id = existing_item['id']
+                message = f"Transfer approved - added {quantity} to existing item (new total: {new_quantity})"
+            else:
+                # Create new item
+                conn.execute('''
+                    INSERT INTO inventory_items (
+                        sku, name, quantity, buy_price, sell_price,
+                        location_area, location_aisle, location_shelf, location_bin,
+                        supplier, asin, keywords, secondary_ids, description,
+                        image_url, source_url
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    sku,
+                    item_data.get('name'),
+                    quantity,
+                    item_data.get('buy_price', 0),
+                    item_data.get('sell_price', 0),
+                    item_data.get('location_area'),
+                    item_data.get('location_aisle'),
+                    item_data.get('location_shelf'),
+                    item_data.get('location_bin'),
+                    item_data.get('supplier'),
+                    item_data.get('asin'),
+                    item_data.get('keywords'),
+                    item_data.get('secondary_ids'),
+                    item_data.get('description'),
+                    item_data.get('image_url'),
+                    item_data.get('source_url')
+                ))
+                item_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+                message = 'Transfer approved and new item created'
+            
+            # Log incoming transaction
+            conn.execute('''
+                INSERT INTO inventory_transactions 
+                (inventory_item_id, quantity_change, reason, user_id, source_tracking)
+                VALUES (?, ?, 'Federation Transfer In', ?, ?)
+            ''', (item_id, quantity, current_user.username, f'transfer:{transfer_id}'))
         
         # Update transfer status
         conn.execute('''
@@ -668,8 +835,8 @@ def approve_transfer(transfer_id):
         
         return jsonify({
             'success': True,
-            'item_id': new_item_id,
-            'message': 'Transfer approved and item created'
+            'item_id': item_id,
+            'message': message
         })
     finally:
         conn.close()

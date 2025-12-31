@@ -4,6 +4,7 @@ import logging
 import datetime
 import time
 import csv # Replaced pandas with csv
+import threading
 from typing import Dict, Any, List, Optional, Set
 import sqlite3
 
@@ -24,14 +25,18 @@ DATA_CACHE = {
 }
 
 # Performance: Config cache with TTL to avoid disk I/O on every request
+# Lock to prevent race conditions during concurrent load/save
+CONFIG_LOCK = threading.Lock()
 CONFIG_CACHE = {
     'data': None,
     'loaded_at': 0,
-    'ttl': 60  # seconds
+    'ttl': 5  # seconds (reduced from 60 for more responsive updates)
 }
 
 def load_config(force_reload: bool = False) -> Dict[str, Any]:
-    """Load configuration with caching. Uses 60s TTL to avoid disk I/O.
+    """Load configuration with caching. Uses 5s TTL to avoid disk I/O.
+    
+    Thread-safe: Uses CONFIG_LOCK to prevent race conditions.
     
     Args:
         force_reload: If True, bypasses cache and reloads from disk.
@@ -39,61 +44,86 @@ def load_config(force_reload: bool = False) -> Dict[str, Any]:
     global CONFIG_CACHE
     now = time.time()
     
-    # Return cached config if valid and not forcing reload
+    # Return cached config if valid and not forcing reload (no lock needed for read)
     if not force_reload and CONFIG_CACHE['data'] is not None:
         if (now - CONFIG_CACHE['loaded_at']) < CONFIG_CACHE['ttl']:
-            return CONFIG_CACHE['data']
+            return CONFIG_CACHE['data'].copy()  # Return copy to prevent mutation
     
-    config = {}
-    
-    # Load from config.json first
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE, 'r') as f:
-                config = json.load(f)
-        except Exception as e:
-            logger.error(f"[Config] Failed to load {CONFIG_FILE}: {e}")
-            config = {}
-    
-    # Environment variable overrides for sensitive values
-    # These take priority over config.json values
-    env_overrides = {
-        'WEBHOOK_URL': os.environ.get('RSCP_WEBHOOK_URL'),
-        'IMAP_SERVER': os.environ.get('RSCP_IMAP_SERVER'),
-        'EMAIL_USER': os.environ.get('RSCP_EMAIL_USER'),
-        'EMAIL_PASS': os.environ.get('RSCP_EMAIL_PASS'),
-        'SECRET_KEY': os.environ.get('RSCP_SECRET_KEY'),
-    }
-    
-    for key, env_val in env_overrides.items():
-        if env_val:
-            config[key] = env_val
-    
-    # Update cache
-    CONFIG_CACHE['data'] = config
-    CONFIG_CACHE['loaded_at'] = now
-    
-    return config
+    # Lock for disk I/O and cache update
+    with CONFIG_LOCK:
+        # Double-check cache after acquiring lock (another thread may have updated)
+        if not force_reload and CONFIG_CACHE['data'] is not None:
+            if (now - CONFIG_CACHE['loaded_at']) < CONFIG_CACHE['ttl']:
+                return CONFIG_CACHE['data'].copy()
+        
+        config = {}
+        
+        # Load from config.json first
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r') as f:
+                    config = json.load(f)
+            except Exception as e:
+                logger.error(f"[Config] Failed to load {CONFIG_FILE}: {e}")
+                config = {}
+        
+        # Environment variable overrides for sensitive values
+        # These take priority over config.json values
+        env_overrides = {
+            'WEBHOOK_URL': os.environ.get('RSCP_WEBHOOK_URL'),
+            'IMAP_SERVER': os.environ.get('RSCP_IMAP_SERVER'),
+            'EMAIL_USER': os.environ.get('RSCP_EMAIL_USER'),
+            'EMAIL_PASS': os.environ.get('RSCP_EMAIL_PASS'),
+            'SECRET_KEY': os.environ.get('RSCP_SECRET_KEY'),
+        }
+        
+        for key, env_val in env_overrides.items():
+            if env_val:
+                config[key] = env_val
+        
+        # Update cache
+        CONFIG_CACHE['data'] = config
+        CONFIG_CACHE['loaded_at'] = time.time()
+        
+        return config.copy()
 
 def save_config(new_config: Dict[str, Any]) -> bool:
-    """Save configuration to config.json and invalidate cache."""
+    """Save configuration to config.json and update cache.
+    
+    Thread-safe: Uses CONFIG_LOCK to prevent race conditions.
+    """
     global CONFIG_CACHE
-    try:
-        # Load existing first to preserve other keys
-        current = load_config(force_reload=True)
-        current.update(new_config)
-        
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(current, f, indent=4)
-        
-        # Invalidate cache so next load gets fresh data
-        CONFIG_CACHE['data'] = None
-        CONFIG_CACHE['loaded_at'] = 0
-        
-        return True
-    except Exception as e:
-        logger.error(f"[Config] Failed to save {CONFIG_FILE}: {e}")
-        return False
+    
+    with CONFIG_LOCK:
+        try:
+            # Load existing first to preserve other keys
+            current = {}
+            if os.path.exists(CONFIG_FILE):
+                try:
+                    with open(CONFIG_FILE, 'r') as f:
+                        current = json.load(f)
+                except Exception as e:
+                    logger.error(f"[Config] Failed to load existing config: {e}")
+                    current = {}
+            
+            current.update(new_config)
+            
+            # Write atomically by writing to temp file first
+            temp_file = CONFIG_FILE + '.tmp'
+            with open(temp_file, 'w') as f:
+                json.dump(current, f, indent=4)
+            
+            # Replace original with temp (atomic on most file systems)
+            os.replace(temp_file, CONFIG_FILE)
+            
+            # Update cache with new data immediately
+            CONFIG_CACHE['data'] = current
+            CONFIG_CACHE['loaded_at'] = time.time()
+            
+            return True
+        except Exception as e:
+            logger.error(f"[Config] Failed to save {CONFIG_FILE}: {e}")
+            return False
 
 def get_file_age(filepath: str) -> float:
     if not os.path.exists(filepath): return 999.0
