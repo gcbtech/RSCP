@@ -720,8 +720,11 @@ def approve_transfer(transfer_id):
         sku = item_data.get('sku')
         quantity = transfer['quantity']
         
+        logger.info(f"approve_transfer: id={transfer_id}, direction={transfer['direction']}, sku={sku}, qty={quantity}")
+        
         if transfer['direction'] == 'outgoing':
             # OUTGOING: We are the source, decrease our quantity
+            logger.info(f"Processing OUTGOING transfer - will DECREASE quantity")
             
             # Find and update local item
             local_item = conn.execute(
@@ -731,11 +734,15 @@ def approve_transfer(transfer_id):
             if not local_item:
                 return jsonify({'error': f'Item {sku} not found in local inventory'}), 404
             
+            logger.info(f"Local item found: id={local_item['id']}, current_qty={local_item['quantity']}")
+            
             if local_item['quantity'] < quantity:
                 return jsonify({'error': f'Insufficient quantity. Have {local_item["quantity"]}, need {quantity}'}), 400
             
             # Decrease local quantity
             new_quantity = local_item['quantity'] - quantity
+            logger.info(f"Updating quantity: {local_item['quantity']} - {quantity} = {new_quantity}")
+            
             conn.execute(
                 'UPDATE inventory_items SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
                 (new_quantity, local_item['id'])
