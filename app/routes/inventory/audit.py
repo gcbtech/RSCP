@@ -4,6 +4,7 @@ Routes for inventory audit sessions.
 """
 import logging
 from flask import request, redirect, url_for, session, flash, render_template, jsonify
+from flask_login import login_required, current_user
 
 from app.routes.inventory import inventory_bp
 from app.services.db import get_db_connection
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 @inventory_bp.route('/audit')
+@login_required
 def audit_dashboard():
     """Audit dashboard showing active and past sessions."""
     conn = get_db_connection()
@@ -22,6 +24,7 @@ def audit_dashboard():
 
 
 @inventory_bp.route('/audit/start', methods=['POST'])
+@login_required
 def start_audit():
     """Start a new audit session."""
     mode = request.form.get('mode')  # 'item' or 'shelf'
@@ -42,6 +45,7 @@ def start_audit():
 
 
 @inventory_bp.route('/audit/live/<int:session_id>')
+@login_required
 def audit_live(session_id):
     """Live audit scanning page."""
     conn = get_db_connection()
@@ -57,6 +61,7 @@ def audit_live(session_id):
 
 
 @inventory_bp.route('/audit/scan', methods=['POST'])
+@login_required
 def audit_scan():
     """Process an audit scan (API)."""
     data = request.json
@@ -99,6 +104,7 @@ def audit_scan():
 
 
 @inventory_bp.route('/audit/submit_count', methods=['POST'])
+@login_required
 def audit_submit_count():
     """Submit a count for an audit item."""
     data = request.json
@@ -132,6 +138,7 @@ def audit_submit_count():
 
 
 @inventory_bp.route('/audit/history')
+@login_required
 def audit_history():
     """View completed audit sessions."""
     conn = get_db_connection()
@@ -141,6 +148,7 @@ def audit_history():
 
 
 @inventory_bp.route('/audit/finalize/<int:session_id>', methods=['POST'])
+@login_required
 def audit_finalize(session_id):
     """Finalize an audit session and apply counts."""
     conn = get_db_connection()
@@ -156,6 +164,7 @@ def audit_finalize(session_id):
 
 
 @inventory_bp.route('/audit/report/<int:session_id>')
+@login_required
 def audit_report(session_id):
     """View audit session report."""
     conn = get_db_connection()
@@ -173,6 +182,7 @@ def audit_report(session_id):
 
 
 @inventory_bp.route('/audit/apply_fix/<int:record_id>', methods=['POST'])
+@login_required
 def audit_apply_fix(record_id):
     """Apply a single audit correction."""
     conn = get_db_connection()
@@ -193,6 +203,7 @@ def audit_apply_fix(record_id):
 
 
 @inventory_bp.route('/audit/export/<int:session_id>')
+@login_required
 def audit_export(session_id):
     """Export audit report as CSV."""
     import io
@@ -249,6 +260,7 @@ def audit_export(session_id):
 
 
 @inventory_bp.route('/audit/delete/<int:session_id>', methods=['POST'])
+@login_required
 def delete_audit(session_id):
     """Delete a specific audit session (admin only)."""
     from flask_login import current_user
@@ -275,6 +287,7 @@ def delete_audit(session_id):
 
 
 @inventory_bp.route('/audit/delete_all', methods=['POST'])
+@login_required
 def delete_all_audits():
     """Delete ALL audit sessions (admin only)."""
     from flask_login import current_user
@@ -301,6 +314,7 @@ def delete_all_audits():
 
 
 @inventory_bp.route('/audit/export_all')
+@login_required
 def export_all_audits():
     """Export all audit sessions and records to a single CSV file."""
     from flask import Response

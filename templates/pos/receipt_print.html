@@ -136,6 +136,16 @@
                 {{ item.quantity }} × ${{ "%.2f"|format(item.unit_price) }}
                 {% if item.discount_amount %} (-${{ "%.2f"|format(item.discount_amount) }}){% endif %}
             </div>
+            {% if item.addon_1 and config and config.get('ITEM_ADDON_1_TEXT') %}
+            <div class="addon-text" style="font-size: 9pt; margin-left: 8px; font-style: italic;">
+                {{ config.get('ITEM_ADDON_1_TEXT') }}
+            </div>
+            {% endif %}
+            {% if item.addon_2 and config and config.get('ITEM_ADDON_2_TEXT') %}
+            <div class="addon-text" style="font-size: 9pt; margin-left: 8px; font-style: italic;">
+                {{ config.get('ITEM_ADDON_2_TEXT') }}
+            </div>
+            {% endif %}
         </div>
         {% endfor %}
     </div>

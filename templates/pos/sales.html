@@ -705,6 +705,26 @@
                         <button type="submit" class="btn btn-sm btn-warning">Apply</button>
                     </form>
                 </div>
+
+                <!-- Coupon Code -->
+                <div class="discount-input" style="background: #f0fdf4; border: 1px solid #86efac;">
+                    <span>🎟️ Coupon:</span>
+                    <div class="d-flex gap-2 align-items-center flex-grow-1">
+                        <input type="text" id="couponCode" class="form-control form-control-sm"
+                            placeholder="Enter coupon code..." style="text-transform: uppercase; max-width: 150px;"
+                            value="{{ (cart.get('applied_coupon') or {}).get('code', '') }}">
+                        <button type="button" class="btn btn-sm btn-success" onclick="applyCoupon()">Apply</button>
+                        {% if cart.get('applied_coupon') %}
+                        <span class="badge bg-success">
+                            ✓ {{ cart['applied_coupon']['name'] }} (-${{
+                            "%.2f"|format(cart['applied_coupon']['discount']) }})
+                        </span>
+                        <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeCoupon()">×</button>
+                        {% endif %}
+                    </div>
+                </div>
+                <div id="couponError" class="alert alert-danger py-1 px-2 mb-2"
+                    style="display: none; font-size: 0.85rem;"></div>
                 {% endif %}
             </div>
         </div>
@@ -786,6 +806,12 @@
                 <div class="totals-row text-warning">
                     <span>Discount</span>
                     <span>-${{ "%.2f"|format(order_discount) }}</span>
+                </div>
+                {% endif %}
+                {% if cart.get('applied_coupon') and cart['applied_coupon'].get('discount', 0) > 0 %}
+                <div class="totals-row" style="color: #16a34a;">
+                    <span>🎟️ Coupon ({{ cart['applied_coupon']['code'] }})</span>
+                    <span>-${{ "%.2f"|format(cart['applied_coupon']['discount']) }}</span>
                 </div>
                 {% endif %}
                 <div class="totals-row">
@@ -905,6 +931,84 @@
         function holdOrder() {
             new bootstrap.Modal(document.getElementById('holdModal')).show();
         }
+
+        // Coupon functionality
+        function applyCoupon() {
+            const code = document.getElementById('couponCode').value.trim().toUpperCase();
+            const errorDiv = document.getElementById('couponError');
+
+            if (!code) {
+                showCouponError('Please enter a coupon code.');
+                return;
+            }
+
+            // Get cart items for validation
+            const cartItems = {{ cart['items'] | tojson | safe
+        }};
+        const subtotal = {{ subtotal }};
+
+        fetch('/pos/api/coupon/validate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token() }}'
+            },
+            body: JSON.stringify({
+                code: code,
+                cart_items: cartItems,
+                cart_subtotal: subtotal
+            })
+        })
+            .then(r => r.json())
+            .then(data => {
+                if (data.valid) {
+                    // Store coupon in session and reload
+                    fetch('/pos/api/coupon/apply', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRFToken': '{{ csrf_token() }}'
+                        },
+                        body: JSON.stringify({
+                            coupon_id: data.coupon.id,
+                            code: data.coupon.code,
+                            name: data.coupon.name,
+                            discount: data.discount_amount
+                        })
+                    })
+                        .then(() => location.reload());
+                } else {
+                    showCouponError(data.error);
+                }
+            })
+            .catch(err => showCouponError('Error validating coupon.'));
+        }
+
+        function removeCoupon() {
+            fetch('/pos/api/coupon/remove', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token() }}'
+                }
+            })
+                .then(() => location.reload());
+        }
+
+        function showCouponError(msg) {
+            const errorDiv = document.getElementById('couponError');
+            errorDiv.textContent = msg;
+            errorDiv.style.display = 'block';
+            setTimeout(() => errorDiv.style.display = 'none', 4000);
+        }
+
+        // Allow Enter key to apply coupon
+        document.getElementById('couponCode')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                applyCoupon();
+            }
+        });
     </script>
 </body>
 

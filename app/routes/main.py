@@ -178,9 +178,8 @@ def scan_page_legacy():
                  try:
                      conf = load_config()
                      if conf and conf.get('INVENTORY_ENABLED'):
-                         inv_item = conn.execute(
-                             "SELECT * FROM inventory_items WHERE sku = ?", (tracking,)
-                         ).fetchone()
+                         from app.routes.inventory import get_inventory_item
+                         inv_item = get_inventory_item(tracking)
                  except Exception as e:
                      logger.warning(f"Inventory SKU lookup failed during scan: {e}")
                  

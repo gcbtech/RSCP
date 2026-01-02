@@ -11,7 +11,7 @@ from flask import Blueprint, session, flash, redirect, url_for
 # Services
 from app.services.db import get_db_connection, DB_PATH
 from app.services.auth import load_users, BASE_DIR
-from app.services.data_manager import load_config, MANIFEST_FILE, CONFIG_FILE
+from app.services.data_manager import load_config, save_config, MANIFEST_FILE, CONFIG_FILE
 from app.services.file_handler import atomic_write
 
 # Create the main admin blueprint
@@ -20,14 +20,9 @@ logger = logging.getLogger(__name__)
 
 # --- SHARED HELPERS ---
 def save_config_value(key, value):
-    """Save a single config value."""
-    conf = load_config() or {}
-    conf[key] = value
-    try:
-        with atomic_write(CONFIG_FILE, 'w') as f:
-            json.dump(conf, f, indent=4)
-    except Exception as e:
-        logger.error(f"Save config error: {e}")
+    """Save a single config value. Uses save_config to properly update cache."""
+    # Use save_config which properly handles caching
+    save_config({key: value})
 
 
 def require_admin():

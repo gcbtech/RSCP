@@ -6,6 +6,7 @@ import logging
 import json
 from datetime import datetime, date
 from flask import request, redirect, url_for, flash, render_template, session
+from flask_login import login_required, current_user
 
 from app.routes.pos import pos_bp
 from app.services.db import get_db_connection, get_request_db
@@ -116,14 +117,43 @@ def generate_order_number(terminal_id='POS-1'):
 
 def get_cart():
     """Get the current cart from session."""
-    if 'pos_cart' not in session:
-        session['pos_cart'] = {
-            'items': [],
-            'discount_amount': 0,
-            'discount_type': None,
-            'discount_reason': '',
-        }
-    return session['pos_cart']
+    try:
+        cart = session.get('pos_cart')
+        
+        # Initialize if missing or invalid type
+        if cart is None or not isinstance(cart, dict):
+            cart = {
+                'items': [],
+                'discount_amount': 0,
+                'discount_type': None,
+                'discount_reason': '',
+            }
+            session['pos_cart'] = cart
+            return cart
+            
+        # Repair: Ensure critical keys exist
+        modified = False
+        if 'items' not in cart:
+            cart['items'] = []
+            modified = True
+        
+        # Ensure discount keys
+        if 'discount_amount' not in cart:
+            cart['discount_amount'] = 0
+            modified = True
+            
+        if 'discount_type' not in cart:
+            cart['discount_type'] = None
+            modified = True
+            
+        if modified:
+            session.modified = True
+            
+        return cart
+    except Exception as e:
+        logger.error(f"Error in get_cart: {e}")
+        # Emergency fallback to prevent 500
+        return {'items': [], 'discount_amount': 0, 'discount_type': None}
 
 
 def save_cart(cart):
@@ -138,56 +168,37 @@ def clear_cart():
     session.modified = True
 
 
-def get_inventory_item(sku):
-    """Get an inventory item by SKU, UPC, or Part Number."""
-    try:
-        conn = get_request_db()
-        
-        # First try exact SKU match
-        result = conn.execute('''
-            SELECT id, sku, name, quantity, sell_price, buy_price, image_url
-            FROM inventory_items WHERE sku = ?
-        ''', (sku,)).fetchone()
-        
-        # If not found, search in secondary_ids (UPC, part_number)
-        if not result:
-            import json
-            # Search by checking if the input matches UPC or part_number in secondary_ids JSON
-            all_items = conn.execute('''
-                SELECT id, sku, name, quantity, sell_price, buy_price, image_url, secondary_ids
-                FROM inventory_items WHERE secondary_ids IS NOT NULL AND secondary_ids != '{}'
-            ''').fetchall()
-            
-            for item in all_items:
-                try:
-                    if item['secondary_ids']:
-                        ids = json.loads(item['secondary_ids'])
-                        if ids.get('upc') == sku or ids.get('part_number') == sku:
-                            result = item
-                            break
-                except json.JSONDecodeError:
-                    continue
-        
-        return dict(result) if result else None
-    except Exception as e:
-        logger.error(f"Error getting inventory item {sku}: {e}")
-        return None
+from app.routes.inventory import get_inventory_item
 
 
 def search_inventory(query, limit=10):
-    """Search inventory items by SKU or name."""
+    """Search inventory items by SKU or name (Tokenized Fuzzy Search)."""
     try:
         conn = get_request_db()
-        search_term = f"%{query}%"
-        results = conn.execute('''
+        
+        tokens = query.strip().split()
+        if not tokens:
+            return []
+            
+        search_conditions = []
+        search_params = []
+        
+        for token in tokens:
+            pattern = f'%{token}%'
+            search_conditions.append('(sku LIKE ? OR name LIKE ? OR secondary_ids LIKE ?)')
+            search_params.extend([pattern, pattern, pattern])
+            
+        where_clause = " AND ".join(search_conditions)
+        
+        sql = f'''
             SELECT id, sku, name, quantity, sell_price, image_url
             FROM inventory_items 
-            WHERE sku LIKE ? OR name LIKE ?
-            ORDER BY 
-                CASE WHEN sku LIKE ? THEN 0 ELSE 1 END,
-                name ASC
+            WHERE {where_clause}
+            ORDER BY name ASC
             LIMIT ?
-        ''', (search_term, search_term, f"{query}%", limit)).fetchall()
+        '''
+        
+        results = conn.execute(sql, search_params + [limit]).fetchall()
         return [dict(r) for r in results]
     except Exception as e:
         logger.error(f"Error searching inventory: {e}")
@@ -209,27 +220,32 @@ def allow_hold_orders():
 @pos_bp.before_request
 def check_pos_enabled():
     """Redirect if POS module is disabled or user lacks role."""
-    from flask_login import current_user
     
-    # Allow API endpoints, login, and debug
-    if request.endpoint and ('api' in request.endpoint or 'login' in request.endpoint or 'debug' in request.endpoint):
+    # Allow API endpoints and login to handle their own auth/publicity
+    # Removed 'debug' from skip list - it should be protected
+    if request.endpoint and ('api' in request.endpoint or 'login' in request.endpoint):
         return
+    
+    # Enforce global authentication for POS module (except exceptions above)
+    if not current_user.is_authenticated:
+        return redirect(url_for('main.login', next=request.url))
     
     if not is_pos_enabled():
         flash("POS module is not enabled.")
         return redirect(url_for('main.index'))
     
     # Check user role (admins bypass role check)
-    if current_user.is_authenticated and not current_user.is_admin:
+    if not current_user.is_admin:
         if not current_user.has_role('pos'):
             flash("You don't have access to the POS module.")
             return redirect(url_for('main.index'))
 
 
 @pos_bp.route('/debug')
+@login_required
 def pos_debug():
     """Debug endpoint to check POS module status."""
-    from flask_login import current_user
+    # current_user imported globally now
     import traceback
     
     debug_info = {
@@ -285,6 +301,7 @@ def log_pos_action(action, user_id=None, user_name=None, target_type=None, targe
 # =============================================================================
 
 @pos_bp.route('/settings/save_tax_rate', methods=['POST'])
+@login_required
 def save_tax_rate():
     """Save the tax rate setting."""
     try:
@@ -297,6 +314,7 @@ def save_tax_rate():
 
 
 @pos_bp.route('/settings/save_cash_discount', methods=['POST'])
+@login_required
 def save_cash_discount():
     """Save cash discount settings."""
     enabled = 'true' if request.form.get('enabled') == 'on' else 'false'
@@ -315,6 +333,7 @@ def save_cash_discount():
 
 
 @pos_bp.route('/settings/save_receipt', methods=['POST'])
+@login_required
 def save_receipt():
     """Save receipt settings."""
     store_name = request.form.get('store_name', '').strip()
@@ -330,6 +349,7 @@ def save_receipt():
 
 
 @pos_bp.route('/settings/save_email', methods=['POST'])
+@login_required
 def save_email_settings():
     """Save POS email automation settings."""
     host = request.form.get('host', '').strip()
@@ -345,7 +365,8 @@ def save_email_settings():
     
     # Only update password if provided
     if password:
-        set_pos_setting('POS_EMAIL_PASSWORD', password)
+        from app.services.security import encrypt
+        set_pos_setting('POS_EMAIL_PASSWORD', encrypt(password))
     
     flash("Email settings saved.")
     return redirect(url_for('admin.admin_panel') + '?tab=pos')

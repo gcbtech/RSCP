@@ -18,7 +18,8 @@ from app.services.logger import log_exception
 
 def create_app():
     # TODO: Remove debug print statement for production
-    print("DEBUG: Starting create_app...")
+    print("DEBUG: Starting create_app... v4")
+    # Force reload for route registration updates
     # Logging Setup
     from logging.handlers import RotatingFileHandler
     

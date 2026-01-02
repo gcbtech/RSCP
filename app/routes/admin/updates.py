@@ -9,7 +9,7 @@ import tempfile
 import zipfile
 import subprocess
 import requests
-from flask import redirect, url_for, flash
+from flask import redirect, url_for, flash, request, jsonify
 
 from app.routes.admin import admin_bp, require_admin
 from app.services.auth import BASE_DIR
@@ -19,7 +19,20 @@ logger = logging.getLogger(__name__)
 # GitHub Configuration
 GITHUB_REPO = "gcbtech/RSCP"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}"
-GITHUB_ZIP_URL = f"https://github.com/{GITHUB_REPO}/archive/refs/heads/main.zip"
+
+# Available branches for updates
+BRANCHES = {
+    'stable': {'name': 'main', 'display': 'Stable', 'warning': None},
+    'beta': {'name': 'beta', 'display': 'Beta', 'warning': '⚠️ Beta versions may contain bugs and unstable features.'}
+}
+
+def get_github_zip_url(branch='main'):
+    """Get the GitHub ZIP download URL for a specific branch."""
+    return f"https://github.com/{GITHUB_REPO}/archive/refs/heads/{branch}.zip"
+
+def get_version_url(branch='main'):
+    """Get the raw VERSION file URL for a specific branch."""
+    return f"https://raw.githubusercontent.com/{GITHUB_REPO}/{branch}/VERSION"
 
 # Files that should never be overwritten during updates
 PROTECTED_FILES = [
@@ -46,15 +59,15 @@ def get_current_version():
     return "unknown"
 
 
-def get_latest_version():
-    """Check GitHub for latest version."""
+def get_latest_version(branch='main'):
+    """Check GitHub for latest version on a specific branch."""
     try:
-        url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/VERSION"
+        url = get_version_url(branch)
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
             return response.text.strip()
     except Exception as e:
-        logger.error(f"Error checking latest version: {e}")
+        logger.error(f"Error checking latest version for {branch}: {e}")
     return None
 
 
@@ -80,26 +93,45 @@ def version_is_newer(remote_version, local_version):
 
 @admin_bp.route('/check_update')
 def check_update():
-    """Check if updates are available from GitHub."""
+    """Check if updates are available from GitHub for both branches."""
     error = require_admin()
     if error:
         return {"error": "Admin required"}, 403
     
     try:
         current_version = get_current_version()
-        latest_version = get_latest_version()
         
-        if not latest_version:
-            return {"error": "Could not check for updates. Please try again later."}, 500
+        # Check both stable and beta branches
+        stable_version = get_latest_version('main')
+        beta_version = get_latest_version('beta')
         
-        update_available = version_is_newer(latest_version, current_version)
-        
-        return {
+        result = {
             "current_version": current_version,
-            "latest_version": latest_version,
-            "update_available": update_available,
-            "status": f"Current: {current_version}, Latest: {latest_version}"
+            "branches": {}
         }
+        
+        if stable_version:
+            result["branches"]["stable"] = {
+                "version": stable_version,
+                "update_available": version_is_newer(stable_version, current_version),
+                "display": "Stable",
+                "warning": None
+            }
+        
+        if beta_version:
+            result["branches"]["beta"] = {
+                "version": beta_version,
+                "update_available": True,  # Always show beta as available for testing
+                "display": "Beta",
+                "warning": "⚠️ Beta versions may contain bugs and unstable features."
+            }
+        
+        # For backwards compatibility
+        result["latest_version"] = stable_version
+        result["update_available"] = result["branches"].get("stable", {}).get("update_available", False)
+        result["status"] = f"Current: {current_version}"
+        
+        return result
     except Exception as e:
         logger.error(f"Update check error: {e}")
         return {"error": str(e)}, 500
@@ -107,18 +139,24 @@ def check_update():
 
 @admin_bp.route('/update', methods=['POST'])
 def perform_update():
-    """Download and apply latest updates from GitHub."""
+    """Download and apply updates from GitHub."""
     error = require_admin()
     if error:
         flash("Admin access required")
         return redirect(url_for('admin.admin_panel'))
     
+    # Get branch from form (defaults to stable/main)
+    branch_key = request.form.get('branch', 'stable')
+    branch_info = BRANCHES.get(branch_key, BRANCHES['stable'])
+    branch_name = branch_info['name']
+    
     try:
         old_version = get_current_version()
         
         # Download ZIP from GitHub
-        logger.info("Downloading update from GitHub...")
-        response = requests.get(GITHUB_ZIP_URL, timeout=60, stream=True)
+        zip_url = get_github_zip_url(branch_name)
+        logger.info(f"Downloading update from GitHub ({branch_name} branch)...")
+        response = requests.get(zip_url, timeout=60, stream=True)
         if response.status_code != 200:
             flash(f"Failed to download update: HTTP {response.status_code}")
             return redirect(url_for('admin.admin_panel'))
@@ -189,7 +227,8 @@ def perform_update():
         
         new_version = get_current_version()
         
-        flash(f"Update successful! {old_version} → {new_version}. Please restart the service for changes to take effect.")
+        branch_display = branch_info['display']
+        flash(f"Update successful! {old_version} → {new_version} ({branch_display}). Please restart the service for changes to take effect.")
         logger.info(f"RSCP updated from {old_version} to {new_version}")
         
     except requests.RequestException as e:

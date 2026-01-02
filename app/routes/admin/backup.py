@@ -195,6 +195,27 @@ def save_location_labels():
     return redirect(url_for('admin.admin_panel'))
 
 
+@admin_bp.route('/save_item_addons', methods=['POST'])
+def save_item_addons():
+    """Save item addon settings (warranty/disclaimer text)."""
+    error = require_admin()
+    if error:
+        return error
+    
+    # Addon 1
+    save_config_value('ITEM_ADDON_1_ENABLED', request.form.get('addon_1_enabled') == 'on')
+    save_config_value('ITEM_ADDON_1_LABEL', request.form.get('addon_1_label', '').strip())
+    save_config_value('ITEM_ADDON_1_TEXT', request.form.get('addon_1_text', '').strip())
+    
+    # Addon 2
+    save_config_value('ITEM_ADDON_2_ENABLED', request.form.get('addon_2_enabled') == 'on')
+    save_config_value('ITEM_ADDON_2_LABEL', request.form.get('addon_2_label', '').strip())
+    save_config_value('ITEM_ADDON_2_TEXT', request.form.get('addon_2_text', '').strip())
+    
+    flash("Item addons saved successfully.")
+    return redirect(url_for('admin.admin_panel', tab='inventory'))
+
+
 @admin_bp.route('/save_location_options', methods=['POST'])
 def save_location_options():
     """Save location dropdown options for each field."""

@@ -644,6 +644,73 @@
                             </div>
                         </div>
 
+                        <!-- Item Addons (Warranty/Disclaimer Text) -->
+                        <div class="admin-card mt-3">
+                            <div class="card-header">
+                                <div class="icon" style="background: #e8f5e9; color: #2e7d32;">📝</div>
+                                <span>Item Addons</span>
+                            </div>
+                            <div class="card-body">
+                                <p class="small text-muted mb-3">
+                                    Configure optional addon text that can be added to items. When enabled for an item,
+                                    this text will appear on receipts.
+                                </p>
+                                <form action="/admin/save_item_addons" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                                    <!-- Addon 1 -->
+                                    <div class="mb-3 p-2 border rounded">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <input class="form-check-input me-2" type="checkbox" name="addon_1_enabled"
+                                                id="addon1Enabled" {% if config and config.get('ITEM_ADDON_1_ENABLED')
+                                                %}checked{% endif %}>
+                                            <label class="form-check-label fw-bold" for="addon1Enabled">
+                                                Enable Addon 1
+                                            </label>
+                                        </div>
+                                        <div class="mb-2">
+                                            <label class="form-label small">Checkbox Label (shown in Add/Edit
+                                                Item):</label>
+                                            <input type="text" name="addon_1_label" class="form-control form-control-sm"
+                                                placeholder="e.g., Include Warranty"
+                                                value="{{ config.get('ITEM_ADDON_1_LABEL', '') if config else '' }}">
+                                        </div>
+                                        <div>
+                                            <label class="form-label small">Receipt Text (printed when checked):</label>
+                                            <textarea name="addon_1_text" class="form-control form-control-sm" rows="2"
+                                                placeholder="e.g., 30-day warranty included. See terms at...">{{ config.get('ITEM_ADDON_1_TEXT', '') if config else '' }}</textarea>
+                                        </div>
+                                    </div>
+
+                                    <!-- Addon 2 -->
+                                    <div class="mb-3 p-2 border rounded">
+                                        <div class="d-flex align-items-center mb-2">
+                                            <input class="form-check-input me-2" type="checkbox" name="addon_2_enabled"
+                                                id="addon2Enabled" {% if config and config.get('ITEM_ADDON_2_ENABLED')
+                                                %}checked{% endif %}>
+                                            <label class="form-check-label fw-bold" for="addon2Enabled">
+                                                Enable Addon 2
+                                            </label>
+                                        </div>
+                                        <div class="mb-2">
+                                            <label class="form-label small">Checkbox Label (shown in Add/Edit
+                                                Item):</label>
+                                            <input type="text" name="addon_2_label" class="form-control form-control-sm"
+                                                placeholder="e.g., Add Disclaimer"
+                                                value="{{ config.get('ITEM_ADDON_2_LABEL', '') if config else '' }}">
+                                        </div>
+                                        <div>
+                                            <label class="form-label small">Receipt Text (printed when checked):</label>
+                                            <textarea name="addon_2_text" class="form-control form-control-sm" rows="2"
+                                                placeholder="e.g., All sales final. No refunds or exchanges.">{{ config.get('ITEM_ADDON_2_TEXT', '') if config else '' }}</textarea>
+                                        </div>
+                                    </div>
+
+                                    <button type="submit" class="btn btn-primary btn-sm">Save Addons</button>
+                                </form>
+                            </div>
+                        </div>
+
                         <!-- Location Dropdown Options -->
                         <div class="admin-card mt-3">
                             <div class="card-header">
@@ -1517,11 +1584,46 @@
                                     </button>
                                 </div>
                                 <div id="updateStatus" class="small text-muted" style="display:none;"></div>
-                                <form action="/admin/update" method="POST" id="updateForm" style="display:none;"
-                                    onsubmit="return confirm('Update RSCP to latest version?');">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button type="submit" class="btn btn-primary w-100">Update Now</button>
-                                </form>
+
+                                <!-- Update Options Container -->
+                                <div id="updateOptions" style="display:none;">
+                                    <!-- Stable Branch -->
+                                    <div id="stableUpdate" class="border rounded p-2 mb-2" style="display:none;">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <span class="badge bg-success">Stable</span>
+                                                <span id="stableVersion" class="small ms-1"></span>
+                                            </div>
+                                            <form action="/admin/update" method="POST" class="d-inline"
+                                                onsubmit="return confirm('Update to Stable version?');">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                <input type="hidden" name="branch" value="stable">
+                                                <button type="submit" class="btn btn-success btn-sm">Update to
+                                                    Stable</button>
+                                            </form>
+                                        </div>
+                                    </div>
+
+                                    <!-- Beta Branch -->
+                                    <div id="betaUpdate" class="border rounded p-2" style="display:none;">
+                                        <div class="d-flex justify-content-between align-items-center">
+                                            <div>
+                                                <span class="badge bg-warning text-dark">Beta</span>
+                                                <span id="betaVersion" class="small ms-1"></span>
+                                            </div>
+                                            <form action="/admin/update" method="POST" class="d-inline"
+                                                onsubmit="return confirm('⚠️ WARNING: Beta versions may contain bugs and unstable features.\n\nAre you sure you want to update to the Beta branch?');">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                <input type="hidden" name="branch" value="beta">
+                                                <button type="submit" class="btn btn-warning btn-sm">Update to
+                                                    Beta</button>
+                                            </form>
+                                        </div>
+                                        <div class="small text-warning mt-1">
+                                            ⚠️ Beta versions may contain bugs and unstable features.
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -1678,21 +1780,44 @@
 
         function checkForUpdates() {
             const status = document.getElementById('updateStatus');
-            const form = document.getElementById('updateForm');
+            const updateOptions = document.getElementById('updateOptions');
+            const stableUpdate = document.getElementById('stableUpdate');
+            const betaUpdate = document.getElementById('betaUpdate');
+
             status.style.display = 'block';
             status.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Checking...';
-            form.style.display = 'none';
+            updateOptions.style.display = 'none';
+            stableUpdate.style.display = 'none';
+            betaUpdate.style.display = 'none';
 
             fetch('/admin/check_update')
                 .then(r => r.json())
                 .then(data => {
                     if (data.error) {
                         status.innerHTML = `<span class="text-danger">Error: ${data.error}</span>`;
-                    } else if (data.update_available) {
-                        status.innerHTML = '<span class="text-success">Update available!</span>';
-                        form.style.display = 'block';
-                    } else {
-                        status.innerHTML = '<span class="text-muted">You have the latest version.</span>';
+                        return;
+                    }
+
+                    status.innerHTML = `Current: <strong>${data.current_version}</strong>`;
+                    updateOptions.style.display = 'block';
+
+                    // Show stable branch if available
+                    if (data.branches && data.branches.stable) {
+                        const stable = data.branches.stable;
+                        document.getElementById('stableVersion').textContent = `v${stable.version}`;
+                        stableUpdate.style.display = 'block';
+
+                        // Highlight if update is needed
+                        if (stable.update_available) {
+                            stableUpdate.classList.add('border-success');
+                        }
+                    }
+
+                    // Show beta branch if available
+                    if (data.branches && data.branches.beta) {
+                        const beta = data.branches.beta;
+                        document.getElementById('betaVersion').textContent = `v${beta.version}`;
+                        betaUpdate.style.display = 'block';
                     }
                 })
                 .catch(err => status.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`);
@@ -1886,10 +2011,10 @@
                             <td>${new Date(t.requested_at).toLocaleString()}</td>
                             <td>${new Date(t.expires_at).toLocaleString()}</td>
                             <td>
-                                ${t.direction === 'incoming' ? `
-                                    <button class="btn btn-sm btn-success" onclick="approveTransfer(${t.id})">Approve</button>
-                                    <button class="btn btn-sm btn-danger" onclick="rejectTransfer(${t.id})">Reject</button>
-                                ` : `<span class="text-muted">Awaiting approval</span>`}
+                                ${t.direction === 'outgoing' ? `
+                                    <button class="btn btn-sm btn-success" onclick="approveTransfer(${t.id})">✓ Send</button>
+                                    <button class="btn btn-sm btn-danger" onclick="rejectTransfer(${t.id})">✗ Deny</button>
+                                ` : `<span class="text-muted">Awaiting delivery</span>`}
                             </td>
                         </tr>
                     `).join('');
@@ -1897,12 +2022,12 @@
         }
 
         function approveTransfer(id) {
-            if (!confirm('Approve this transfer? Item will be added to your inventory.')) return;
+            if (!confirm('Approve this transfer? The item will be sent to the requesting instance.')) return;
             fetch(`/api/federation/admin/transfers/${id}/approve`, { method: 'POST' })
                 .then(r => r.json())
                 .then(data => {
                     if (data.success) {
-                        alert('Transfer approved! Item created.');
+                        alert(data.message || 'Transfer approved!');
                         loadTransfers();
                     } else {
                         alert(`Error: ${data.error}`);

@@ -291,7 +291,9 @@ def search():
 @federation_bp.route('/items/<sku>', methods=['GET'])
 @require_api_key
 def get_item(sku):
-    """Get item details by SKU."""
+    """Get item details by SKU, including base64 image data for transfers."""
+    import base64
+    
     conn = get_db_connection()
     try:
         item = conn.execute(
@@ -301,7 +303,29 @@ def get_item(sku):
         if not item:
             return jsonify({'error': 'Item not found'}), 404
         
-        return jsonify(dict(item))
+        result = dict(item)
+        
+        # Include base64 image data if image exists
+        if item['image_url']:
+            try:
+                # Convert relative URL to file path
+                image_path = item['image_url']
+                if image_path.startswith('/static/'):
+                    from app.services.db import BASE_DIR
+                    image_path = os.path.join(BASE_DIR, image_path.lstrip('/'))
+                
+                if os.path.exists(image_path):
+                    with open(image_path, 'rb') as f:
+                        image_data = base64.b64encode(f.read()).decode('utf-8')
+                    # Get file extension
+                    ext = os.path.splitext(image_path)[1].lower()
+                    result['image_base64'] = image_data
+                    result['image_extension'] = ext
+                    logger.info(f"Included image data for {sku} ({len(image_data)} bytes)")
+            except Exception as e:
+                logger.warning(f"Could not read image for {sku}: {e}")
+        
+        return jsonify(result)
     finally:
         conn.close()
 
@@ -393,6 +417,33 @@ def receive_transfer_complete():
     quantity = data['quantity']
     source = data.get('source', 'Unknown')
     
+    # Save image if provided
+    local_image_url = None
+    if item_data.get('image_base64'):
+        try:
+            import base64
+            import uuid
+            from app.services.db import BASE_DIR
+            
+            image_data = base64.b64decode(item_data['image_base64'])
+            ext = item_data.get('image_extension', '.jpg')
+            filename = f"fed_{uuid.uuid4().hex}{ext}"
+            
+            upload_dir = os.path.join(BASE_DIR, 'static', 'uploads', 'items')
+            os.makedirs(upload_dir, exist_ok=True)
+            
+            image_path = os.path.join(upload_dir, filename)
+            with open(image_path, 'wb') as f:
+                f.write(image_data)
+            
+            local_image_url = f"/static/uploads/items/{filename}"
+            logger.info(f"Saved transferred image for {sku}: {local_image_url}")
+        except Exception as e:
+            logger.warning(f"Could not save transferred image: {e}")
+    
+    # Use local image URL if we saved one, otherwise use the original (won't work but preserves data)
+    final_image_url = local_image_url or item_data.get('image_url')
+    
     conn = get_db_connection()
     try:
         # Check if item exists locally
@@ -407,6 +458,13 @@ def receive_transfer_complete():
                 (new_quantity, existing_item['id'])
             )
             item_id = existing_item['id']
+            
+            # Update image if we got a new one and the existing item doesn't have one
+            if local_image_url:
+                conn.execute(
+                    'UPDATE inventory_items SET image_url = ? WHERE id = ? AND (image_url IS NULL OR image_url = "")',
+                    (local_image_url, existing_item['id'])
+                )
         else:
             # Create new item
             conn.execute('''
@@ -428,7 +486,7 @@ def receive_transfer_complete():
                 item_data.get('supplier'),
                 item_data.get('asin'),
                 item_data.get('keywords'),
-                item_data.get('image_url'),
+                final_image_url,
                 item_data.get('source_url')
             ))
             item_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
@@ -539,7 +597,9 @@ def add_peer():
     api_key = generate_api_key()
     
     # The remote_api_key is the key THEY give US to call THEM
-    remote_api_key = data.get('remote_api_key', '').strip() or None
+    remote_api_key_raw = data.get('remote_api_key', '').strip() or None
+    from app.services.security import encrypt
+    remote_api_key = encrypt(remote_api_key_raw) if remote_api_key_raw else None
     
     conn = get_db_connection()
     try:
@@ -586,6 +646,7 @@ def set_remote_key(peer_id):
     
     data = request.get_json()
     remote_key = data.get('remote_api_key', '').strip()
+    from app.services.security import encrypt
     
     if not remote_key:
         return jsonify({'error': 'Remote API key is required'}), 400
@@ -596,7 +657,7 @@ def set_remote_key(peer_id):
             UPDATE federation_peers 
             SET remote_api_key = ?, status = 'active'
             WHERE id = ?
-        ''', (remote_key, peer_id))
+        ''', (encrypt(remote_key), peer_id))
         conn.commit()
         return jsonify({'success': True, 'message': 'Remote API key saved. You can now test the connection.'})
     finally:
@@ -618,7 +679,8 @@ def test_peer_connection(peer_id):
             return jsonify({'error': 'Peer not found'}), 404
         
         # Use remote_api_key (THEIR key) to call THEM
-        remote_key = peer['remote_api_key']
+        from app.services.security import decrypt
+        remote_key = decrypt(peer['remote_api_key'])
         if not remote_key:
             return jsonify({
                 'success': False,

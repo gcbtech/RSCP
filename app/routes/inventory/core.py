@@ -73,6 +73,48 @@ def validate_location(area, aisle, shelf, bin_loc):
     return any([area, aisle, shelf, bin_loc])
 
 
+def get_inventory_item(sku):
+    """Get an inventory item by SKU, UPC, or Part Number."""
+    conn = get_db_connection()
+    try:
+        # First try exact SKU match
+        result = conn.execute('''
+            SELECT id, sku, name, quantity, sell_price, buy_price, image_url
+            FROM inventory_items WHERE sku = ?
+        ''', (sku,)).fetchone()
+        
+        # If not found, search in secondary_ids (UPC, part_number)
+        if not result:
+            import json
+            # Search by checking if the input matches UPC or part_number in secondary_ids JSON
+            # Note: This scans all items with secondary_ids. 
+            # Ideally should be replaced with SQL JSON queries if SQLite version supports it,
+            # but this is safe for compatibility.
+            all_items = conn.execute('''
+                SELECT id, sku, name, quantity, sell_price, buy_price, image_url, secondary_ids
+                FROM inventory_items WHERE secondary_ids IS NOT NULL AND secondary_ids != '{}'
+            ''').fetchall()
+            
+            for item in all_items:
+                try:
+                    if item['secondary_ids']:
+                        ids = json.loads(item['secondary_ids'])
+                        # Check UPC or Part Number
+                        # Case insensitive match could be added here if needed
+                        if str(ids.get('upc', '')).strip() == sku or str(ids.get('part_number', '')).strip() == sku:
+                            result = item
+                            break
+                except json.JSONDecodeError:
+                    continue
+        
+        return dict(result) if result else None
+    except Exception as e:
+        logger.error(f"Error looking up inventory item: {e}")
+        return None
+    finally:
+        conn.close()
+
+
 def get_inventory_stats():
     """Helper to calculate inventory statistics."""
     conn = get_db_connection()
@@ -145,18 +187,27 @@ def check_inventory_enabled():
     if request.endpoint and 'api' in request.endpoint:
         return
     
+    # Enforce authentication for all inventory routes (except API above if needed, but really API should be auth'd too)
+    # The 'api' check above might be risky if APIs are public. 
+    # Let's remove the api check skip if those APIs expose sensitive data.
+    # But for now, let's just Enforce Login.
+    
+    if not current_user.is_authenticated:
+        return redirect(url_for('main.login', next=request.url))
+
     if not is_inventory_enabled():
         flash("Inventory module is not enabled.")
         return redirect(url_for('main.index'))
     
     # Check user role (admins bypass role check)
-    if current_user.is_authenticated and not current_user.is_admin:
+    if not current_user.is_admin:
         if not current_user.has_role('inventory'):
             flash("You don't have access to the Inventory module.")
             return redirect(url_for('main.index'))
 
 
 @inventory_bp.route('/')
+@login_required
 def overview():
     """Inventory analytics overview page."""
     stats = get_inventory_stats()
@@ -222,12 +273,14 @@ def overview():
 
 
 @inventory_bp.route('/api/overview')
+@login_required
 def overview_api():
     """API to get current stats for auto-refresh."""
     return jsonify(get_inventory_stats())
 
 
 @inventory_bp.route('/generate-sku')
+@login_required
 def generate_sku_api():
     """API endpoint to generate a new SKU for a given category."""
     category = request.args.get('category', 'ATO')
@@ -240,6 +293,7 @@ def generate_sku_api():
 
 
 @inventory_bp.route('/check-sku-exists')
+@login_required
 def check_sku_exists():
     """API endpoint to check if a SKU already exists."""
     sku = request.args.get('sku', '').strip()

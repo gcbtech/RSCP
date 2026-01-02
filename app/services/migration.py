@@ -165,6 +165,10 @@ def _create_inventory_tables(conn):
                 secondary_ids TEXT,
                 description TEXT,
                 
+                -- Item Addons (warranty/disclaimer)
+                addon_1 BOOLEAN DEFAULT 0,
+                addon_2 BOOLEAN DEFAULT 0,
+                
                 -- Alert settings
                 alert_enabled BOOLEAN DEFAULT 0,
                 alert_threshold INTEGER DEFAULT 0,
@@ -186,6 +190,8 @@ def _create_inventory_tables(conn):
             ('keywords', 'ALTER TABLE inventory_items ADD COLUMN keywords TEXT'),
             ('secondary_ids', 'ALTER TABLE inventory_items ADD COLUMN secondary_ids TEXT'),
             ('description', 'ALTER TABLE inventory_items ADD COLUMN description TEXT'),
+            ('addon_1', 'ALTER TABLE inventory_items ADD COLUMN addon_1 BOOLEAN DEFAULT 0'),
+            ('addon_2', 'ALTER TABLE inventory_items ADD COLUMN addon_2 BOOLEAN DEFAULT 0'),
         ]
         for col_name, sql in migrations:
             try:
@@ -388,6 +394,76 @@ def _create_pos_tables(conn):
         
         conn.commit()
         logger.info("POS tables initialized.")
+        
+        # ========================================
+        # POS Coupons Tables
+        # ========================================
+        
+        # Coupons Table - main coupon definitions
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_coupons (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                code TEXT UNIQUE NOT NULL,
+                coupon_type TEXT NOT NULL,
+                discount_type TEXT NOT NULL,
+                discount_value REAL NOT NULL,
+                
+                buy_quantity INTEGER DEFAULT 1,
+                get_quantity INTEGER DEFAULT 1,
+                reward_item_id INTEGER,
+                
+                min_purchase REAL,
+                max_uses INTEGER,
+                current_uses INTEGER DEFAULT 0,
+                
+                start_date TEXT,
+                end_date TEXT,
+                cannot_combine BOOLEAN DEFAULT 0,
+                
+                active BOOLEAN DEFAULT 1,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                created_by INTEGER,
+                
+                FOREIGN KEY (reward_item_id) REFERENCES inventory_items(id),
+                FOREIGN KEY (created_by) REFERENCES users(id)
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_coupon_code ON pos_coupons(code)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_coupon_active ON pos_coupons(active)')
+        
+        # Coupon Items Table - links coupons to specific items
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_coupon_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                coupon_id INTEGER NOT NULL,
+                item_id INTEGER NOT NULL,
+                FOREIGN KEY (coupon_id) REFERENCES pos_coupons(id) ON DELETE CASCADE,
+                FOREIGN KEY (item_id) REFERENCES inventory_items(id)
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_coupon_items_coupon ON pos_coupon_items(coupon_id)')
+        
+        # Coupon Redemptions Table - track usage
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_coupon_redemptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                coupon_id INTEGER NOT NULL,
+                order_id INTEGER,
+                serial_used TEXT,
+                discount_applied REAL,
+                redeemed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                redeemed_by INTEGER,
+                FOREIGN KEY (coupon_id) REFERENCES pos_coupons(id),
+                FOREIGN KEY (order_id) REFERENCES pos_orders(id),
+                FOREIGN KEY (redeemed_by) REFERENCES users(id)
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_redemption_coupon ON pos_coupon_redemptions(coupon_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_redemption_order ON pos_coupon_redemptions(order_id)')
+        
+        conn.commit()
+        logger.info("POS Coupon tables initialized.")
         
         # ========================================
         # Federation Tables (Multi-Instance Linking)

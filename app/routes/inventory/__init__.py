@@ -21,4 +21,4 @@ CATEGORY_CODES = {
 from app.routes.inventory import core, items, audit, alerts, api, imports
 
 # Re-export commonly used functions for backward compatibility
-from app.routes.inventory.core import is_inventory_enabled, generate_sku, validate_location, get_inventory_stats
+from app.routes.inventory.core import is_inventory_enabled, generate_sku, validate_location, get_inventory_stats, get_inventory_item

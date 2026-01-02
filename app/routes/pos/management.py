@@ -830,7 +830,8 @@ def send_eod_email():
     host = get_pos_setting('POS_EMAIL_HOST')
     port = get_pos_setting('POS_EMAIL_PORT', '587')
     user = get_pos_setting('POS_EMAIL_USER')
-    password = get_pos_setting('POS_EMAIL_PASSWORD')
+    from app.services.security import decrypt
+    password = decrypt(get_pos_setting('POS_EMAIL_PASSWORD'))
     recipients = get_pos_setting('POS_EMAIL_RECIPIENTS') # Comma separated
     
     if not all([host, user, password, recipients]):

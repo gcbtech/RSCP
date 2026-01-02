@@ -7,6 +7,7 @@ import csv
 import logging
 import json
 from flask import render_template, request, redirect, url_for, flash, Response, session
+from flask_login import login_required, current_user
 from app.routes.inventory import inventory_bp
 from app.services.db import get_db_connection
 
@@ -37,6 +38,7 @@ COLUMN_MAP = {
 }
 
 @inventory_bp.route('/import', methods=['GET', 'POST'])
+@login_required
 def import_items():
     """Import inventory items from CSV."""
     if request.method == 'POST':
@@ -167,6 +169,7 @@ def import_items():
     return render_template('inventory/import.html')
 
 @inventory_bp.route('/import/template')
+@login_required
 def download_import_template():
     """Download CSV template for imports."""
     output = io.StringIO()

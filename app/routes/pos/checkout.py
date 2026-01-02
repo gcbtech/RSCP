@@ -33,6 +33,7 @@ def checkout():
     subtotal = sum(item.get('line_total', 0) for item in cart['items'])
     
     # Apply order-level discount
+    # Apply order-level discount
     order_discount = 0
     if cart.get('discount_amount') and cart.get('discount_type'):
         if cart['discount_type'] == 'percent':
@@ -40,7 +41,18 @@ def checkout():
         else:
             order_discount = cart['discount_amount']
     
-    discounted_subtotal = max(0, subtotal - order_discount)
+    # Apply coupon discount
+    coupon_discount = 0
+    if cart.get('applied_coupon'):
+        try:
+            coupon_discount = float(cart['applied_coupon'].get('discount', 0))
+        except (ValueError, TypeError):
+            logger.error(f"Invalid coupon discount in session: {cart['applied_coupon']}")
+            cart['applied_coupon'] = None
+            from app.routes.pos.core import save_cart
+            save_cart(cart)
+    
+    discounted_subtotal = max(0, subtotal - order_discount - coupon_discount)
     tax_amount = calculate_tax(discounted_subtotal)
     total = discounted_subtotal + tax_amount
     
@@ -62,6 +74,7 @@ def checkout():
                            cart=cart,
                            subtotal=round(subtotal, 2),
                            order_discount=round(order_discount, 2),
+                           coupon_discount=round(coupon_discount, 2),
                            tax_rate=tax_rate * 100,
                            tax_amount=round(tax_amount, 2),
                            total=round(total, 2),
@@ -95,7 +108,16 @@ def checkout_process():
         else:
             order_discount = cart['discount_amount']
     
-    discounted_subtotal = max(0, subtotal - order_discount)
+    # Apply coupon discount
+    coupon_discount = 0
+    if cart.get('applied_coupon'):
+        try:
+            coupon_discount = float(cart['applied_coupon'].get('discount', 0))
+        except (ValueError, TypeError):
+            # If invalid here, just ignore it to allow checkout to proceed
+            coupon_discount = 0
+            
+    discounted_subtotal = max(0, subtotal - order_discount - coupon_discount)
     tax_amount = calculate_tax(discounted_subtotal)
     total = round(discounted_subtotal + tax_amount, 2)
     
@@ -243,8 +265,12 @@ def receipt(order_number):
         flash('Order not found.')
         return redirect(url_for('pos.sales'))
     
+    # JOIN with inventory_items to get addon_1 and addon_2 fields
     items = conn.execute('''
-        SELECT * FROM pos_order_items WHERE order_id = ?
+        SELECT oi.*, ii.addon_1, ii.addon_2
+        FROM pos_order_items oi
+        LEFT JOIN inventory_items ii ON oi.inventory_item_id = ii.id
+        WHERE oi.order_id = ?
     ''', (order['id'],)).fetchall()
     
     # Parse payment details
@@ -264,6 +290,7 @@ def receipt(order_number):
                            order=order,
                            items=items,
                            payment_details=payment_details,
+                           config=config,
                            org_name=config.get('ORGANIZATION_NAME', ''),
                            receipt_store_name=get_pos_setting('RECEIPT_STORE_NAME', ''),
                            receipt_header=get_pos_setting('RECEIPT_HEADER', ''),
@@ -293,8 +320,12 @@ def receipt_print(order_number):
         flash('Order not found.')
         return redirect(url_for('pos.sales'))
     
+    # JOIN with inventory_items to get addon_1 and addon_2 fields
     items = conn.execute('''
-        SELECT * FROM pos_order_items WHERE order_id = ?
+        SELECT oi.*, ii.addon_1, ii.addon_2
+        FROM pos_order_items oi
+        LEFT JOIN inventory_items ii ON oi.inventory_item_id = ii.id
+        WHERE oi.order_id = ?
     ''', (order['id'],)).fetchall()
     
     payment_details = {}
@@ -313,6 +344,7 @@ def receipt_print(order_number):
                            order=order,
                            items=items,
                            payment_details=payment_details,
+                           config=config,
                            org_name=config.get('ORGANIZATION_NAME', ''),
                            receipt_store_name=get_pos_setting('RECEIPT_STORE_NAME', ''),
                            receipt_header=get_pos_setting('RECEIPT_HEADER', ''),

@@ -279,6 +279,12 @@
                         <span>-${{ "%.2f"|format(order_discount) }}</span>
                     </div>
                     {% endif %}
+                    {% if coupon_discount > 0 %}
+                    <div class="summary-row" style="color: #16a34a;">
+                        <span>Coupon Discount</span>
+                        <span>-${{ "%.2f"|format(coupon_discount) }}</span>
+                    </div>
+                    {% endif %}
                     <div class="summary-row">
                         <span>Tax ({{ "%.1f"|format(tax_rate) }}%)</span>
                         <span>${{ "%.2f"|format(tax_amount) }}</span>

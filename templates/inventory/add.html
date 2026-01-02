@@ -487,6 +487,47 @@
                     </div>
                 </div>
 
+                <!-- Item Addons (Warranty/Disclaimer) - only show if enabled in config -->
+                {% if config and (config.get('ITEM_ADDON_1_ENABLED') or config.get('ITEM_ADDON_2_ENABLED')) %}
+                <div class="card mb-3">
+                    <div class="card-header">📝 Item Addons <small class="text-muted">(optional)</small></div>
+                    <div class="card-body">
+                        <p class="small text-muted mb-3">Select any additional options to include with this item. These
+                            will appear on receipts.</p>
+                        {% if config.get('ITEM_ADDON_1_ENABLED') and config.get('ITEM_ADDON_1_LABEL') %}
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="checkbox" name="addon_1" id="addon1" {% if (edit_mode
+                                and item.addon_1) %}checked{% endif %}>
+                            <label class="form-check-label" for="addon1">
+                                {{ config.get('ITEM_ADDON_1_LABEL') }}
+                            </label>
+                            {% if config.get('ITEM_ADDON_1_TEXT') %}
+                            <small class="text-muted d-block ms-4" style="font-size: 0.75rem;">
+                                {{ config.get('ITEM_ADDON_1_TEXT')[:80] }}{% if config.get('ITEM_ADDON_1_TEXT')|length >
+                                80 %}...{% endif %}
+                            </small>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                        {% if config.get('ITEM_ADDON_2_ENABLED') and config.get('ITEM_ADDON_2_LABEL') %}
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="addon_2" id="addon2" {% if (edit_mode
+                                and item.addon_2) %}checked{% endif %}>
+                            <label class="form-check-label" for="addon2">
+                                {{ config.get('ITEM_ADDON_2_LABEL') }}
+                            </label>
+                            {% if config.get('ITEM_ADDON_2_TEXT') %}
+                            <small class="text-muted d-block ms-4" style="font-size: 0.75rem;">
+                                {{ config.get('ITEM_ADDON_2_TEXT')[:80] }}{% if config.get('ITEM_ADDON_2_TEXT')|length >
+                                80 %}...{% endif %}
+                            </small>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+
                 <!-- Stock Alert Settings -->
                 <div class="card mb-3">
                     <div class="card-header">🔔 Stock Alert <small class="text-muted">(optional)</small></div>

@@ -552,33 +552,55 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
         // Search filter with federated search support
+        // Search filter with live server-side search
         const searchInput = document.getElementById('searchInput');
         const crossSearchToggle = document.getElementById('crossSearchToggle');
         let searchTimeout;
 
         searchInput.addEventListener('input', function () {
-            const filter = this.value.toLowerCase();
+            const query = this.value.trim();
 
-            // Local filter
-            const rows = document.querySelectorAll('#inventoryTable tbody tr');
-            rows.forEach(row => {
-                const text = row.textContent.toLowerCase();
-                row.style.display = text.includes(filter) ? '' : 'none';
-            });
+            clearTimeout(searchTimeout);
 
-            // Federated search (debounced)
-            if (crossSearchToggle && crossSearchToggle.checked && filter.length >= 2) {
-                clearTimeout(searchTimeout);
-                searchTimeout = setTimeout(() => performFederatedSearch(filter), 500);
-            } else {
-                document.getElementById('federatedResults').style.display = 'none';
-            }
+            searchTimeout = setTimeout(() => {
+                // Update results via AJAX
+                const url = new URL(window.location.href);
+                if (query) {
+                    url.searchParams.set('q', query);
+                } else {
+                    url.searchParams.delete('q');
+                }
+                url.searchParams.set('partial', '1');
+                url.searchParams.set('page', '1'); // Reset to page 1 on new search
+
+                fetch(url)
+                    .then(r => r.text())
+                    .then(html => {
+                        document.getElementById('inventoryBody').innerHTML = html;
+
+                        // Update URL bar (clean up params)
+                        url.searchParams.delete('partial');
+                        window.history.replaceState({}, '', url);
+
+                        // Federated Search
+                        if (crossSearchToggle && crossSearchToggle.checked && query.length >= 2) {
+                            performFederatedSearch(query);
+                        } else {
+                            document.getElementById('federatedResults').style.display = 'none';
+                        }
+                    })
+                    .catch(e => console.error("Search failed", e));
+            }, 300);
         });
 
-        // Auto-trigger federated search on page load if checkbox is checked and there's a query
+        // Auto-trigger on page load if query exists (restore state)
         document.addEventListener('DOMContentLoaded', function () {
-            if (crossSearchToggle && crossSearchToggle.checked && searchInput.value.length >= 2) {
-                performFederatedSearch(searchInput.value);
+            if (searchInput.value.length >= 2) {
+                // Trigger logic if needed, but page load normally renders results.
+                // Just handle federated search if checked
+                if (crossSearchToggle && crossSearchToggle.checked) {
+                    performFederatedSearch(searchInput.value);
+                }
             }
         });
 

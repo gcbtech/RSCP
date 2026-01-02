@@ -131,6 +131,7 @@ def generate_thumbnail(image_url):
 
 
 @inventory_bp.route('/items')
+@login_required
 def list_items():
     """List all inventory items with sorting, pagination, and search support."""
     # Get sort parameters from query string
@@ -155,11 +156,22 @@ def list_items():
     try:
         # Build search condition
         if search_query:
-            search_pattern = f'%{search_query}%'
-            search_clause = '''WHERE COALESCE(name, '') LIKE ? 
-                               OR COALESCE(sku, '') LIKE ? 
-                               OR COALESCE(location_area, '') LIKE ?'''
-            search_params = (search_pattern, search_pattern, search_pattern)
+            tokens = search_query.strip().split()
+            search_conditions = []
+            search_params_list = []
+            
+            for token in tokens:
+                pattern = f'%{token}%'
+                search_conditions.append('''
+                    (COALESCE(name, '') LIKE ? 
+                     OR COALESCE(sku, '') LIKE ? 
+                     OR COALESCE(location_area, '') LIKE ?
+                     OR COALESCE(secondary_ids, '') LIKE ?)
+                ''')
+                search_params_list.extend([pattern, pattern, pattern, pattern])
+            
+            search_clause = "WHERE " + " AND ".join(search_conditions)
+            search_params = tuple(search_params_list)
             
             # Get total count with search filter
             total = conn.execute(f'SELECT COUNT(*) FROM inventory_items {search_clause}', search_params).fetchone()[0]
@@ -209,6 +221,7 @@ def list_items():
 
 
 @inventory_bp.route('/add', methods=['GET', 'POST'])
+@login_required
 def add_item():
     """Add a new inventory item."""
     if request.method == 'POST':
@@ -342,16 +355,20 @@ def add_item():
                 secondary_ids['part_number'] = part_number
             secondary_ids_json = json.dumps(secondary_ids) if secondary_ids else None
             
+            # Get addon selections
+            addon_1 = 1 if request.form.get('addon_1') == 'on' else 0
+            addon_2 = 1 if request.form.get('addon_2') == 'on' else 0
+            
             conn.execute('''
                 INSERT INTO inventory_items 
                 (sku, name, quantity, location_area, location_aisle, location_shelf, location_bin,
                  asin, image_url, source_url, buy_price, sell_price, supplier, first_stock_date, 
-                 resupply_interval, alert_enabled, alert_threshold, secondary_ids, keywords)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 resupply_interval, alert_enabled, alert_threshold, secondary_ids, keywords, addon_1, addon_2)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (sku, name, quantity, location_area or None, location_aisle or None, 
                   location_shelf or None, location_bin or None, asin, image_url, source_url, 
                   buy_price, sell_price, supplier, first_stock_date, resupply_interval,
-                  1 if alert_enabled else 0, alert_threshold, secondary_ids_json, keywords))
+                  1 if alert_enabled else 0, alert_threshold, secondary_ids_json, keywords, addon_1, addon_2))
             conn.commit()
             
             item_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
@@ -418,6 +435,7 @@ def add_item():
 
 
 @inventory_bp.route('/edit/<int:item_id>', methods=['GET', 'POST'])
+@login_required
 def edit_item(item_id):
     """Edit an existing inventory item."""
     conn = get_db_connection()
@@ -504,6 +522,10 @@ def edit_item(item_id):
                 secondary_ids['part_number'] = part_number
             secondary_ids_json = json.dumps(secondary_ids) if secondary_ids else None
 
+            # Get addon selections
+            addon_1 = 1 if request.form.get('addon_1') == 'on' else 0
+            addon_2 = 1 if request.form.get('addon_2') == 'on' else 0
+
             conn.execute('''
                 UPDATE inventory_items SET
                     sku = ?, name = ?, location_area = ?, location_aisle = ?, 
@@ -511,13 +533,13 @@ def edit_item(item_id):
                     buy_price = ?, sell_price = ?, supplier = ?,
                     first_stock_date = ?, resupply_interval = ?, source_url = ?,
                     image_url = ?, alert_enabled = ?, alert_threshold = ?,
-                    secondary_ids = ?, keywords = ?, updated_at = CURRENT_TIMESTAMP
+                    secondary_ids = ?, keywords = ?, addon_1 = ?, addon_2 = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
             ''', (sku, name, location_area or None, location_aisle or None,
                   location_shelf or None, location_bin or None, asin,
                   buy_price, sell_price, supplier, first_stock_date,
                   resupply_interval, source_url, image_url, 1 if alert_enabled else 0, 
-                  alert_threshold, secondary_ids_json, keywords, item_id))
+                  alert_threshold, secondary_ids_json, keywords, addon_1, addon_2, item_id))
             conn.commit()
             
             flash("Item updated.")
@@ -562,6 +584,7 @@ def edit_item(item_id):
 
 
 @inventory_bp.route('/delete/<int:item_id>', methods=['POST'])
+@login_required
 def delete_item(item_id):
     """Delete an inventory item."""
     conn = get_db_connection()
@@ -580,6 +603,7 @@ def delete_item(item_id):
 
 
 @inventory_bp.route('/transaction/delete/<int:tx_id>', methods=['POST'])
+@login_required
 def delete_transaction(tx_id):
     """Delete a transaction and revert the stock change."""
     conn = get_db_connection()
@@ -607,6 +631,7 @@ def delete_transaction(tx_id):
 
 
 @inventory_bp.route('/adjust/<int:item_id>', methods=['POST'])
+@login_required
 def adjust_quantity(item_id):
     """Adjust quantity for an inventory item."""
     import threading
@@ -720,6 +745,7 @@ def adjust_quantity(item_id):
 
 
 @inventory_bp.route('/add_stock/<int:item_id>', methods=['GET', 'POST'])
+@login_required
 def add_stock(item_id):
     """Confirmation page for adding stock to existing inventory item from scan."""
     conn = get_db_connection()
@@ -758,6 +784,7 @@ def add_stock(item_id):
     finally:
         conn.close()
 @inventory_bp.route('/upload_photo', methods=['POST'])
+@login_required
 def upload_photo():
     """Upload photo from camera."""
     data = request.json
@@ -872,7 +899,8 @@ def federated_search():
         peer_name = peer.get('name', 'Unknown')
         try:
             # Use remote_api_key (THEIR key) to authenticate to THEM
-            remote_key = peer.get('remote_api_key')
+            from app.services.security import decrypt
+            remote_key = decrypt(peer.get('remote_api_key'))
             if not remote_key:
                 msg = f"Skipping {peer_name} - no remote API key configured"
                 logger.warning(msg)
@@ -947,7 +975,8 @@ def request_transfer():
             return jsonify({'error': f'No active peer with prefix {source_prefix}'}), 404
         
         # Check for remote API key
-        remote_key = peer['remote_api_key']
+        from app.services.security import decrypt
+        remote_key = decrypt(peer['remote_api_key'])
         if not remote_key:
             return jsonify({'error': f'Peer {source_prefix} has no remote API key configured'}), 400
         

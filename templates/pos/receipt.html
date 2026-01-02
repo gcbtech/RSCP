@@ -243,6 +243,18 @@
                             <span class="text-warning">(−${{ "%.2f"|format(item.discount_amount) }})</span>
                             {% endif %}
                         </div>
+                        {% if item.addon_1 and config and config.get('ITEM_ADDON_1_TEXT') %}
+                        <div class="receipt-addon-text"
+                            style="font-size: 0.75rem; color: #666; margin-top: 4px; padding-left: 8px; border-left: 2px solid #ddd;">
+                            {{ config.get('ITEM_ADDON_1_TEXT') }}
+                        </div>
+                        {% endif %}
+                        {% if item.addon_2 and config and config.get('ITEM_ADDON_2_TEXT') %}
+                        <div class="receipt-addon-text"
+                            style="font-size: 0.75rem; color: #666; margin-top: 4px; padding-left: 8px; border-left: 2px solid #ddd;">
+                            {{ config.get('ITEM_ADDON_2_TEXT') }}
+                        </div>
+                        {% endif %}
                     </div>
                     {% endfor %}
                 </div>
