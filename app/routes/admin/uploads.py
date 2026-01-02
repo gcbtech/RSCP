@@ -26,7 +26,7 @@ def detect_column_mapping(df):
     lower_cols = {c.lower(): c for c in df.columns}
     
     # Tracking detection
-    tracking_hints = ['tracking number', 'tracking_number', 'tracking', 'carrier tracking', 'tracking #']
+    tracking_hints = ['tracking number', 'tracking_number', 'tracking', 'carrier tracking', 'tracking #', 'carrier tracking #', 'carrier tracking number']
     for hint in tracking_hints:
         if hint in lower_cols:
             mapping['tracking'] = lower_cols[hint]
@@ -208,20 +208,24 @@ def upload_preview():
         temp_file = os.path.join(PREVIEW_TEMP_DIR, f"preview_{int(time.time())}.csv")
         df.to_csv(temp_file, index=False)
         
-        # Store preview info in session
+        # Store MINIMAL info in session (cookie size limit)
         session['upload_preview'] = {
             'filename': file.filename,
             'total_rows': len(df),
-            'original_columns': list(df.columns),
-            'mapping': mapping,
-            'warnings': warnings,
-            'preview_rows': preview_rows,
             'temp_file': temp_file,
             'mode': upload_mode,
-            'timestamp': time.time()
+            'timestamp': time.time(),
+            # Store mapping/warnings in session as they are small and needed for re-render
+            'mapping': mapping,
+            'warnings': warnings
         }
         
-        return render_template('admin/upload_preview.html', preview=session['upload_preview'])
+        # Pass FULL data to template
+        template_data = session['upload_preview'].copy()
+        template_data['original_columns'] = list(df.columns)
+        template_data['preview_rows'] = preview_rows
+        
+        return render_template('admin/upload_preview.html', preview=template_data)
         
     except Exception as e:
         logger.error(f"Upload preview error: {e}")
@@ -261,11 +265,27 @@ def upload_confirm():
         
         if not col_tracking or col_tracking not in df.columns:
             flash("Tracking number column is required.")
-            return render_template('admin/upload_preview.html', preview=preview)
+            # Re-hydrate template data
+            template_data = preview.copy()
+            template_data['original_columns'] = list(df.columns)
+            preview_df = df.head(15).fillna('')
+            for col in preview_df.columns:
+                preview_df[col] = preview_df[col].astype(str)
+            template_data['preview_rows'] = preview_df.to_dict('records')
+            
+            return render_template('admin/upload_preview.html', preview=template_data)
         
         if not col_name or col_name not in df.columns:
             flash("Item name column is required.")
-            return render_template('admin/upload_preview.html', preview=preview)
+            # Re-hydrate template data
+            template_data = preview.copy()
+            template_data['original_columns'] = list(df.columns)
+            preview_df = df.head(15).fillna('')
+            for col in preview_df.columns:
+                preview_df[col] = preview_df[col].astype(str)
+            template_data['preview_rows'] = preview_df.to_dict('records')
+            
+            return render_template('admin/upload_preview.html', preview=template_data)
         
         # Rename columns to standard names
         rename_map = {}
@@ -298,7 +318,13 @@ def upload_confirm():
                         df.at[index, 'Image'] = f"https://images-na.ssl-images-amazon.com/images/P/{asin}.01._SX200_.jpg"
         
         # Save to manifest
-        df.to_csv(MANIFEST_FILE, index=False)
+        upload_mode = preview.get('mode', 'replace')
+        file_exists = os.path.exists(MANIFEST_FILE)
+        
+        mode = 'a' if (upload_mode == 'append' and file_exists) else 'w'
+        write_header = not (upload_mode == 'append' and file_exists)
+        
+        df.to_csv(MANIFEST_FILE, mode=mode, header=write_header, index=False)
         
         # Sync to database
         sync_manifest()
@@ -332,4 +358,7 @@ def upload_cancel():
             pass  # Temp file already removed
     flash("Import cancelled.")
     return redirect(url_for('admin.admin_panel'))
+
+
+
 

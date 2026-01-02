@@ -487,7 +487,8 @@
                                 <span>Import Manifest</span>
                             </div>
                             <div class="card-body">
-                                <form action="/admin/upload_file" method="POST" enctype="multipart/form-data">
+                                <form action="{{ url_for('admin.upload_preview') }}" method="POST"
+                                    enctype="multipart/form-data">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="file" name="file" class="form-control mb-3" accept=".csv, .xlsx"
                                         required>

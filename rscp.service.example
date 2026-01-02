@@ -14,7 +14,7 @@ Description=RSCP Package Tracking Application
 After=network.target
 
 [Service]
-User=root
+User=rscp
 WorkingDirectory=/opt/ebay_receiver
 Environment="PATH=/usr/local/bin:/usr/bin"
 
@@ -25,6 +25,11 @@ ExecStart=/usr/local/bin/gunicorn -c gunicorn.conf.py wsgi:app
 
 Restart=always
 RestartSec=5
+
+# Hardening
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
 
 [Install]
 WantedBy=multi-user.target

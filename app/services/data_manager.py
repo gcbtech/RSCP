@@ -172,34 +172,49 @@ def sync_manifest():
             do_trim = c.get('AUTO_TRIM', False)
             sixty_days_ago = today - datetime.timedelta(days=60)
             
+            skipped_count = 0
+            
             for row in rows:
-                tracking = str(row.get('TrackingNumber', '')).strip()
-                if not tracking: continue
+                # Clean Tracking Number (Handle Excel format ="123")
+                raw_tracking = str(row.get('TrackingNumber', '')).strip()
+                tracking = raw_tracking.replace('="', '').replace('"', '').strip()
                 
-                item_name = str(row.get('ItemName', 'Unknown')).strip()
+                if not tracking: 
+                    skipped_count += 1
+                    continue
+                
+                # Clean other fields
+                item_name = str(row.get('ItemName', 'Unknown')).strip().replace('="', '').replace('"', '')
+                
+                # ... existing date/qty logic ...
+                # Re-implementing simplified for the replacement block
                 date_str = parse_date(str(row.get('Date', '')))
                 
                 try:
-                    qty = int(float(row.get('Quantity', '1') or 1)) # Handle "1.0" string
+                    qty = int(float(row.get('Quantity', '1') or 1)) 
                 except ValueError:
                     qty = 1
                 
                 img = str(row.get('Image', '')).strip()
                 if img.lower() == 'nan': img = ""
                 
-                # V1.16.1: Import ASIN and source_url if available in manifest
-                asin = str(row.get('ASIN', '')).strip()
+                # ASIN/URL Cleaning
+                asin = str(row.get('ASIN', '')).strip().replace('="', '').replace('"', '')
                 if asin.lower() == 'nan': asin = ""
+                
                 source_url = str(row.get('SourceURL', row.get('URL', row.get('PurchaseURL', row.get('Link', row.get('ProductLink', row.get('Product URL', ''))))))).strip()
                 if source_url.lower() == 'nan': source_url = ""
-                
-                cur.execute("SELECT id, manual_date, status, date_scanned FROM packages WHERE tracking_number = ?", (tracking,))
+
+                # Composite Key Match: Strict sync to avoid merging different items
+                # We match on Tracking + Item Name to allows multiple items per tracking number
+                cur.execute("SELECT id, manual_date, status, date_scanned, quantity, item_name FROM packages WHERE tracking_number = ? AND item_name = ?", (tracking, item_name))
                 existing = cur.fetchone()
                 
                 status = 'on_time'
                 date_final = date_str
                 
                 if existing:
+                    # Update Existing Record
                     if existing['manual_date']:
                         date_final = existing['manual_date']
                     
@@ -209,11 +224,10 @@ def sync_manifest():
                             d_dt = datetime.datetime.strptime(date_final, '%Y-%m-%d').date()
                             if d_dt == today: status = 'expected'
                             elif d_dt < today: status = 'past_due'
-                            # future dates remain 'on_time'
                     except ValueError:
-                        pass  # Date parsing failed
+                        pass 
                     
-                    # Trim Check
+                    # Trim Check logic ...
                     if do_trim and status == 'past_due' and existing['date_scanned']: 
                         try:
                             d_dt = datetime.datetime.strptime(date_final, '%Y-%m-%d').date()
@@ -221,20 +235,21 @@ def sync_manifest():
                                 cur.execute("DELETE FROM packages WHERE id = ?", (existing['id'],))
                                 continue
                         except ValueError:
-                            pass  # Date parsing failed
+                            pass
 
                     if existing['status'] in ['expected', 'past_due', 'pending', 'on_time', 'received']:
                          if existing['date_scanned']:
                              status = 'received' 
                 
+                    # Update strict match
                     cur.execute('''
                         UPDATE packages SET 
-                        item_name=?, date_expected=?, quantity=?, image_url=?, status=?, asin=?, source_url=?
+                        date_expected=?, quantity=?, image_url=?, status=?, asin=?, source_url=?
                         WHERE id=?
-                    ''', (item_name, date_final, qty, img, status, asin, source_url, existing['id']))
+                    ''', (date_final, qty, img, status, asin, source_url, existing['id']))
                     
                 else:
-                    # New Package
+                    # New Package (Distinct Item)
                     try:
                         if date_str != "Pending":
                             d_dt = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
@@ -242,12 +257,15 @@ def sync_manifest():
                             elif d_dt < today: status = 'past_due'
                             else: status = 'on_time'
                     except ValueError:
-                        pass  # Date parsing failed
+                        pass 
 
                     cur.execute('''
                         INSERT INTO packages (tracking_number, item_name, date_expected, quantity, image_url, status, asin, source_url)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ''', (tracking, item_name, date_str, qty, img, status, asin, source_url))
+            
+            if skipped_count > 0:
+                logger.info(f"Manifest Sync: Skipped {skipped_count} rows due to missing tracking numbers.")
             
             conn.commit()
             conn.close()
@@ -398,19 +416,43 @@ def log_receipt(tracking: str, item_name: str, quantity: str, user: str) -> None
         res = conn.execute("SELECT id FROM users WHERE username = ?", (user,)).fetchone()
         user_id = res['id'] if res else None
         
-        # Get Package ID & Priority Status
-        res = conn.execute("SELECT id, status, priority FROM packages WHERE tracking_number = ?", (tracking,)).fetchone()
-        pkg_id = res['id'] if res else None
-        is_priority = bool(res['priority']) if res and res['priority'] else False
+        # Get ALL matching packages (Handle multiple items with same tracking)
+        packages = conn.execute("SELECT id, status, priority, quantity FROM packages WHERE tracking_number = ?", (tracking,)).fetchall()
         
-        if pkg_id:
-            # Update Package
-            current_status = res['status']
-            new_status = current_status
-            if current_status in ['expected', 'past_due', 'pending', 'on_time']:
-                 new_status = 'received'
-            
-            conn.execute("UPDATE packages SET date_scanned=CURRENT_TIMESTAMP, status=? WHERE id=?", (new_status, pkg_id))
+        if packages:
+            for pkg in packages:
+                pkg_id = pkg['id']
+                is_priority = bool(pkg['priority']) if pkg['priority'] else False
+                qty = pkg['quantity'] or 1
+                
+                # Update Package
+                current_status = pkg['status']
+                new_status = current_status
+                if current_status in ['expected', 'past_due', 'pending', 'on_time']:
+                     new_status = 'received'
+                
+                conn.execute("UPDATE packages SET date_scanned=CURRENT_TIMESTAMP, status=? WHERE id=?", (new_status, pkg_id))
+                
+                # Log History for EACH item
+                conn.execute("INSERT INTO history (package_id, user_id, action, details) VALUES (?, ?, ?, ?)", 
+                             (pkg_id, user_id, 'received', f"Qty: {qty}"))
+                
+                # Trigger Webhook if Priority (for each priority item)
+                if is_priority:
+                     conf = load_config()
+                     if conf.get('WEBHOOK_ENABLED') and conf.get('WEBHOOK_URL'):
+                         enc_url = conf.get('WEBHOOK_URL')
+                         key = conf.get('SECRET_KEY', 'dev_key_fallback')
+                         
+                         import threading
+                         # Use item_name passed or fetch? main.py passes "Unknown" usually if not found? 
+                         # But here we found it. We should fetch name if we want accurate alerts.
+                         # Since this loop updates IDs, let's fetch name?
+                         # Or just pass the generic 'item_name' from arg (which comes from main.py's fetchone).
+                         # Simplest: use arg.
+                         t = threading.Thread(target=send_priority_alert, args=(tracking, item_name, quantity, user, enc_url, key))
+                         t.start()
+
         else:
             # Create Package (Auto-Manifest)
             conn.execute('''
@@ -420,10 +462,11 @@ def log_receipt(tracking: str, item_name: str, quantity: str, user: str) -> None
             
             # Get the new ID
             pkg_id = conn.execute("SELECT id FROM packages WHERE tracking_number = ?", (tracking,)).fetchone()['id']
-
-        # Log History
-        conn.execute("INSERT INTO history (package_id, user_id, action, details) VALUES (?, ?, ?, ?)", 
-                     (pkg_id, user_id, 'received', f"Qty: {quantity}"))
+            
+            # Log History
+            conn.execute("INSERT INTO history (package_id, user_id, action, details) VALUES (?, ?, ?, ?)", 
+                         (pkg_id, user_id, 'received', f"Qty: {quantity}"))
+        
         conn.commit()
         
         # Trigger Webhook if Priority

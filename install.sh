@@ -110,6 +110,17 @@ deactivate
 # Set ownership
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 
+# Generate Secret Key if config doesn't exist
+if [ ! -f "$INSTALL_DIR/config.json" ]; then
+    echo -e "${GREEN}[5.5/6]${NC} Generating secure secret key..."
+    SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+    echo "{
+    \"SECRET_KEY\": \"$SECRET_KEY\",
+    \"ORG_NAME\": \"RSCP Instance\"
+}" > "$INSTALL_DIR/config.json"
+    chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/config.json"
+fi
+
 echo -e "${GREEN}[6/6]${NC} Setting up systemd service..."
 cat > /etc/systemd/system/rscp.service << EOF
 [Unit]
@@ -123,8 +134,14 @@ Group=$SERVICE_USER
 WorkingDirectory=$INSTALL_DIR
 Environment="PATH=$INSTALL_DIR/venv/bin"
 ExecStart=$INSTALL_DIR/venv/bin/gunicorn -c gunicorn.conf.py wsgi:app
+
 Restart=always
 RestartSec=5
+
+# Hardening
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=full
 
 [Install]
 WantedBy=multi-user.target
