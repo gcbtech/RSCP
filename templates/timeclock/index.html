@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <title>RSCP | Timeclock</title>
+    <title>RSCP | Timeclock</title>
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            background-color: #f4f6f9;
+            font-family: 'Segoe UI', sans-serif;
+            padding-bottom: 60px;
+            /* Space for nav */
+        }
+
+        .timeclock-card {
+            border: none;
+            border-radius: 16px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            background: white;
+            overflow: hidden;
+        }
+    </style>
+</head>
+
+<body>
+
+    {% include '_nav.html' %}
+
+    <div class="container-fluid mt-4">
+        <div class="container py-5 text-center">
+            <!-- Dashboard Header -->
+            <h1 class="mb-4 fw-light">Timeclock</h1>
+
+            <!-- Alerts -->
+            {% if alert %}
+            <div class="alert alert-danger mb-4 shadow-sm" role="alert">
+                {{ alert }}
+            </div>
+            {% endif %}
+
+            <!-- Active Time Display -->
+        </div>
+        <div class="row justify-content-center">
+            <div class="col-md-6 col-lg-5">
+                <div class="timeclock-card mt-4">
+                    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center p-3">
+                        <h4 class="mb-0">⏱️ Timeclock</h4>
+                        <div class="small text-light opacity-75" id="liveClock">--:--:--</div>
+                    </div>
+                    <div class="card-body text-center p-5">
+
+                        {% if not status %}
+                        <!-- STATE: CLOCKED OUT -->
+                        <div class="mb-4">
+                            <h5 class="text-muted">You are currently</h5>
+                            <h2 class="display-4 text-danger fw-bold">CLOCKED OUT</h2>
+                        </div>
+
+                        <form action="{{ url_for('timeclock.clock_in') }}" method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-success btn-lg w-100 py-4 fs-2 fw-bold shadow">
+                                🟢 CLOCK IN
+                            </button>
+                        </form>
+
+                        {% else %}
+                        <!-- STATE: ACTIVE -->
+                        {% if status.type == 'shift' %}
+                        <div class="mb-4">
+                            <h5 class="text-muted">You are currently</h5>
+                            <h2 class="display-4 text-success fw-bold">WORKING</h2>
+                            <p class="lead mt-2">
+                                Since: <strong>{{ clock_in_time }}</strong><br>
+                                Duration: <span class="badge bg-secondary">{{ duration }}</span>
+                            </p>
+                        </div>
+
+                        <div class="d-grid gap-3">
+                            <form action="{{ url_for('timeclock.break_start') }}" method="POST">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-warning btn-lg w-100 py-3 fw-bold">
+                                    ☕ START BREAK
+                                </button>
+                            </form>
+
+                            <form action="{{ url_for('timeclock.clock_out') }}" method="POST">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <button type="submit" class="btn btn-danger btn-lg w-100 py-3 fw-bold">
+                                    🔴 CLOCK OUT
+                                </button>
+                            </form>
+                        </div>
+
+                        {% elif status.type == 'break' %}
+                        <!-- STATE: ON BREAK -->
+                        <div class="mb-4">
+                            <h5 class="text-muted">You are currently</h5>
+                            <h2 class="display-4 text-warning fw-bold">ON BREAK</h2>
+                            <p class="lead mt-2">
+                                Since: <strong>{{ clock_in_time }}</strong><br>
+                                Duration: <span class="badge bg-secondary">{{ duration }}</span>
+                            </p>
+                        </div>
+
+                        <form action="{{ url_for('timeclock.break_end') }}" method="POST">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="btn btn-success btn-lg w-100 py-4 fs-2 fw-bold shadow">
+                                ▶️ END BREAK
+                            </button>
+                        </form>
+                        {% endif %}
+                        {% endif %}
+
+                    </div>
+                    <div class="card-footer text-muted text-center small">
+                        Logged in as <strong>{{ current_user.username }}</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('liveClock').innerText = now.toLocaleTimeString();
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

@@ -106,6 +106,15 @@
             font-size: 4rem;
         }
 
+        .module-timeclock .card-img-top {
+            background-image: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 4rem;
+        }
+
         /* Dark Mode Support (Basic) */
         @media (prefers-color-scheme: dark) {
             /* In future, if body.dark-mode is toggled */
@@ -358,6 +367,21 @@
                     <div class="card-body">
                         <h5 class="card-title">Point of Sale</h5>
                         <p class="card-text">Process sales transactions, handle refunds, and view analytics.</p>
+                    </div>
+                </a>
+            </div>
+            {% endif %}
+
+            <!-- TIMECLOCK MODULE -->
+            {% if timeclock_enabled %}
+            <div class="col-12 col-lg-5">
+                <a href="/timeclock" class="module-card module-timeclock">
+                    <div class="card-img-top">
+                        ⏱️
+                    </div>
+                    <div class="card-body">
+                        <h5 class="card-title">Timeclock</h5>
+                        <p class="card-text">Track shift hours, manage breaks, and view timesheets.</p>
                     </div>
                 </a>
             </div>

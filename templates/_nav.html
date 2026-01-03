@@ -218,6 +218,7 @@
 <nav id="quickSidebar">
     {% set is_inventory = '/inventory' in request.path %}
     {% set is_pos = '/pos' in request.path %}
+    {% set is_timeclock = '/timeclock' in request.path %}
 
     <a href="/" class="nav-brand">
         <span>📦 RSCP</span>
@@ -228,7 +229,22 @@
         <span class="nav-icon"></span> Main Menu
     </a>
 
-    {% if is_pos %}
+    {% if is_timeclock %}
+    <!-- TIMECLOCK MODE -->
+    <a href="/timeclock" class="nav-link {% if request.path == '/timeclock' %}active{% endif %}">
+        <span class="nav-icon"></span> Dashboard
+    </a>
+    <a href="{{ url_for('timeclock.shifts') }}" class="nav-link {% if '/shifts' in request.path %}active{% endif %}">
+        <span class="nav-icon"></span> Shifts
+    </a>
+    {# Future: History Link #}
+    {% if current_user.is_admin or current_user.has_role('timeclock_admin') %}
+    <a href="/timeclock/manager"
+        class="nav-link {% if '/manager' in request.path and '/shifts' not in request.path %}active{% endif %}">
+        <span class="nav-icon"></span> Manager Portal
+    </a>
+    {% endif %}
+    {% elif is_pos %}
     <!-- POS MODE -->
     <a href="/pos"
         class="nav-link {% if request.path == '/pos' or request.path == '/pos/' or '/checkout' in request.path or '/receipt' in request.path %}active{% endif %}">
@@ -303,7 +319,14 @@
         </div>
 
         <small class="text-muted d-block mb-1">Logged in as:</small>
-        <div class="fw-bold fs-5">{{ local_user or 'Guest' }}</div>
+        <div class="fw-bold fs-5">
+            {{ local_user or 'Guest' }}
+            {% if timeclock_status == 'shift' %}
+            <span class="text-success ms-2" title="Clocked In">●</span>
+            {% elif timeclock_status == 'break' %}
+            <span class="text-warning ms-2" title="On Break">●</span>
+            {% endif %}
+        </div>
 
         {% if is_admin %}
         <div class="mt-1">

@@ -128,6 +128,12 @@ def ensure_db_ready():
         
         # POS Module Tables (V1.18)
         _create_pos_tables(conn)
+        
+        _create_pos_coupon_tables(conn)
+        _create_timeclock_tables(conn)
+        _create_scheduled_shifts_table(conn)
+        _create_recurring_rules_table(conn)
+            
             
     except Exception as e:
         logger.error(f"Migration Schema Check Error: {e}")
@@ -516,3 +522,64 @@ def _create_pos_tables(conn):
         
     except Exception as e:
         logger.error(f"Error creating POS tables: {e}")
+
+
+def _create_timeclock_tables(conn):
+    """Create timeclock module tables if they don't exist."""
+    try:
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS time_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                type TEXT DEFAULT 'shift',
+                clock_in DATETIME NOT NULL,
+                clock_out DATETIME,
+                notes TEXT,
+                edited_by INTEGER,
+                created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+                FOREIGN KEY (user_id) REFERENCES users (id),
+                FOREIGN KEY (edited_by) REFERENCES users (id)
+            )
+        ''')
+        conn.commit()
+        
+        # Index for faster queries
+        conn.execute('''
+        CREATE INDEX IF NOT EXISTS idx_time_entries_user_date ON time_entries(user_id, clock_in);
+    ''')
+        conn.commit()
+        
+        logger.info("Timeclock tables initialized.")
+    except Exception as e:
+        logger.error(f"Error creating timeclock tables: {e}")
+
+def _create_scheduled_shifts_table(conn):
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS scheduled_shifts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            start_time DATETIME NOT NULL,
+            end_time DATETIME NOT NULL,
+            created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        );
+    ''')
+    conn.execute('''
+        CREATE INDEX IF NOT EXISTS idx_shifts_user_start ON scheduled_shifts(user_id, start_time);
+    ''')
+    conn.commit()
+
+def _create_recurring_rules_table(conn):
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS recurring_shift_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            day_of_week INTEGER NOT NULL, -- 0=Mon, 6=Sun
+            start_time TEXT NOT NULL,     -- "09:00"
+            end_time TEXT NOT NULL,       -- "17:00"
+            frequency TEXT DEFAULT 'weekly',
+            reference_date DATE,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        );
+    ''')
+    conn.commit()

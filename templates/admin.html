@@ -1282,6 +1282,14 @@
                                                     for="role_recv_{{ loop.index }}">📦 Receiving Admin</label>
                                             </div>
                                             <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="checkbox"
+                                                    name="role_timeclock_admin" id="role_tc_{{ loop.index }}"
+                                                    {{ 'checked' if 'timeclock_admin' in (data.get('roles') or [])
+                                                    else '' }}>
+                                                <label class="form-check-label small" for="role_tc_{{ loop.index }}">⏱️
+                                                    Timeclock Admin</label>
+                                            </div>
+                                            <div class="form-check form-check-inline">
                                                 <input class="form-check-input" type="checkbox" name="role_operator"
                                                     id="role_op_{{ loop.index }}" {{ 'checked' if 'operator' in
                                                     (data.get('roles') or []) else '' }}>
@@ -1470,20 +1478,28 @@
                                         </div>
                                     </form>
                                 </div>
-                                <div class="d-flex justify-content-between align-items-center">
-                                    <div>
-                                        <strong>Point of Sale (POS)</strong>
-                                        <p class="small text-muted mb-0">Sales transactions, refunds, and analytics</p>
+                                <form action="/admin/toggle_pos" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" name="enabled"
+                                            onchange="this.form.submit()" {% if pos_enabled %}checked{% endif %}
+                                            style="transform: scale(1.4);">
                                     </div>
-                                    <form action="/admin/toggle_pos" method="POST">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" name="enabled"
-                                                onchange="this.form.submit()" {% if pos_enabled %}checked{% endif %}
-                                                style="transform: scale(1.4);">
-                                        </div>
-                                    </form>
+                                </form>
+                            </div>
+                            <div class="d-flex justify-content-between align-items-center mt-3">
+                                <div>
+                                    <strong>Timeclock Module</strong>
+                                    <p class="small text-muted mb-0">Employee Shift & Break Tracking</p>
                                 </div>
+                                <form action="/admin/toggle_timeclock" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" name="enabled"
+                                            onchange="this.form.submit()" {% if config.get('TIMECLOCK_ENABLED')
+                                            %}checked{% endif %} style="transform: scale(1.4);">
+                                    </div>
+                                </form>
                             </div>
                         </div>
                     </div>
@@ -1513,7 +1529,8 @@
                                         <input type="email" name="email_user" class="form-control form-control-sm"
                                             placeholder="burner@example.com" value="{{ config.get('EMAIL_USER', '') }}">
                                         <div class="form-text small text-warning">
-                                            ⚠️ <strong>Security Tip:</strong> Use a dedicated "burner" email account,
+                                            ⚠️ <strong>Security Tip:</strong> Use a dedicated "burner" email
+                                            account,
                                             not your personal one. Create a separate Gmail/Outlook just for RSCP.
                                         </div>
                                     </div>
@@ -1526,7 +1543,8 @@
                                         <input class="form-check-input" type="checkbox" name="ingest_enabled"
                                             id="ingestSwitch" {% if config.get('EMAIL_INGEST_ENABLED') %}checked{% endif
                                             %}>
-                                        <label class="form-check-label" for="ingestSwitch">Enable Auto-Ingest</label>
+                                        <label class="form-check-label" for="ingestSwitch">Enable
+                                            Auto-Ingest</label>
                                     </div>
                                     <button class="btn btn-primary w-100" type="submit">Save</button>
                                 </form>
@@ -1558,7 +1576,8 @@
                                             <div class="form-check mt-2">
                                                 <input class="form-check-input" type="checkbox" name="force_restore"
                                                     value="true" id="forceRestore">
-                                                <label class="form-check-label small" for="forceRestore">Force (if key
+                                                <label class="form-check-label small" for="forceRestore">Force (if
+                                                    key
                                                     differs)</label>
                                             </div>
                                         </form>

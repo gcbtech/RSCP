@@ -176,6 +176,31 @@ def toggle_pos():
     return redirect(url_for('admin.admin_panel'))
 
 
+@admin_bp.route('/toggle_timeclock', methods=['POST'])
+def toggle_timeclock():
+    """Toggle Timeclock module on/off."""
+    error = require_admin()
+    if error:
+        return error
+    enabled = request.form.get('enabled') == 'on'
+    save_config_value('TIMECLOCK_ENABLED', enabled)
+    flash(f"Timeclock module {'enabled' if enabled else 'disabled'}.")
+    return redirect(url_for('admin.admin_panel'))
+
+@admin_bp.route('/update_timeclock_settings', methods=['POST'])
+def update_timeclock_settings():
+    error = require_admin()
+    if error:
+        return error
+    try:
+        grace = int(request.form.get('grace_period', 15))
+        save_config_value('TIMECLOCK_GRACE_PERIOD', grace)
+        flash("Timeclock settings updated.")
+    except ValueError:
+        flash("Invalid grace period.")
+    return redirect(url_for('admin.admin_panel'))
+
+
 @admin_bp.route('/save_location_labels', methods=['POST'])
 def save_location_labels():
     """Save custom inventory location labels."""

@@ -11,6 +11,7 @@ from app.routes.admin import admin_bp
 from app.routes.inventory import inventory_bp
 from app.routes.pos import pos_bp
 from app.routes.federation import federation_bp
+from app.routes.timeclock import timeclock_bp
 from app.utils.helpers import format_date_filter
 from app.services.data_manager import load_config, BASE_DIR
 from app.services.migration import ensure_db_ready
@@ -116,6 +117,7 @@ def create_app():
     app.register_blueprint(inventory_bp)
     app.register_blueprint(pos_bp)
     app.register_blueprint(federation_bp)
+    app.register_blueprint(timeclock_bp)
     
     # Notifications API
     from app.routes.notifications import notifications_bp

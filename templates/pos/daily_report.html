@@ -89,6 +89,7 @@
                     <form action="{{ url_for('pos.send_eod_email') }}" method="POST" class="d-inline"
                         onsubmit="return confirm('Send EOD Email to configured recipients?');">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <input type="hidden" name="date" value="{{ report_date.strftime('%Y-%m-%d') }}">
                         <button type="submit" class="btn btn-success me-2">📧 Send Email Report</button>
                     </form>
                     <a href="{{ url_for('pos.daily_report_print', date=report_date.strftime('%Y-%m-%d')) }}"

@@ -237,7 +237,8 @@ def set_user_roles(username):
         return redirect(url_for('admin.admin_panel', tab='settings'))
     
     # Valid RBAC roles
-    valid_roles = ['super_admin', 'inventory_admin', 'pos_admin', 'receiving_admin', 'operator']
+    # Valid RBAC roles
+    valid_roles = ['super_admin', 'inventory_admin', 'pos_admin', 'receiving_admin', 'timeclock_admin', 'operator']
     
     # Get selected roles from form (checkboxes)
     roles = []

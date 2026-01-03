@@ -43,8 +43,9 @@ def index():
     config = load_config()
     inv_enabled = config.get('INVENTORY_ENABLED', False)
     pos_enabled = config.get('POS_ENABLED', False)
+    timeclock_enabled = config.get('TIMECLOCK_ENABLED', False)
     
-    return render_template('gateway.html', inventory_enabled=inv_enabled, pos_enabled=pos_enabled)
+    return render_template('gateway.html', inventory_enabled=inv_enabled, pos_enabled=pos_enabled, timeclock_enabled=timeclock_enabled)
 
 @main_bp.route('/receiving')
 @login_required
