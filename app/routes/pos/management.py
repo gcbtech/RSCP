@@ -54,7 +54,7 @@ def management():
             COALESCE(SUM(discount_amount), 0) as total_discounts,
             COALESCE(SUM(tax_amount), 0) as total_tax
         FROM pos_orders
-        WHERE date(created_at) >= ? AND status != 'held'
+        WHERE date(created_at, 'localtime') >= ? AND status != 'held'
     ''', (start_date,)).fetchone()
     
     # Refund stats
@@ -63,26 +63,38 @@ def management():
             COUNT(*) as refund_count,
             COALESCE(SUM(amount), 0) as refund_total
         FROM pos_refunds
-        WHERE date(created_at) >= ?
+        WHERE date(created_at, 'localtime') >= ?
     ''', (start_date,)).fetchone()
     
     # Daily sales trend
-    daily_sales = conn.execute('''
-        SELECT date(created_at) as day, 
+    days_data = conn.execute('''
+        SELECT date(created_at, 'localtime') as day, 
                COUNT(*) as orders,
                COALESCE(SUM(total), 0) as revenue
         FROM pos_orders
-        WHERE date(created_at) >= ? AND status != 'held'
-        GROUP BY date(created_at)
+        WHERE date(created_at, 'localtime') >= ? AND status != 'held'
+        GROUP BY date(created_at, 'localtime')
         ORDER BY day
     ''', (start_date,)).fetchall()
+    
+    # Fill in missing dates with 0
+    daily_sales = []
+    # Create date map
+    sales_map = {row['day']: row for row in days_data}
+    
+    for i in range(days + 1):
+        d = (date.today() - timedelta(days=days - i)).strftime('%Y-%m-%d')
+        if d in sales_map:
+            daily_sales.append(sales_map[d])
+        else:
+             daily_sales.append({'day': d, 'orders': 0, 'revenue': 0})
     
     # Top sellers
     top_sellers = conn.execute('''
         SELECT sku, name, SUM(quantity) as sold, SUM(line_total) as revenue
         FROM pos_order_items oi
         JOIN pos_orders o ON oi.order_id = o.id
-        WHERE date(o.created_at) >= ? AND o.status != 'held'
+        WHERE date(o.created_at, 'localtime') >= ? AND o.status != 'held'
         GROUP BY sku
         ORDER BY sold DESC
         LIMIT 10
@@ -92,7 +104,7 @@ def management():
     payment_breakdown = conn.execute('''
         SELECT payment_method, COUNT(*) as count, SUM(total) as amount
         FROM pos_orders
-        WHERE date(created_at) >= ? AND status != 'held'
+        WHERE date(created_at, 'localtime') >= ? AND status != 'held'
         GROUP BY payment_method
     ''', (start_date,)).fetchall()
     
@@ -118,27 +130,59 @@ def sales_history():
     date_from = request.args.get('date_from', '')
     date_to = request.args.get('date_to', '')
     status = request.args.get('status', '')
+    item_query = request.args.get('item_query', '').strip()
     
     sql = '''
-        SELECT o.*, u.username as operator_name
+        SELECT DISTINCT o.*, u.username as operator_name
         FROM pos_orders o
         LEFT JOIN users u ON o.operator_id = u.id
-        WHERE 1=1
     '''
     params = []
     
+    if item_query:
+        # Enable search by Item (SKU, Name, Secondary IDs)
+        sql += " JOIN pos_order_items oi ON o.id = oi.order_id"
+        
+        # 1. Find matching inventory SKUs (including secondary IDs)
+        # Note: We search inventory to find all relevant SKUs that might match the query
+        inv_matches = conn.execute('''
+            SELECT sku FROM inventory_items 
+            WHERE sku LIKE ? OR name LIKE ? OR secondary_ids LIKE ?
+        ''', ('%'+item_query+'%', '%'+item_query+'%', '%'+item_query+'%')).fetchall()
+        
+        matched_skus = [r['sku'] for r in inv_matches]
+        
+        # 2. Build filter for order items
+        # Check if OI matches name/sku directly, OR if its sku is in the inventory matches
+        if matched_skus:
+            placeholders = ','.join(['?'] * len(matched_skus))
+            sql += f" WHERE (oi.name LIKE ? OR oi.sku LIKE ? OR oi.sku IN ({placeholders}))"
+            params.extend(['%'+item_query+'%', '%'+item_query+'%'] + matched_skus)
+        else:
+            sql += " WHERE (oi.name LIKE ? OR oi.sku LIKE ?)"
+            params.extend(['%'+item_query+'%', '%'+item_query+'%'])
+    else:
+        sql += " WHERE 1=1"
+
     if date_from:
-        sql += ' AND date(o.created_at) >= ?'
+        sql += " AND date(o.created_at, 'localtime') >= ?"
         params.append(date_from)
     if date_to:
-        sql += ' AND date(o.created_at) <= ?'
+        sql += " AND date(o.created_at, 'localtime') <= ?"
         params.append(date_to)
     if status:
         sql += ' AND o.status = ?'
         params.append(status)
     
-    # Count total
-    count_sql = sql.replace('o.*, u.username as operator_name', 'COUNT(*) as cnt')
+    # Count total (distinct orders)
+    # For count, we can wrap the query or count distinct IDs
+    # Simplest way given complex joins:
+    count_offset = sql.find('FROM')
+    if item_query:
+        count_sql = "SELECT COUNT(DISTINCT o.id) as cnt " + sql[count_offset:]
+    else:
+        count_sql = "SELECT COUNT(*) as cnt " + sql[count_offset:]
+        
     total = conn.execute(count_sql, params).fetchone()['cnt']
     total_pages = (total + per_page - 1) // per_page
     
@@ -154,7 +198,8 @@ def sales_history():
                            total=total,
                            date_from=date_from,
                            date_to=date_to,
-                           status=status)
+                           status=status,
+                           item_query=item_query)
 
 
 @pos_bp.route('/management/top-sellers')
@@ -176,7 +221,7 @@ def top_sellers():
             AVG(oi.unit_price) as avg_price
         FROM pos_order_items oi
         JOIN pos_orders o ON oi.order_id = o.id
-        WHERE date(o.created_at) >= ? AND o.status != 'held'
+        WHERE date(o.created_at, 'localtime') >= ? AND o.status != 'held'
         GROUP BY oi.sku
         ORDER BY sold DESC
         LIMIT 50
@@ -223,7 +268,7 @@ def margins():
         FROM pos_order_items oi
         JOIN pos_orders o ON oi.order_id = o.id
         LEFT JOIN inventory_items inv ON oi.inventory_item_id = inv.id
-        WHERE date(o.created_at) >= ? AND o.status != 'held'
+        WHERE date(o.created_at, 'localtime') >= ? AND o.status != 'held'
         GROUP BY oi.sku
         {having_clause}
         ORDER BY margin_percent {'DESC' if sort == 'high' else 'ASC'}
@@ -251,11 +296,11 @@ def hourly_analysis():
     # Hourly breakdown
     hourly = conn.execute('''
         SELECT 
-            strftime('%H', created_at) as hour,
+            strftime('%H', created_at, 'localtime') as hour,
             COUNT(*) as orders,
             SUM(total) as revenue
         FROM pos_orders
-        WHERE date(created_at) >= ? AND status != 'held'
+        WHERE date(created_at, 'localtime') >= ? AND status != 'held'
         GROUP BY hour
         ORDER BY hour
     ''', (start_date,)).fetchall()
@@ -263,11 +308,11 @@ def hourly_analysis():
     # Day of week breakdown
     daily = conn.execute('''
         SELECT 
-            strftime('%w', created_at) as dow,
+            strftime('%w', created_at, 'localtime') as dow,
             COUNT(*) as orders,
             SUM(total) as revenue
         FROM pos_orders
-        WHERE date(created_at) >= ? AND status != 'held'
+        WHERE date(created_at, 'localtime') >= ? AND status != 'held'
         GROUP BY dow
         ORDER BY dow
     ''', (start_date,)).fetchall()
@@ -300,7 +345,7 @@ def operator_performance():
             SUM(o.discount_amount) as discounts_given
         FROM pos_orders o
         JOIN users u ON o.operator_id = u.id
-        WHERE date(o.created_at) >= ? AND o.status != 'held'
+        WHERE date(o.created_at, 'localtime') >= ? AND o.status != 'held'
         GROUP BY o.operator_id
         ORDER BY revenue DESC
     ''', (start_date,)).fetchall()
@@ -332,7 +377,7 @@ def refunds_report():
     reasons = conn.execute('''
         SELECT reason, COUNT(*) as count, SUM(amount) as total
         FROM pos_refunds
-        WHERE date(created_at) >= ?
+        WHERE date(created_at, 'localtime') >= ?
         GROUP BY reason
         ORDER BY count DESC
     ''', (start_date,)).fetchall()
@@ -343,7 +388,7 @@ def refunds_report():
         FROM pos_refunds r
         JOIN pos_orders o ON r.order_id = o.id
         LEFT JOIN users u ON r.manager_id = u.id
-        WHERE date(r.created_at) >= ?
+        WHERE date(r.created_at, 'localtime') >= ?
         ORDER BY r.created_at DESC
         LIMIT 25
     ''', (start_date,)).fetchall()
@@ -481,22 +526,7 @@ def settings():
 @require_admin
 def daily_report():
     """End of Day / Daily Report."""
-    conn = get_request_db()
-    
-    # Date selection (default today)
-    report_date_str = request.args.get('date', date.today().strftime('%Y-%m-%d'))
-    try:
-        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date()
-    except ValueError:
-        report_date = date.today()
-        # ... logic continues in original file ...
-    # (Existing daily_report implementation placeholder - will be filled by subsequent context, but I am appending new routes AFTER this function usually)
 
-# Append new routes at the end of the file or before daily_report is closed? 
-# Wait, I should append the new functions at the END of the file.
-# Let's insert them at the end.
-
-    """End of Day / Daily Report."""
     conn = get_request_db()
     
     # Date selection (default today)
@@ -545,6 +575,19 @@ def daily_report():
         GROUP BY payment_method
     ''', (start_dt, end_dt)).fetchall()
 
+    # Fetch Refund breakdown by payment method
+    refund_breakdown = conn.execute('''
+        SELECT 
+            o.payment_method, 
+            SUM(r.amount) as refund_total
+        FROM pos_refunds r
+        JOIN pos_orders o ON r.order_id = o.id
+        WHERE r.created_at BETWEEN ? AND ?
+        GROUP BY o.payment_method
+    ''', (start_dt, end_dt)).fetchall()
+    
+    refund_map = {r['payment_method']: (r['refund_total'] or 0) for r in refund_breakdown}
+
     # Calculate Totals for Summary
     total_cash = 0
     total_cash_net = 0
@@ -552,20 +595,27 @@ def daily_report():
     total_card_net = 0
     
     for p in payments:
+        method = p['payment_method']
         amount = p['total_amount'] or 0
         tax = p['tax_amount'] or 0
         net = amount - tax
         
-        if p['payment_method'] == 'cash':
-            total_cash += amount
-            total_cash_net += net
+        refund_amount = refund_map.get(method, 0)
+        
+        # Adjust for refunds
+        # Note: We subtract refunds from the Gross Amount for the "Total Card/Cash" display
+        # and also from the Net amount.
+        
+        if method == 'cash':
+            total_cash += (amount - refund_amount)
+            total_cash_net += (net - refund_amount)
         else:
-            total_card += amount
-            total_card_net += net
+            total_card += (amount - refund_amount)
+            total_card_net += (net - refund_amount)
 
-    # 4. Hourly Sales (Chart data)
+    # 4. Hourly Sales (Chart data) - Fix Timezone
     hourly = conn.execute('''
-        SELECT strftime('%H', created_at) as hour, COUNT(*) as count, SUM(total) as amount
+        SELECT strftime('%H', created_at, 'localtime') as hour, COUNT(*) as count, SUM(total) as amount
         FROM pos_orders
         WHERE created_at BETWEEN ? AND ? AND status != 'held'
         GROUP BY hour
@@ -583,13 +633,54 @@ def daily_report():
         LIMIT 10
     ''', (start_dt, end_dt)).fetchall()
 
+    # Process hourly data to fill gaps and ensure minimum span (10h)
+    hourly_data = [dict(h) for h in hourly]
+    if hourly_data:
+        active_hours = [int(h['hour']) for h in hourly_data]
+        min_h, max_h = min(active_hours), max(active_hours)
+        
+        # Ensure at least 10 hours span if possible
+        target_span = 10
+        current_span = max_h - min_h + 1
+        missing = target_span - current_span
+        
+        if missing > 0:
+            pad_before = missing // 2
+            pad_after = missing - pad_before
+            min_h = max(0, min_h - pad_before)
+            max_h = min(23, max_h + pad_after)
+            
+            # Adjust if we hit boundaries
+            real_span = max_h - min_h + 1
+            if real_span < target_span:
+                if min_h == 0:
+                    max_h = min(23, min_h + target_span - 1)
+                elif max_h == 23:
+                    min_h = max(0, max_h - target_span + 1)
+        
+        # Fill gaps
+        filled_hourly = []
+        hour_map = {int(h['hour']): h for h in hourly_data}
+        for h in range(min_h, max_h + 1):
+            if h in hour_map:
+                filled_hourly.append(hour_map[h])
+            else:
+                filled_hourly.append({'hour': f"{h:02d}", 'count': 0, 'amount': 0.0})
+        hourly_data = filled_hourly
+
+    # Calculate max hourly revenue for graph scaling
+    max_hourly_revenue = max((h['amount'] for h in hourly_data), default=0) if hourly_data else 0
+
+
+
     return render_template('pos/daily_report.html',
                            report_date=report_date,
                            summary=summary,
                            refunds=refunds_summary,
                            net_revenue=net_revenue,
                            payments=payments,
-                           hourly=hourly,
+                           hourly=hourly_data,
+                           max_hourly_revenue=max_hourly_revenue,
                            top_items=top_items,
                            total_cash=total_cash,
                            total_cash_net=total_cash_net,
@@ -911,5 +1002,105 @@ def send_eod_email():
         flash(f"Error sending email: {str(e)}")
         
     return redirect(url_for('pos.daily_report'))
+
+
+@pos_bp.route('/management/reports/daily-items')
+@login_required
+@require_admin
+def daily_items_report():
+    """Report of all items sold on a specific day."""
+    conn = get_request_db()
+    
+    # 1. Date Selection
+    report_date_str = request.args.get('date', date.today().strftime('%Y-%m-%d'))
+    try:
+        report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date()
+    except ValueError:
+        report_date = date.today()
+        report_date_str = report_date.strftime('%Y-%m-%d')
+        
+    # Helper for UTC conversion
+    from app.utils.helpers import local_date_to_utc_range
+    start_dt, end_dt = local_date_to_utc_range(report_date_str)
+    
+    # 2. Sorting
+    sort = request.args.get('sort', 'qty_desc')
+    order_clause = "qty DESC"
+    
+    # SQL Sorts
+    if sort == 'qty_asc': order_clause = "qty ASC"
+    elif sort == 'revenue_desc': order_clause = "total DESC"
+    elif sort == 'revenue_asc': order_clause = "total ASC"
+    elif sort == 'name_asc': order_clause = "oi.name ASC"
+    elif sort == 'name_desc': order_clause = "oi.name DESC"
+    elif sort == 'sku_asc': order_clause = "oi.sku ASC"
+    elif sort == 'sku_desc': order_clause = "oi.sku DESC"
+    elif sort == 'price_asc': order_clause = "avg_price ASC"
+    elif sort == 'price_desc': order_clause = "avg_price DESC"
+
+    # 3. Query
+    # Prioritize Inventory SKU (RSCP) over Order SKU (which might be UPC/Part)
+    query = f'''
+        SELECT 
+            COALESCE(inv.sku, oi.sku) as sku,
+            oi.name, 
+            SUM(oi.quantity) as qty, 
+            SUM(oi.line_total) as total,
+            AVG(oi.unit_price) as avg_price,
+            MAX(inv.quantity) as current_stock,
+            MAX(inv.location_aisle) as aisle
+        FROM pos_order_items oi
+        JOIN pos_orders o ON oi.order_id = o.id
+        LEFT JOIN inventory_items inv ON oi.inventory_item_id = inv.id
+        WHERE o.created_at BETWEEN ? AND ? 
+          AND o.status != 'held'
+        GROUP BY COALESCE(inv.sku, oi.sku)
+        ORDER BY {order_clause}
+    '''
+    
+    rows = conn.execute(query, (start_dt, end_dt)).fetchall()
+    
+    # 4. Process Category logic (Python side) & Format
+    items = []
+    
+    # Define CATEGORY_CODES locally
+    CATEGORY_CODES = {
+        'PRI': 'Primary',
+        'SEC': 'Secondary',
+        'ASC': 'Accessories',
+        'ATO': 'Automatic',
+    }
+    
+    for r in rows:
+        sku = r['sku'] or ''
+        
+        # Display Logic: "Custom-#" for custom items
+        if sku.lower().startswith('custom'):
+             sku = 'Custom-#'
+             
+        parts = sku.split('-')
+        cat_code = parts[1] if len(parts) >= 2 and parts[0] == 'RSCP' else 'Other'
+        category = CATEGORY_CODES.get(cat_code, cat_code)
+        
+        items.append({
+            'sku': r['sku'],
+            'name': r['name'],
+            'qty': r['qty'],
+            'total': r['total'],
+            'avg_price': r['avg_price'],
+            'current_stock': r['current_stock'] if r['current_stock'] is not None else 0,
+            'category': category
+        })
+
+    # Python Sorts (Computed fields)
+    if sort == 'cat_asc':
+        items.sort(key=lambda x: x['category'])
+    elif sort == 'cat_desc':
+        items.sort(key=lambda x: x['category'], reverse=True)
+        
+    return render_template('pos/daily_items.html', 
+                           items=items, 
+                           report_date=report_date,
+                           sort=sort)
 
 

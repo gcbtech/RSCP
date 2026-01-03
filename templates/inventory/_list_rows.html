@@ -96,7 +96,8 @@
                 ±
             </button>
             <!-- Edit -->
-            <a href="/inventory/edit/{{ item.id }}" class="btn btn-outline-secondary">✏️</a>
+            <a href="/inventory/edit/{{ item.id }}?page={{ page }}&sort={{ sort_by }}&order={{ order }}&q={{ search_query }}"
+                class="btn btn-outline-secondary">✏️</a>
             <!-- Delete -->
             <form action="/inventory/delete/{{ item.id }}" method="POST"
                 onsubmit="return confirm('Delete {{ item.name }}?');" style="display:inline;">

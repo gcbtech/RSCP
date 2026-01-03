@@ -457,23 +457,30 @@ def edit_item(item_id):
             resupply_interval = request.form.get('resupply_interval', '').strip()
             keywords = request.form.get('keywords', '').strip()
             
+            # Pagination state
+            page = request.form.get('page')
+            page = int(page) if page and page.isdigit() else 1
+            sort_by = request.form.get('sort', 'name')
+            order = request.form.get('order', 'asc')
+            search_query = request.form.get('q', '')
+
             if not sku:
                 flash("SKU is required.")
-                return redirect(url_for('inventory.edit_item', item_id=item_id))
+                return redirect(url_for('inventory.edit_item', item_id=item_id, page=page, sort=sort_by, order=order, q=search_query))
             
             if not name:
                 flash("Name is required.")
-                return redirect(url_for('inventory.edit_item', item_id=item_id))
+                return redirect(url_for('inventory.edit_item', item_id=item_id, page=page, sort=sort_by, order=order, q=search_query))
             
             if not validate_location(location_area, location_aisle, location_shelf, location_bin):
                 flash("At least one location field is required.")
-                return redirect(url_for('inventory.edit_item', item_id=item_id))
+                return redirect(url_for('inventory.edit_item', item_id=item_id, page=page, sort=sort_by, order=order, q=search_query))
             
             existing = conn.execute('SELECT id FROM inventory_items WHERE sku = ? AND id != ?', 
                                    (sku, item_id)).fetchone()
             if existing:
                 flash("SKU already exists for another item.")
-                return redirect(url_for('inventory.edit_item', item_id=item_id))
+                return redirect(url_for('inventory.edit_item', item_id=item_id, page=page, sort=sort_by, order=order, q=search_query))
             
             buy_price = float(buy_price) if buy_price else None
             sell_price = float(sell_price) if sell_price else None
@@ -543,7 +550,7 @@ def edit_item(item_id):
             conn.commit()
             
             flash("Item updated.")
-            return redirect(url_for('inventory.list_items'))
+            return redirect(url_for('inventory.list_items', page=page, sort=sort_by, order=order, q=search_query))
             
         except Exception as e:
             logger.error(f"Error updating inventory item: {e}")
@@ -573,12 +580,21 @@ def edit_item(item_id):
         except json.JSONDecodeError:
             pass  # Invalid JSON in secondary_ids
         
+        # Capture pagination state
+        pagination_state = {
+            'page': request.args.get('page', 1),
+            'sort': request.args.get('sort', 'name'),
+            'order': request.args.get('order', 'asc'),
+            'q': request.args.get('q', '')
+        }
+        
         return render_template('inventory/add.html', 
                                item=item, 
                                transactions=transactions,
                                edit_mode=True,
                                categories=CATEGORY_CODES,
-                               secondary_ids=secondary_ids)
+                               secondary_ids=secondary_ids,
+                               pagination_state=pagination_state)
     finally:
         conn.close()
 

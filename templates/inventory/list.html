@@ -5,6 +5,7 @@
     <title>RSCP | Inventory Items</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.bootstrap5.min.css">
     <link rel="icon" href="{{ favicon }}">
     <style>
         body {
@@ -293,6 +294,17 @@
                             <option value="PRI" selected>Primary</option>
                             <option value="SEC">Secondary</option>
                             <option value="ASC">Accessories</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">Location Area</label>
+                        {% set loc_options = config.get('LOCATION_OPTIONS', {}) if config else {} %}
+                        <select name="location_area" class="form-select form-select-sm" id="quickAddLocation">
+                            <option value="">-- Area --</option>
+                            {% for opt in loc_options.get('area', []) %}
+                            <option value="{{ opt }}">{{ opt }}</option>
+                            {% endfor %}
+                            <option value="General">General</option>
                         </select>
                     </div>
                     <div class="col-md-1">
@@ -844,6 +856,19 @@
             </div>
         </div>
     </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            if (document.getElementById('quickAddLocation')) {
+                new TomSelect('#quickAddLocation', {
+                    create: true,
+                    sortField: { field: "text", direction: "asc" },
+                    placeholder: 'Area...'
+                });
+            }
+        });
+    </script>
 </body>
 
 </html>

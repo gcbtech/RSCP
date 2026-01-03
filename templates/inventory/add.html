@@ -214,7 +214,8 @@
 
     <div class="d-flex justify-content-between align-items-center mb-4 page-header">
         <h2>{% if edit_mode %}✏️ Edit Item{% else %}📦 Add Item{% endif %}</h2>
-        <a href="/inventory/items" class="btn btn-outline-secondary">← Back</a>
+        <a href="{{ url_for('inventory.list_items', page=pagination_state.page, sort=pagination_state.sort, order=pagination_state.order, q=pagination_state.q) if pagination_state else url_for('inventory.list_items') }}"
+            class="btn btn-outline-secondary">← Back</a>
     </div>
 
     {% with messages = get_flashed_messages() %}
@@ -231,6 +232,13 @@
             <form action="{% if edit_mode %}/inventory/edit/{{ item.id }}{% else %}/inventory/add{% endif %}"
                 method="POST" enctype="multipart/form-data">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                {% if pagination_state %}
+                <input type="hidden" name="page" value="{{ pagination_state.page }}">
+                <input type="hidden" name="sort" value="{{ pagination_state.sort }}">
+                <input type="hidden" name="order" value="{{ pagination_state.order }}">
+                <input type="hidden" name="q" value="{{ pagination_state.q }}">
+                {% endif %}
 
                 <!-- SKU (only for new items) -->
                 {% if not edit_mode %}

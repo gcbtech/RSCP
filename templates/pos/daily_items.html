@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Daily Items Sold</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            background: #f1f5f9;
+        }
+
+        .report-header {
+            background: linear-gradient(135deg, #7c3aed 0%, #2563eb 100%);
+            color: white;
+            padding: 1.5rem 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .monitor-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            margin-bottom: 1rem;
+            overflow: hidden;
+        }
+
+        @media print {
+
+            .btn,
+            form,
+            .report-header,
+            nav {
+                display: none !important;
+            }
+
+            .card-header {
+                display: none !important;
+            }
+
+            .table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+
+            th,
+            td {
+                border: 1px solid #ddd;
+                padding: 8px;
+            }
+
+            body {
+                background: white;
+            }
+
+            .container {
+                max-width: 100%;
+                padding: 0;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="report-header">
+        <div class="d-flex justify-content-between align-items-center">
+            <div>
+                <h2>📦 Daily Items Sold</h2>
+                <p class="mb-0 opacity-75">Items sold on {{ report_date.strftime('%B %d, %Y') }}</p>
+            </div>
+            <div class="d-flex gap-2">
+                <form class="d-flex gap-2" method="GET">
+                    <input type="date" name="date" class="form-control" value="{{ report_date.strftime('%Y-%m-%d') }}"
+                        onchange="this.form.submit()">
+                    <a href="{{ url_for('pos.management') }}" class="btn btn-outline-light">Back to Management</a>
+                    <button type="button" onclick="window.print()" class="btn btn-light"
+                        title="Use Destination: Save as PDF"><i class="bi bi-file-earmark-pdf"></i> Save as PDF</button>
+                    <button type="button" onclick="window.print()" class="btn btn-light"><i class="bi bi-printer"></i>
+                        Print</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="container-fluid px-4">
+        <div class="monitor-card">
+            <div class="card-header bg-light p-3">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span class="fw-bold">Sold Items ({{ items|length }})</span>
+                    <div class="btn-group btn-group-sm">
+                        <a href="?date={{ report_date }}&sort=qty_desc"
+                            class="btn btn-outline-secondary {% if sort == 'qty_desc' %}active{% endif %}">Qty High</a>
+                        <a href="?date={{ report_date }}&sort=revenue_desc"
+                            class="btn btn-outline-secondary {% if sort == 'revenue_desc' %}active{% endif %}">Rev
+                            High</a>
+                        <a href="?date={{ report_date }}&sort=name_asc"
+                            class="btn btn-outline-secondary {% if sort == 'name_asc' %}active{% endif %}">Name A-Z</a>
+                    </div>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>
+                                <a href="?date={{ report_date }}&sort={{ 'sku_desc' if sort == 'sku_asc' else 'sku_asc' }}"
+                                    class="text-decoration-none text-dark">
+                                    SKU <i class="bi bi-arrow-down-up small text-muted"></i>
+                                </a>
+                            </th>
+                            <th>
+                                <a href="?date={{ report_date }}&sort={{ 'name_desc' if sort == 'name_asc' else 'name_asc' }}"
+                                    class="text-decoration-none text-dark">
+                                    Item Name <i class="bi bi-arrow-down-up small text-muted"></i>
+                                </a>
+                            </th>
+                            <th>
+                                <a href="?date={{ report_date }}&sort={{ 'cat_desc' if sort == 'cat_asc' else 'cat_asc' }}"
+                                    class="text-decoration-none text-dark">
+                                    Category <i class="bi bi-arrow-down-up small text-muted"></i>
+                                </a>
+                            </th>
+                            <th class="text-center">
+                                <a href="?date={{ report_date }}&sort={{ 'qty_asc' if sort == 'qty_desc' else 'qty_desc' }}"
+                                    class="text-decoration-none text-dark">
+                                    Sold <i class="bi bi-arrow-down-up small text-muted"></i>
+                                </a>
+                            </th>
+                            <th class="text-end">Current Stock</th>
+                            <th class="text-end">
+                                <a href="?date={{ report_date }}&sort={{ 'price_desc' if sort == 'price_asc' else 'price_asc' }}"
+                                    class="text-decoration-none text-dark">
+                                    Avg Price <i class="bi bi-arrow-down-up small text-muted"></i>
+                                </a>
+                            </th>
+                            <th class="text-end">
+                                <a href="?date={{ report_date }}&sort={{ 'revenue_asc' if sort == 'revenue_desc' else 'revenue_desc' }}"
+                                    class="text-decoration-none text-dark">
+                                    Total Revenue <i class="bi bi-arrow-down-up small text-muted"></i>
+                                </a>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in items %}
+                        <tr>
+                            <td class="font-monospace">{{ item.sku }}</td>
+                            <td>{{ item.name }}</td>
+                            <td><span class="badge bg-secondary">{{ item.category }}</span></td>
+                            <td class="text-center fw-bold">{{ item.qty }}</td>
+                            <td
+                                class="text-end {{ 'text-danger fw-bold' if item.current_stock < 5 else 'text-muted' }}">
+                                {{ item.current_stock }}
+                            </td>
+                            <td class="text-end">${{ "%.2f"|format(item.avg_price) }}</td>
+                            <td class="text-end fw-bold">${{ "%.2f"|format(item.total) }}</td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="7" class="text-center py-5 text-muted">
+                                <i class="bi bi-inbox fs-1 d-block mb-2"></i>
+                                No items sold on this date.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot class="table-light fw-bold">
+                        <tr>
+                            <td colspan="3">Totals</td>
+                            <td class="text-center">{{ items|sum(attribute='qty') }}</td>
+                            <td></td>
+                            <td></td>
+                            <td class="text-end">${{ "%.2f"|format(items|sum(attribute='total')) }}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>

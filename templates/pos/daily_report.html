@@ -223,13 +223,9 @@
                     <div class="card-body">
                         {% if hourly %}
                         <div style="height: 200px; display: flex; align-items: flex-end; gap: 4px;">
-                            {% set max_val = 0 %}
                             {% for h in hourly %}
-                            {% if h.amount > max_val %}{% set max_val = h.amount %}{% endif %}
-                            {% endfor %}
-
-                            {% for h in hourly %}
-                            {% set height_pct = (h.amount / max_val * 100) if max_val > 0 else 0 %}
+                            {% set height_pct = (h.amount / max_hourly_revenue * 100) if max_hourly_revenue > 0 else 0
+                            %}
                             <div class="flex-fill bg-primary bg-opacity-75 rounded-top"
                                 style="height: {{ height_pct }}%; min-height: 4px;"
                                 title="{{ h.hour }}:00 - ${{ '%.2f'|format(h.amount) }} ({{ h.count }} orders)">

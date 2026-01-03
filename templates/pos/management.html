@@ -73,9 +73,13 @@
             <div class="d-flex gap-2">
                 <select onchange="location.href='?days='+this.value" class="form-select form-select-sm"
                     style="width: auto;">
+                    <option value="1" {% if days==1 %}selected{% endif %}>Today</option>
                     <option value="7" {% if days==7 %}selected{% endif %}>7 days</option>
                     <option value="30" {% if days==30 %}selected{% endif %}>30 days</option>
+                    <option value="60" {% if days==60 %}selected{% endif %}>60 days</option>
                     <option value="90" {% if days==90 %}selected{% endif %}>90 days</option>
+                    <option value="180" {% if days==180 %}selected{% endif %}>180 days</option>
+                    <option value="365" {% if days==365 %}selected{% endif %}>365 days</option>
                 </select>
                 <a href="{{ url_for('pos.sales') }}" class="btn btn-outline-light btn-sm">← Back to Sales</a>
             </div>
@@ -125,6 +129,7 @@
                 <div class="chart-card">
                     <h5 class="mb-3">📋 Reports</h5>
                     <a href="{{ url_for('pos.daily_report') }}" class="quick-link">📊 End of Day Report</a>
+                    <a href="{{ url_for('pos.daily_items_report') }}" class="quick-link">📦 Daily Items Sold</a>
                     <a href="{{ url_for('pos.valuation_report') }}" class="quick-link">💰 Inventory Valuation</a>
                     <a href="{{ url_for('pos.reorder_report') }}" class="quick-link">📉 Smart Reorder List</a>
                     <a href="{{ url_for('pos.sales_history') }}" class="quick-link">📜 Sales History</a>
@@ -209,7 +214,12 @@
         new Chart(document.getElementById('salesChart'), {
             type: 'line',
             data: {
-                labels: salesLabels.map(d => new Date(d).toLocaleDateString()),
+                labels: salesLabels.map(d => {
+                    // d is YYYY-MM-DD. Parse manually to avoid timezone shift
+                    const [y, m, day] = d.split('-').map(Number);
+                    const date = new Date(y, m - 1, day);
+                    return date.toLocaleDateString();
+                }),
                 datasets: [{
                     label: 'Revenue',
                     data: salesData,
