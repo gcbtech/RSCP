@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Manage PTO</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+</head>
+
+<body class="bg-light">
+    {% include '_nav.html' %}
+
+    <div class="container mt-4">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>🏖️ PTO Management</h2>
+            <a href="{{ url_for('timeclock.manager_dashboard') }}" class="btn btn-outline-secondary">← Dashboard</a>
+        </div>
+
+        <div class="row">
+            <!-- PENDING REQUESTS -->
+            <div class="col-md-8">
+                <div class="card shadow-sm mb-4">
+                    <div class="card-header bg-warning text-dark">
+                        <h5 class="mb-0">⏳ Pending Requests</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0 align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Employee</th>
+                                        <th>Date</th>
+                                        <th>Type</th>
+                                        <th>Hours</th>
+                                        <th>Reason</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for req in pending %}
+                                    <tr>
+                                        <td class="fw-bold">{{ req.username }}</td>
+                                        <td>{{ req.date }}</td>
+                                        <td>
+                                            {% if req.request_type == 'full' %}
+                                            <span class="badge bg-primary">Full Shift</span>
+                                            {% else %}
+                                            <span class="badge bg-info text-dark">Partial</span>
+                                            <div class="small text-muted">{{ req.start_time }} - {{ req.end_time }}
+                                            </div>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ req.hours_requested }}</td>
+                                        <td><small>{{ req.admin_notes or '-' }}</small></td>
+                                        <td>
+                                            <form method="POST"
+                                                action="{{ url_for('timeclock.pto_action', req_id=req['id']) }}"
+                                                class="d-flex gap-1">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                <button type="submit" name="action" value="approve"
+                                                    class="btn btn-success btn-sm"
+                                                    onclick="return confirm('Approve this request?')">✓</button>
+                                                <button type="submit" name="action" value="deny"
+                                                    class="btn btn-danger btn-sm"
+                                                    onclick="return confirm('Deny this request?')">✕</button>
+                                            </form>
+                                        </td>
+                                    </tr>
+                                    {% else %}
+                                    <tr>
+                                        <td colspan="6" class="text-center py-4 text-muted">No pending requests</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- HISTORY -->
+                <div class="card shadow-sm">
+                    <div class="card-header">
+                        <h5 class="mb-0">History (Last 50)</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Emp</th>
+                                    <th>Date</th>
+                                    <th>Status</th>
+                                    <th>Hours</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for h in history %}
+                                <tr>
+                                    <td>{{ h.username }}</td>
+                                    <td>{{ h.date }}</td>
+                                    <td>
+                                        {% if h.status == 'approved' %}
+                                        <span class="badge bg-success">Approved</span>
+                                        {% else %}
+                                        <span class="badge bg-danger">Denied</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>{{ h.hours_requested }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- USER BALANCES -->
+            <div class="col-md-4">
+                <div class="card shadow-sm">
+                    <div class="card-header bg-dark text-white">
+                        <h5 class="mb-0">💰 Balances</h5>
+                    </div>
+                    <div class="card-body p-0" style="max-height: 600px; overflow-y: auto;">
+                        <ul class="list-group list-group-flush">
+                            {% for u in users %}
+                            <li class="list-group-item">
+                                <form action="{{ url_for('timeclock.update_pto_balance') }}" method="POST"
+                                    class="row g-2 align-items-center">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="user_id" value="{{ u.id }}">
+
+                                    <div class="col-6">
+                                        <span class="fw-bold">{{ u.username }}</span>
+                                    </div>
+                                    <div class="col-4">
+                                        <input type="number" name="amount" class="form-control form-control-sm"
+                                            step="0.5" value="{{ u.balance_hours }}">
+                                    </div>
+                                    <div class="col-2">
+                                        <button type="submit" class="btn btn-outline-primary btn-sm px-1">💾</button>
+                                    </div>
+                                </form>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

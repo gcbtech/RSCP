@@ -52,64 +52,47 @@
                     </div>
                     <div class="card-body text-center p-5">
 
+                        <!-- STATUS SECTION (Simplified for brevity in diff, keeping logic) -->
                         {% if not status %}
-                        <!-- STATE: CLOCKED OUT -->
                         <div class="mb-4">
                             <h5 class="text-muted">You are currently</h5>
                             <h2 class="display-4 text-danger fw-bold">CLOCKED OUT</h2>
                         </div>
-
                         <form action="{{ url_for('timeclock.clock_in') }}" method="POST">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button type="submit" class="btn btn-success btn-lg w-100 py-4 fs-2 fw-bold shadow">
-                                🟢 CLOCK IN
-                            </button>
+                            <button type="submit" class="btn btn-success btn-lg w-100 py-4 fs-2 fw-bold shadow">🟢 CLOCK
+                                IN</button>
                         </form>
-
                         {% else %}
-                        <!-- STATE: ACTIVE -->
-                        {% if status.type == 'shift' %}
                         <div class="mb-4">
                             <h5 class="text-muted">You are currently</h5>
-                            <h2 class="display-4 text-success fw-bold">WORKING</h2>
+                            <h2
+                                class="display-4 {{ 'text-success' if status.type=='shift' else 'text-warning' }} fw-bold">
+                                {{ 'WORKING' if status.type=='shift' else 'ON BREAK' }}
+                            </h2>
                             <p class="lead mt-2">
                                 Since: <strong>{{ clock_in_time }}</strong><br>
                                 Duration: <span class="badge bg-secondary">{{ duration }}</span>
                             </p>
                         </div>
-
+                        {% if status.type == 'shift' %}
                         <div class="d-grid gap-3">
                             <form action="{{ url_for('timeclock.break_start') }}" method="POST">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button type="submit" class="btn btn-warning btn-lg w-100 py-3 fw-bold">
-                                    ☕ START BREAK
-                                </button>
+                                <button type="submit" class="btn btn-warning btn-lg w-100 py-3 fw-bold">☕ START
+                                    BREAK</button>
                             </form>
-
                             <form action="{{ url_for('timeclock.clock_out') }}" method="POST">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <button type="submit" class="btn btn-danger btn-lg w-100 py-3 fw-bold">
-                                    🔴 CLOCK OUT
-                                </button>
+                                <button type="submit" class="btn btn-danger btn-lg w-100 py-3 fw-bold">🔴 CLOCK
+                                    OUT</button>
                             </form>
                         </div>
-
-                        {% elif status.type == 'break' %}
-                        <!-- STATE: ON BREAK -->
-                        <div class="mb-4">
-                            <h5 class="text-muted">You are currently</h5>
-                            <h2 class="display-4 text-warning fw-bold">ON BREAK</h2>
-                            <p class="lead mt-2">
-                                Since: <strong>{{ clock_in_time }}</strong><br>
-                                Duration: <span class="badge bg-secondary">{{ duration }}</span>
-                            </p>
-                        </div>
-
+                        {% else %}
                         <form action="{{ url_for('timeclock.break_end') }}" method="POST">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <button type="submit" class="btn btn-success btn-lg w-100 py-4 fs-2 fw-bold shadow">
-                                ▶️ END BREAK
-                            </button>
+                            <button type="submit" class="btn btn-success btn-lg w-100 py-4 fs-2 fw-bold shadow">▶️ END
+                                BREAK</button>
                         </form>
                         {% endif %}
                         {% endif %}
@@ -118,6 +101,81 @@
                     <div class="card-footer text-muted text-center small">
                         Logged in as <strong>{{ current_user.username }}</strong>
                     </div>
+                </div>
+            </div>
+
+            <!-- SIDEBAR: SCHEDULE & PTO -->
+            <div class="col-md-4 col-lg-3 mt-4">
+                <!-- Hours This Period -->
+                <div class="card shadow-sm mb-3">
+                    <div class="card-header bg-dark text-white">
+                        <h6 class="mb-0">⏱️ Hours This Period</h6>
+                    </div>
+                    <div class="card-body text-center">
+                        <div class="row">
+                            <div class="col-6">
+                                <div class="text-muted small">Regular</div>
+                                <div class="fs-4 fw-bold text-success">{{ reg_hours }}</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="text-muted small">Overtime</div>
+                                <div class="fs-4 fw-bold {{ 'text-danger' if ot_hours > 0 else 'text-secondary' }}">{{
+                                    ot_hours }}</div>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <span class="text-muted">Total</span>
+                            <span class="fs-5 fw-bold">{{ period_hours }} hrs</span>
+                        </div>
+                        <div class="small text-muted mt-1">Threshold: {{ fulltime_hours }} hrs</div>
+                    </div>
+                </div>
+
+                <!-- Next Shift -->
+                <div class="card shadow-sm mb-3">
+                    <div class="card-header bg-info text-white">
+                        <h6 class="mb-0">📅 Next Shift</h6>
+                    </div>
+                    <div class="card-body text-center">
+                        {% if next_shift %}
+                        <h3 class="mb-0">{{ next_shift.day }}</h3>
+                        <div class="text-muted mb-2">{{ next_shift.date }}</div>
+                        <div class="fs-4 fw-bold text-primary">{{ next_shift.start }}</div>
+                        <small class="text-muted">until {{ next_shift.end }}</small>
+                        {% else %}
+                        <p class="text-muted my-3">No upcoming shifts scheduled.</p>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- PTO -->
+                <div class="card shadow-sm mb-3">
+                    <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+                        <h6 class="mb-0">🏖️ PTO</h6>
+                        <span class="badge bg-white text-dark">{{ pto_balance }} hrs</span>
+                    </div>
+                    <div class="card-body p-2 d-grid">
+                        <a href="{{ url_for('timeclock.request_pto') }}" class="btn btn-outline-warning btn-sm">Request
+                            Time Off</a>
+                    </div>
+                </div>
+
+                <!-- Work Week Preview -->
+                <div class="card shadow-sm">
+                    <div class="card-header bg-light">
+                        <h6 class="mb-0">🗓️ This Week</h6>
+                    </div>
+                    <ul class="list-group list-group-flush small">
+                        {% for shift in week_shifts %}
+                        <li class="list-group-item d-flex justify-content-between">
+                            <span class="fw-bold">{{ shift.day }} {{ shift.date }}</span>
+                            <span>{{ shift.range }}</span>
+                        </li>
+                        {% else %}
+                        <li class="list-group-item text-center text-muted">No shifts this week</li>
+                        {% endfor %}
+                    </ul>
                 </div>
             </div>
         </div>

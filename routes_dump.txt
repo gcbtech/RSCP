@@ -1,0 +1,22 @@
+--- TIMECLOCK ROUTES ---
+timeclock.index: /timeclock/
+timeclock.break_end: /timeclock/break_end
+timeclock.break_start: /timeclock/break_start
+timeclock.clock_in: /timeclock/clock_in
+timeclock.clock_out: /timeclock/clock_out
+timeclock.manager_dashboard: /timeclock/manager
+timeclock.export_csv: /timeclock/manager/export
+timeclock.export_custom_form: /timeclock/manager/export/custom
+timeclock.export_report: /timeclock/manager/export/report
+timeclock.force_clock_out: /timeclock/manager/force_clock_out/<int:user_id>
+timeclock.generate_schedule: /timeclock/manager/generate_schedule
+timeclock.manager_pto: /timeclock/manager/pto
+timeclock.pto_action: /timeclock/manager/pto/action/<int:req_id>
+timeclock.update_pto_balance: /timeclock/manager/pto/update_balance
+timeclock.add_recurring_rule: /timeclock/manager/recurring/add
+timeclock.delete_recurring_rule: /timeclock/manager/recurring/delete/<int:rule_id>
+timeclock.update_settings: /timeclock/manager/settings
+timeclock.shifts: /timeclock/manager/shifts
+timeclock.edit_entry: /timeclock/manager/timesheet/edit/<int:entry_id>
+timeclock.timesheets: /timeclock/manager/timesheets
+timeclock.request_pto: /timeclock/request_pto

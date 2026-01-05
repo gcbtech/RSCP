@@ -96,7 +96,25 @@ def check_amazon_emails(imap_server, user, password):
         # Process latest 20 emails max to prevent timeout
         for email_id in email_ids[-20:]:
             try:
-                # Fetch
+                # Fetch size first to prevent DoS from large attachments
+                # RFC822.SIZE returns the size in bytes
+                res, size_data = mail.fetch(email_id, "(RFC822.SIZE)")
+                size_bytes = 0
+                if size_data and size_data[0]:
+                    # Response format: [b'ID (RFC822.SIZE 12345)']
+                    size_parts = size_data[0].decode().split()
+                    # Find the number in the response
+                    for part in size_parts:
+                        if part.strip(')').isdigit():
+                            size_bytes = int(part.strip(')'))
+                            break
+                            
+                # Limit to 2MB (Amazon shipping emails are usually <100KB)
+                if size_bytes > 2 * 1024 * 1024:
+                    print(f"Skipping email {email_id.decode()}: Size {size_bytes} exceeds 2MB limit.")
+                    continue
+
+                # Fetch full content
                 res, msg_data = mail.fetch(email_id, "(RFC822)")
                 for response_part in msg_data:
                     if isinstance(response_part, tuple):

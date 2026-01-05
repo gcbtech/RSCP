@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Request PTO</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.7.2/font/bootstrap-icons.css">
+    <link rel="icon" href="{{ favicon }}">
+</head>
+
+<body class="bg-light">
+    {% include '_nav.html' %}
+
+    <div class="container mt-4" style="max-width: 600px;">
+        <div class="card shadow-sm">
+            <div class="card-header bg-primary text-white">
+                <h4 class="mb-0">🏖️ Request Time Off</h4>
+            </div>
+            <div class="card-body">
+
+                <div class="alert alert-info d-flex justify-content-between align-items-center">
+                    <span><strong>Current PTO Balance:</strong></span>
+                    <span class="badge bg-white text-primary fs-5">{{ balance }} Hours</span>
+                </div>
+
+                <form method="POST" action="">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                    <div class="mb-3">
+                        <label class="form-label">Type of Request</label>
+                        <select name="request_type" id="requestType" class="form-select" onchange="togglePartial()">
+                            <option value="full">Full Shift Off</option>
+                            <option value="partial">Partial Shift (Hours)</option>
+                        </select>
+                        <div class="form-text">Full Shift will automatically calculate hours based on your schedule.
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Date</label>
+                        <input type="date" name="date" class="form-control" required min="{{ today_str }}">
+                    </div>
+
+                    <!-- Partial Shift Fields -->
+                    <div id="partialFields" style="display: none;" class="p-3 bg-light border rounded mb-3">
+                        <h6 class="text-muted mb-3">Time Off Duration</h6>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label small">Start Time (Off)</label>
+                                <input type="time" name="start_time" class="form-control">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small">End Time (Off)</label>
+                                <input type="time" name="end_time" class="form-control">
+                            </div>
+                        </div>
+                        <div class="form-text text-warning mt-2">
+                            <i class="bi bi-exclamation-triangle"></i> Remaining shift must meet minimum duration
+                            requirements.
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">Notes (Optional)</label>
+                        <textarea name="notes" class="form-control" rows="2" placeholder="Reason..."></textarea>
+                    </div>
+
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary">Submit Request</button>
+                        <a href="{{ url_for('timeclock.index') }}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function togglePartial() {
+            const type = document.getElementById('requestType').value;
+            const partialDiv = document.getElementById('partialFields');
+            const inputs = partialDiv.querySelectorAll('input');
+
+            if (type === 'partial') {
+                partialDiv.style.display = 'block';
+                inputs.forEach(i => i.required = true);
+            } else {
+                partialDiv.style.display = 'none';
+                inputs.forEach(i => i.required = false);
+            }
+        }
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

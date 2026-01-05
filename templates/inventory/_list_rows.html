@@ -77,10 +77,14 @@
     <td>
         <span class="location-badge">
             {% set locs = [] %}
-            {% if item.location_area %}{% set _ = locs.append(item.location_area) %}{% endif %}
-            {% if item.location_aisle %}{% set _ = locs.append(item.location_aisle) %}{% endif %}
-            {% if item.location_shelf %}{% set _ = locs.append(item.location_shelf) %}{% endif %}
-            {% if item.location_bin %}{% set _ = locs.append(item.location_bin) %}{% endif %}
+            {% if item.location_area and item.location_area != 'None' %}{% set _ = locs.append(item.location_area) %}{%
+            endif %}
+            {% if item.location_aisle and item.location_aisle != 'None' %}{% set _ = locs.append(item.location_aisle)
+            %}{% endif %}
+            {% if item.location_shelf and item.location_shelf != 'None' %}{% set _ = locs.append(item.location_shelf)
+            %}{% endif %}
+            {% if item.location_bin and item.location_bin != 'None' %}{% set _ = locs.append(item.location_bin) %}{%
+            endif %}
             {{ locs | join(' / ') }}
         </span>
     </td>

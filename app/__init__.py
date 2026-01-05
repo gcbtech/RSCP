@@ -18,24 +18,28 @@ from app.services.migration import ensure_db_ready
 from app.services.logger import log_exception
 
 def create_app():
-    # TODO: Remove debug print statement for production
-    print("DEBUG: Starting create_app... v4")
-    # Force reload for route registration updates
     # Logging Setup
     from logging.handlers import RotatingFileHandler
     
-    file_handler = RotatingFileHandler(
-        os.path.join(BASE_DIR, 'app.log'), 
-        maxBytes=10*1024*1024, # 10MB
-        backupCount=5
-    )
-    file_handler.setFormatter(logging.Formatter(
-        '%(asctime)s [%(levelname)s] [REQ_%(thread)d] %(message)s' 
-    ))
-    file_handler.setLevel(logging.INFO)
-    
-    # Root logger
-    logging.getLogger().addHandler(file_handler)
+    file_handler = None
+    try:
+        file_handler = RotatingFileHandler(
+            os.path.join(BASE_DIR, 'app.log'), 
+            maxBytes=10*1024*1024, # 10MB
+            backupCount=5
+        )
+        file_handler.setFormatter(logging.Formatter(
+            '%(asctime)s [%(levelname)s] [REQ_%(thread)d] %(message)s' 
+        ))
+        file_handler.setLevel(logging.INFO)
+        logging.getLogger().addHandler(file_handler)
+    except Exception as e:
+        # Fallback to console if file write fails (e.g. production permissions or tests)
+        console = logging.StreamHandler()
+        console.setLevel(logging.INFO)
+        logging.getLogger().addHandler(console)
+        print(f"Warning: Could not set up file logging: {e}")
+
     logging.getLogger().setLevel(logging.INFO)
     
     # DB Migration (Async)
@@ -140,14 +144,12 @@ def create_app():
         # Catch-all for non-RscpError exceptions
         log_exception(e, source="UnhandledCrasher")
         
-        # Return JSON for API routes
+        # Return JSON for API routes (no traceback exposure for security)
         if request.path.startswith('/api/'):
             from flask import jsonify
-            import traceback
             return jsonify({
-                'error': str(e),
-                'error_type': type(e).__name__,
-                'traceback': traceback.format_exc()
+                'error': 'Internal server error',
+                'request_id': getattr(g, 'request_id', 'unknown')
             }), 500
         
         return render_template('error.html', 
@@ -253,6 +255,11 @@ def create_app():
         )
         if request.is_secure or request.headers.get('X-Forwarded-Proto') == 'https':
             response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+            
+        # Additional Security Headers (Middleware)
+        from app.services.security_middleware import add_security_headers
+        response = add_security_headers(response)
+        
         return response
 
     # Authentication (Flask-Login)

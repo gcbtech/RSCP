@@ -192,7 +192,7 @@ def check_inventory_enabled():
     # But for now, let's just Enforce Login.
     
     if not current_user.is_authenticated:
-        return redirect(url_for('main.login', next=request.url))
+        return redirect(url_for('auth.login', next=request.url))
 
     if not is_inventory_enabled():
         flash("Inventory module is not enabled.")
@@ -316,6 +316,56 @@ def check_sku_exists():
         return jsonify({'error': str(e)}), 500
 
 
+def validate_url_safe(url):
+    """
+    Validate URL is safe from SSRF attacks.
+    
+    Returns: (is_safe, error_message)
+    """
+    from urllib.parse import urlparse
+    import socket
+    
+    parsed = urlparse(url)
+    
+    # Must be HTTP/HTTPS
+    if parsed.scheme not in ('http', 'https'):
+        return False, "Only HTTP/HTTPS URLs allowed"
+    
+    hostname = parsed.hostname or ''
+    
+    # Block localhost variations
+    if hostname in ('localhost', '127.0.0.1', '::1', '0.0.0.0', ''):
+        return False, "Internal addresses not allowed"
+    
+    # Block private IP ranges by resolving hostname
+    try:
+        ip = socket.gethostbyname(hostname)
+        # Private ranges: 10.x, 172.16-31.x, 192.168.x, 127.x, 169.254.x (link-local/metadata)
+        private_prefixes = (
+            '10.', '172.16.', '172.17.', '172.18.', '172.19.',
+            '172.20.', '172.21.', '172.22.', '172.23.', '172.24.',
+            '172.25.', '172.26.', '172.27.', '172.28.', '172.29.',
+            '172.30.', '172.31.', '192.168.', '127.', '169.254.', '0.'
+        )
+        if ip.startswith(private_prefixes):
+            return False, "Internal addresses not allowed"
+    except socket.gaierror:
+        pass  # DNS resolution failed, let requests handle it
+    
+    # Restrict to known e-commerce domains for product images
+    allowed_domains = (
+        'ebay.com', 'ebayimg.com', 'ebaystatic.com',
+        'amazon.com', 'ssl-images-amazon.com', 'images-na.ssl-images-amazon.com',
+        'walmart.com', 'walmartimages.com',
+        'target.com', 'scene7.com',
+        'aliexpress.com', 'alicdn.com'
+    )
+    if not any(hostname.endswith(d) or hostname == d for d in allowed_domains):
+        return False, f"Domain not in allow-list. Allowed: eBay, Amazon, Walmart, Target, AliExpress"
+    
+    return True, None
+
+
 @inventory_bp.route('/fetch-image-from-url', methods=['POST'])
 @login_required
 def fetch_image_from_url():
@@ -329,6 +379,12 @@ def fetch_image_from_url():
     if not url:
         return jsonify({'error': 'No URL provided'}), 400
     
+    # SSRF Protection: Validate URL before fetching
+    is_safe, error = validate_url_safe(url)
+    if not is_safe:
+        logger.warning(f"SSRF attempt blocked: {url} - {error}")
+        return jsonify({'error': error}), 400
+    
     try:
         # Fetch the page
         headers = {
@@ -337,6 +393,7 @@ def fetch_image_from_url():
         response = http_requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         html = response.text
+
         
         image_url = None
         

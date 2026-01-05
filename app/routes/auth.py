@@ -106,7 +106,12 @@ def login():
         
         # Redirect to next page or default
         next_page = request.args.get('next')
-        if not next_page or urlparse(next_page).netloc != '':
+        # Security: Stricter open redirect protection
+        # Block: empty, external netloc, protocol-relative (//evil.com), and javascript:
+        if (not next_page or 
+            urlparse(next_page).netloc != '' or 
+            next_page.startswith('//') or 
+            next_page.lower().startswith('javascript:')):
             next_page = url_for('main.index')
         
         return redirect(next_page)

@@ -1,6 +1,6 @@
 import secrets
 import logging
-from flask import session, request, abort
+from flask import session, request, abort, current_app
 
 logger = logging.getLogger(__name__)
 
@@ -10,6 +10,10 @@ def generate_csrf_token():
     return session['_csrf_token']
 
 def verify_csrf_token():
+    # Allow disabling CSRF for tests
+    if current_app.config.get('TESTING') and not current_app.config.get('WTF_CSRF_ENABLED', True):
+        return
+
     # Only protect safe methods
     if request.method not in ('POST', 'PUT', 'DELETE', 'PATCH'):
         return
