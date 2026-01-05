@@ -601,6 +601,17 @@
                                             Show the "Quick Add" box and button in the inventory list.
                                         </div>
                                     </div>
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input" type="checkbox" name="track_first_stock_date"
+                                            id="trackFirstStockDate" {% if config and config.TRACK_FIRST_STOCK_DATE
+                                            %}checked{% endif %}>
+                                        <label class="form-check-label" for="trackFirstStockDate">
+                                            <strong>Track First Stock Date</strong>
+                                        </label>
+                                        <div class="form-text">
+                                            Automatically set the current date when adding a new item.
+                                        </div>
+                                    </div>
                                     <button type="submit" class="btn btn-primary btn-sm">Save</button>
                                 </form>
                             </div>

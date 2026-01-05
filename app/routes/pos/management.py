@@ -43,7 +43,9 @@ def management():
     
     # Date range (default: last 30 days)
     days = int(request.args.get('days', 30))
-    start_date = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
+    # Use days-1 for inclusive range (e.g. days=1 is just Today)
+    lookback = max(0, days - 1)
+    start_date = (date.today() - timedelta(days=lookback)).strftime('%Y-%m-%d')
     
     # Summary stats
     stats = conn.execute('''
@@ -82,8 +84,8 @@ def management():
     # Create date map
     sales_map = {row['day']: row for row in days_data}
     
-    for i in range(days + 1):
-        d = (date.today() - timedelta(days=days - i)).strftime('%Y-%m-%d')
+    for i in range(days):
+        d = (date.today() - timedelta(days=lookback - i)).strftime('%Y-%m-%d')
         if d in sales_map:
             daily_sales.append(sales_map[d])
         else:
@@ -210,7 +212,7 @@ def top_sellers():
     conn = get_request_db()
     
     days = int(request.args.get('days', 30))
-    start_date = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
+    start_date = (date.today() - timedelta(days=max(0, days - 1))).strftime('%Y-%m-%d')
     
     items = conn.execute('''
         SELECT 
@@ -243,7 +245,7 @@ def margins():
     preferred_margin = float(config.get('PREFERRED_MARGIN_PERCENT', 30))
     
     days = int(request.args.get('days', 30))
-    start_date = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
+    start_date = (date.today() - timedelta(days=max(0, days - 1))).strftime('%Y-%m-%d')
     sort = request.args.get('sort', 'high')  # high or low
     filter_type = request.args.get('filter', 'all')
     
@@ -291,7 +293,7 @@ def hourly_analysis():
     conn = get_request_db()
     
     days = int(request.args.get('days', 30))
-    start_date = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
+    start_date = (date.today() - timedelta(days=max(0, days - 1))).strftime('%Y-%m-%d')
     
     # Hourly breakdown
     hourly = conn.execute('''
@@ -334,7 +336,7 @@ def operator_performance():
     conn = get_request_db()
     
     days = int(request.args.get('days', 30))
-    start_date = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
+    start_date = (date.today() - timedelta(days=max(0, days - 1))).strftime('%Y-%m-%d')
     
     operators = conn.execute('''
         SELECT 
@@ -361,7 +363,7 @@ def refunds_report():
     conn = get_request_db()
     
     days = int(request.args.get('days', 30))
-    start_date = (date.today() - timedelta(days=days)).strftime('%Y-%m-%d')
+    start_date = (date.today() - timedelta(days=max(0, days - 1))).strftime('%Y-%m-%d')
     
     # Overall refund stats
     stats = conn.execute('''

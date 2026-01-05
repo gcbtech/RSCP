@@ -156,9 +156,11 @@ def save_inventory_general():
     
     auto_copy = request.form.get('auto_copy_sku') == 'on'
     quick_add = request.form.get('quick_add_enabled') == 'on'
+    track_dates = request.form.get('track_first_stock_date') == 'on'
     
     save_config_value('INVENTORY_AUTO_COPY_SKU', auto_copy)
     save_config_value('INVENTORY_QUICK_ADD', quick_add)
+    save_config_value('TRACK_FIRST_STOCK_DATE', track_dates)
     
     flash("General inventory settings saved.")
     return redirect(url_for('admin.admin_panel', tab='inventory'))

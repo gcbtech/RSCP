@@ -150,13 +150,17 @@ def sync_manifest():
             # Robust CSV Reading
             with open(MANIFEST_FILE, mode='r', encoding='utf-8-sig', errors='replace') as f:
                 # Read header line first to clean it
-                header_line = f.readline()
-                if not header_line: return # Empty file
+                # Use csv.reader to safely parse headers (handles quotes/commas)
+                csv_reader = csv.reader(f)
+                try:
+                    raw_headers = next(csv_reader)
+                except StopIteration:
+                    return # Empty file
                 
-                # Split and clean headers manually
-                headers = [h.strip().replace('"', '') for h in header_line.split(',')]
+                # Clean headers
+                headers = [h.strip() for h in raw_headers]
                 
-                # Use these cleaned headers
+                # Use these cleaned headers with DictReader
                 reader = csv.DictReader(f, fieldnames=headers)
                 
                 # Note: f pointer is now past header, but DictReader might expect to consume header?

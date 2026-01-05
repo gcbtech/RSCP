@@ -1,6 +1,10 @@
 {% for item in items %}
 <tr data-secondary-ids="{{ item.secondary_ids or '' }}">
     <td>
+        <input type="checkbox" name="item_ids" value="{{ item.id }}"
+            class="item-checkbox form-check-input border-primary">
+    </td>
+    <td>
         <!-- Hidden searchable data for UPC/Part Number and Keywords -->
         <span style="display:none;">{{ item.secondary_ids or '' }} {{ item.keywords or '' }}</span>
         {% if item.image_url %}

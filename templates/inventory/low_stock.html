@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Low Stock Report</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            padding: 20px;
+        }
+
+        body.dark-mode {
+            background: #121212;
+            color: #eee;
+        }
+
+        body.dark-mode .card {
+            background: #1e1e1e;
+            border-color: #444;
+        }
+
+        body.dark-mode .card-body {
+            color: #eee;
+        }
+
+        body.dark-mode .table {
+            --bs-table-bg: #1e1e1e;
+            --bs-table-striped-bg: #2a2a2a;
+            color: #eee;
+        }
+
+        body.dark-mode th,
+        body.dark-mode td {
+            color: #eee !important;
+            border-color: #444;
+        }
+
+        body.dark-mode .btn-outline-secondary {
+            color: #ccc;
+            border-color: #666;
+        }
+
+        body.dark-mode .btn-outline-secondary:hover {
+            background: #444;
+            color: #fff;
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>⚠️ Low Stock & Out of Stock</h2>
+        <a href="/inventory" class="btn btn-outline-secondary">← Back to Overview</a>
+    </div>
+
+    <div class="card shadow-sm">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover mb-0 align-middle">
+                    <thead class="table-dark">
+                        <tr>
+                            <th style="width: 50px;"></th>
+                            <th>SKU</th>
+                            <th>Name</th>
+                            <th>Qty</th>
+                            <th>Threshold</th>
+                            <th>Supplier</th>
+                            <th class="text-end">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in items %}
+                        <tr>
+                            <td>
+                                {% if item.image_url %}
+                                <img src="{{ item.image_url }}" alt=""
+                                    style="width: 40px; height: 40px; object-fit: cover; border-radius: 4px;">
+                                {% else %}
+                                <div class="bg-secondary text-white d-flex align-items-center justify-content-center"
+                                    style="width: 40px; height: 40px; border-radius: 4px; font-size: 10px;">No Img</div>
+                                {% endif %}
+                            </td>
+                            <td><code>{{ item.sku }}</code></td>
+                            <td>
+                                <a href="{{ url_for('inventory.edit_item', item_id=item.id) }}"
+                                    class="text-decoration-none fw-bold">{{ item.name }}</a>
+                            </td>
+                            <td>
+                                {% if item.quantity <= 0 %} <span class="badge bg-danger">Out of Stock ({{ item.quantity
+                                    }})</span>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark">Low ({{ item.quantity }})</span>
+                                    {% endif %}
+                            </td>
+                            <td>{{ item.alert_threshold }}</td>
+                            <td>{{ item.supplier or '-' }}</td>
+                            <td class="text-end">
+                                {% if item.source_url and item.source_url != 'None' %}
+                                <a href="{{ item.source_url }}" target="_blank" class="btn btn-sm btn-primary">
+                                    🛒 Purchase
+                                </a>
+                                {% else %}
+                                <span class="text-muted small">No Link</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="7" class="text-center py-5">
+                                <h4 class="text-success">All Clear!</h4>
+                                <p class="text-muted">No items are currently below their stock threshold.</p>
+                                <a href="/inventory" class="btn btn-outline-primary">View All Inventory</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Dark mode check
+        if (localStorage.getItem('rscp_darkmode') === 'true') {
+            document.body.classList.add('dark-mode');
+            document.querySelector('.table-dark').classList.remove('table-dark'); // Optional: adjust header for dark mode if needed, or keep it
+            // Actually, bootstrap table-dark works fine in dark mode usually, but custom dark mode css might conflict.
+            // Let's keep it simple.
+        }
+    </script>
+</body>
+
+</html>

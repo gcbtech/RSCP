@@ -130,6 +130,124 @@ def generate_thumbnail(image_url):
         return None
 
 
+@inventory_bp.route('/low-stock')
+@login_required
+def low_stock_report():
+    """Show report of items with low stock or out of stock."""
+    conn = get_db_connection()
+    try:
+        # User requested list of all low stock and OOS items
+        # Logic: (quantity <= alert_threshold AND alert_threshold > 0) OR quantity <= 0
+        items = conn.execute('''
+            SELECT * FROM inventory_items 
+            WHERE quantity <= 0 
+               OR (quantity <= alert_threshold AND alert_threshold > 0)
+            ORDER BY quantity ASC, name ASC
+        ''').fetchall()
+        return render_template('inventory/low_stock.html', items=items)
+    finally:
+        conn.close()
+
+
+@inventory_bp.route('/bulk-edit', methods=['POST'])
+@login_required
+def bulk_edit():
+    """Handle bulk editing of inventory items."""
+    item_ids = request.form.getlist('item_ids')
+    if not item_ids:
+        flash("No items selected.")
+        return redirect(url_for('inventory.list_items'))
+        
+    conn = get_db_connection()
+    try:
+        if request.form.get('confirm_bulk_edit'):
+            # Processing Phase
+            count = 0
+            
+            # Prepare update query dynamically based on provided fields
+            fields = []
+            params = []
+            
+            # Helper to add field if present
+            def add_if_present(field_name, col_name, convert_func=None):
+                val = request.form.get(field_name, '').strip()
+                if val:
+                    if convert_func:
+                        try:
+                            val = convert_func(val)
+                        except ValueError:
+                            return # Skip invalid
+                    fields.append(f"{col_name} = ?")
+                    params.append(val)
+            
+            add_if_present('location_area', 'location_area')
+            add_if_present('location_aisle', 'location_aisle')
+            add_if_present('location_shelf', 'location_shelf')
+            add_if_present('location_bin', 'location_bin')
+            
+            add_if_present('buy_price', 'buy_price', float)
+            add_if_present('sell_price', 'sell_price', float)
+            
+            # Special logic for Threshold to handle 0 properly
+            threshold_val = request.form.get('alert_threshold', '').strip()
+            if threshold_val:
+                try:
+                    thresh = int(threshold_val)
+                    fields.append("alert_threshold = ?")
+                    params.append(thresh)
+                    # Auto-update alert_enabled based on rule
+                    fields.append("alert_enabled = ?")
+                    params.append(1 if thresh > 0 else 0)
+                except ValueError:
+                    pass
+
+            # Addons (allow 0 or 1, strictly)
+            addon1_val = request.form.get('addon_1', '').strip()
+            if addon1_val in ['0', '1']:
+                fields.append("addon_1 = ?")
+                params.append(int(addon1_val))
+                
+            addon2_val = request.form.get('addon_2', '').strip()
+            if addon2_val in ['0', '1']:
+                fields.append("addon_2 = ?")
+                params.append(int(addon2_val))
+            
+            if not fields:
+                flash("No changes specified.")
+                return redirect(url_for('inventory.list_items'))
+                
+            fields.append("updated_at = CURRENT_TIMESTAMP")
+            
+            # Execute Update
+            query = f"UPDATE inventory_items SET {', '.join(fields)} WHERE id = ?"
+            
+            for item_id in item_ids:
+                conn.execute(query, params + [item_id])
+                count += 1
+                
+            conn.commit()
+            flash(f"Successfully updated {count} items.")
+            return redirect(url_for('inventory.list_items'))
+        
+        else:
+            # Rendering Phase (Selection Confirmation)
+            placeholders = ','.join('?' * len(item_ids))
+            items = conn.execute(f'SELECT id, sku, name FROM inventory_items WHERE id IN ({placeholders})', item_ids).fetchall()
+            
+            # Config for dropdowns
+            from app.services.data_manager import load_config
+            config = load_config()
+            
+            return render_template('inventory/bulk_edit.html', items=items, item_ids=item_ids, config=config)
+            
+    except Exception as e:
+        logger.error(f"Bulk edit error: {e}")
+        flash(f"Error during bulk edit: {e}")
+        return redirect(url_for('inventory.list_items'))
+    finally:
+        conn.close()
+
+
 @inventory_bp.route('/items')
 @login_required
 def list_items():
@@ -205,7 +323,12 @@ def list_items():
             items_with_thumbs.append(item_dict)
         
         if request.args.get('partial'):
-            return render_template('inventory/_list_rows.html', items=items_with_thumbs)
+            return render_template('inventory/_list_rows.html', 
+                                   items=items_with_thumbs,
+                                   sort_by=sort_by,
+                                   order=order,
+                                   page=page,
+                                   search_query=search_query)
             
         return render_template('inventory/list.html', 
                                items=items_with_thumbs, 
@@ -309,6 +432,12 @@ def add_item():
         
         if not sku:
             sku = generate_sku(category)
+            
+        # Check specific config to auto-set first stock date
+        conf = load_config()
+        if not first_stock_date and conf.get('TRACK_FIRST_STOCK_DATE'):
+            from datetime import date
+            first_stock_date = date.today().isoformat()
         
         buy_price = float(buy_price) if buy_price else None
         sell_price = float(sell_price) if sell_price else None
@@ -341,8 +470,9 @@ def add_item():
                 if not source_url:
                     source_url = f"https://www.amazon.com/dp/{asin}"
             
-            alert_enabled = request.form.get('alert_enabled') == 'on'
             alert_threshold = int(request.form.get('alert_threshold', 0) or 0)
+            # User Rule: Enabled if > 0, Disabled if 0
+            alert_enabled = True if alert_threshold > 0 else False
             
             # Collect secondary IDs (UPC, part number, etc.)
             import json
@@ -486,8 +616,9 @@ def edit_item(item_id):
             sell_price = float(sell_price) if sell_price else None
             resupply_interval = int(resupply_interval) if resupply_interval else None
             source_url = request.form.get('source_url', '').strip() or None
-            alert_enabled = request.form.get('alert_enabled') == 'on'
             alert_threshold = int(request.form.get('alert_threshold', 0) or 0)
+            # User Rule: Enabled if > 0, Disabled if 0
+            alert_enabled = True if alert_threshold > 0 else False
             
             current_img = conn.execute('SELECT image_url FROM inventory_items WHERE id = ?', (item_id,)).fetchone()
             image_url = current_img['image_url'] if current_img else None

@@ -78,9 +78,9 @@ def get_inventory_item(sku):
     conn = get_db_connection()
     try:
         # First try exact SKU match
+        # First try exact SKU match
         result = conn.execute('''
-            SELECT id, sku, name, quantity, sell_price, buy_price, image_url
-            FROM inventory_items WHERE sku = ?
+            SELECT * FROM inventory_items WHERE sku = ?
         ''', (sku,)).fetchone()
         
         # If not found, search in secondary_ids (UPC, part_number)
@@ -91,8 +91,7 @@ def get_inventory_item(sku):
             # Ideally should be replaced with SQL JSON queries if SQLite version supports it,
             # but this is safe for compatibility.
             all_items = conn.execute('''
-                SELECT id, sku, name, quantity, sell_price, buy_price, image_url, secondary_ids
-                FROM inventory_items WHERE secondary_ids IS NOT NULL AND secondary_ids != '{}'
+                SELECT * FROM inventory_items WHERE secondary_ids IS NOT NULL AND secondary_ids != '{}'
             ''').fetchall()
             
             for item in all_items:

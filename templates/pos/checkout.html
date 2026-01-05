@@ -403,12 +403,31 @@
         const cashDiscountValue = {{ cash_discount_value }};
         const cashTotal = total - cashDiscountValue;  // Discounted total for cash payments
 
+        function getSplitCashDiscount(cash) {
+            let splitCashDiscount = 0;
+            const cashDiscountEnabled = {% if cash_discount_enabled %} true{% else %} false{% endif %};
+        const cashDiscountAmount = {{ cash_discount_amount }};
+        const cashDiscountType = '{{ cash_discount_type }}';
+
+        if (cashDiscountEnabled && cash > 0 && cashDiscountAmount > 0) {
+            if (cashDiscountType === 'percent') {
+                splitCashDiscount = cash * (cashDiscountAmount / 100);
+            } else {
+                // Fixed discount proportional to cash portion
+                const cashProportion = cash / total;
+                splitCashDiscount = Math.min(cashDiscountAmount * cashProportion, cash);
+            }
+            splitCashDiscount = Math.round(splitCashDiscount * 100) / 100;
+        }
+        return splitCashDiscount;
+        }
+
         function validateCheckout() {
             const paymentMethod = document.getElementById('paymentMethod').value;
 
             if (paymentMethod === 'cash') {
                 const tendered = parseFloat(document.getElementById('tenderedAmount').value) || 0;
-                if (tendered < cashTotal) {
+                if (tendered < cashTotal - 0.01) {
                     alert('Insufficient cash tendered. Please enter at least $' + cashTotal.toFixed(2));
                     return false;
                 }
@@ -418,14 +437,19 @@
                 document.querySelectorAll('.card-split').forEach(i => {
                     cards += parseFloat(i.value) || 0;
                 });
-                if (cash + cards < total - 0.01) {
-                    alert('Split payment total is less than the order amount.');
+
+                const discount = getSplitCashDiscount(cash);
+                const requiredTotal = total - discount;
+
+                if (cash + cards < requiredTotal - 0.01) {
+                    alert('Split payment total is less than the order amount. \n\nRequired: $' + requiredTotal.toFixed(2) + ' (with discount)\nEntered: $' + (cash + cards).toFixed(2));
                     return false;
                 }
             }
             return true;
         }
 
+        // ... (existing helper functions) ...
         function showPayment(type) {
             document.querySelectorAll('.payment-tab').forEach(t => t.classList.remove('active'));
             document.querySelectorAll('.payment-content').forEach(c => c.classList.remove('active'));
@@ -482,41 +506,25 @@
                 cards += parseFloat(i.value) || 0;
             });
 
-            // Calculate cash discount on the cash portion (same logic as backend)
-            let splitCashDiscount = 0;
-            const cashDiscountEnabled = {% if cash_discount_enabled %} true{% else %} false{% endif %};
-        const cashDiscountAmount = {{ cash_discount_amount }};
-        const cashDiscountType = '{{ cash_discount_type }}';
+            const splitCashDiscount = getSplitCashDiscount(cash);
+            const adjustedTotal = total - splitCashDiscount;
+            const remaining = adjustedTotal - cash - cards;
 
-        if (cashDiscountEnabled && cash > 0 && cashDiscountAmount > 0) {
-            if (cashDiscountType === 'percent') {
-                splitCashDiscount = cash * (cashDiscountAmount / 100);
-            } else {
-                // Fixed discount proportional to cash portion
-                const cashProportion = cash / total;
-                splitCashDiscount = Math.min(cashDiscountAmount * cashProportion, cash);
+            // Update display
+            let displayText = '$' + remaining.toFixed(2);
+            if (splitCashDiscount > 0) {
+                displayText += ' (Cash discount: -$' + splitCashDiscount.toFixed(2) + ')';
             }
-            splitCashDiscount = Math.round(splitCashDiscount * 100) / 100;
-        }
+            document.getElementById('remainingAmount').innerHTML = displayText;
 
-        const adjustedTotal = total - splitCashDiscount;
-        const remaining = adjustedTotal - cash - cards;
-
-        // Update display
-        let displayText = '$' + remaining.toFixed(2);
-        if (splitCashDiscount > 0) {
-            displayText += ' (Cash discount: -$' + splitCashDiscount.toFixed(2) + ')';
-        }
-        document.getElementById('remainingAmount').innerHTML = displayText;
-
-        const display = document.getElementById('splitRemaining');
-        if (remaining <= 0.01) {
-            display.style.background = '#f0fdf4';
-            display.style.borderColor = '#16a34a';
-        } else {
-            display.style.background = '#fef3c7';
-            display.style.borderColor = '#f59e0b';
-        }
+            const display = document.getElementById('splitRemaining');
+            if (remaining <= 0.01) {
+                display.style.background = '#f0fdf4';
+                display.style.borderColor = '#16a34a';
+            } else {
+                display.style.background = '#fef3c7';
+                display.style.borderColor = '#f59e0b';
+            }
         }
 
         function addCard() {

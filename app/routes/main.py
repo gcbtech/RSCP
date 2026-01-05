@@ -148,33 +148,49 @@ def scan_page_legacy():
         items = []
         is_priority = False
         try:
-            tracking = sanitize_for_csv(tracking)
-            item = conn.execute("SELECT * FROM packages WHERE tracking_number = ?", (tracking,)).fetchone()
+
+            # 1. Sanitize but KEEP the string intact for searching
+            # sanitize_for_csv is for WRITE safety, here we need READ accuracy.
+            raw_input = (tracking or "").strip()
+            tracking_clean = raw_input.replace('=', '').replace('"', '').replace("'", "")
             
-            # Fallback: FedEx barcodes (Long string containing tracking at end)
-            if not item and len(tracking) > 10:
-                # Find any package where the tracking number is contained in the scan
-                # instr(A, B) > 0 checks if B is inside A
-                candidates = conn.execute("SELECT * FROM packages WHERE instr(?, tracking_number) > 0", (tracking,)).fetchall()
+
+            
+            # 2. Try Exact Match (Case Insensitive)
+            rows = conn.execute("SELECT * FROM packages WHERE tracking_number = ? COLLATE NOCASE", (tracking_clean,)).fetchall()
+
+            
+            # 3. Fallback: Substring Search (for FedEx/Long barcodes)
+            if not rows and len(tracking_clean) > 8:
+                # Find valid tracking numbers that are substrings of the scan OR vice versa
+                # Reverse check: Is the DB tracking inside the Scan?
+                candidates = conn.execute("""
+                    SELECT * FROM packages 
+                    WHERE length(tracking_number) > 5 
+                    AND instr(UPPER(?), UPPER(tracking_number)) > 0
+                """, (tracking_clean,)).fetchall()
                 
                 best_match = None
                 for c in candidates:
                     t = c['tracking_number']
-                    # Safety: Ensure it matches the END of the barcode (FedEx standard)
-                    # And ensure the tracking number isn't too short (avoid matching "123")
-                    if len(t) > 8 and tracking.endswith(t):
-                         if best_match is None or len(t) > len(best_match['tracking_number']):
-                             best_match = c
+                    # Pick the longest match that is at the END of the scan (common barcode format)
+                    if len(t) > 6:
+                        # Check strict suffix first
+                        if tracking_clean.upper().endswith(t.upper()):
+                             if best_match is None or len(t) > len(best_match['tracking_number']):
+                                 best_match = c
                 
                 if best_match:
-                    item = best_match
-                    tracking = best_match['tracking_number'] # Use the real tracking for logging
-            
-            item_name = item['item_name'] if item else "Unknown Item"
+                    # Found a match from the long string!
+                    real_tracking = best_match['tracking_number']
+                    # Fetch ALL items for this found tracking number
+                    rows = conn.execute("SELECT * FROM packages WHERE tracking_number = ?", (real_tracking,)).fetchall()
+                    # Update tracking variable for logging references
+                    tracking = real_tracking
             
             # Logic: Receive
-            if not item:
-                 # V1.16.1: Check if it's an inventory SKU
+            if not rows:
+                 # Inventory Lookup (Legacy)
                  inv_item = None
                  try:
                      conf = load_config()
@@ -185,11 +201,8 @@ def scan_page_legacy():
                      logger.warning(f"Inventory SKU lookup failed during scan: {e}")
                  
                  if inv_item:
-                     # Inventory mode - pass item to template
                      return render_template('scan.html', 
-                         message=f"📦 {inv_item['name']}",
-                         color="#6f42c1",  # Purple for inventory
-                         mode='inventory',
+                         message=f"📦 {inv_item['name']}", color="#6f42c1", mode='inventory',
                          inventory_item={
                              'id': inv_item['id'],
                              'sku': inv_item['sku'],
@@ -197,43 +210,47 @@ def scan_page_legacy():
                              'quantity': inv_item['quantity'],
                              'image_url': inv_item['image_url'],
                              'sell_price': inv_item['sell_price'],
-                             'location': ' / '.join(filter(None, [
-                                 inv_item['location_area'],
-                                 inv_item['location_aisle'],
-                                 inv_item['location_shelf'],
-                                 inv_item['location_bin']
-                             ]))
+                             'location': ' / '.join(filter(None, [inv_item['location_area'], inv_item['location_aisle'], inv_item['location_shelf'], inv_item['location_bin']]))
                          })
                  else:
                      msg = "Unknown Item (Not in Manifest)"
                      color = "#ff6961" # Red
-            elif item['date_scanned'] and check_history(tracking):
-                 msg = f"Duplicate: {item_name}"
-                 color = "#ffd700" # Gold
+            
             else:
-                 qty = str(item['quantity'])
-                 log_receipt(tracking, item_name, qty, current_user.username)
-                 
-                 # Check Priority
-                 is_priority = bool(item['priority']) if 'priority' in item.keys() and item['priority'] else False
-                 
-                 if is_priority:
-                     msg = "PRIORITY RECEIVED"
-                     color = "#C77DFF" # Purple ("proper purple background")
-                 else:
-                     msg = f"Received: {item_name}"
-                     color = "#77dd77" # Green
-                 
-            # Add to items list for display
-            items = [{
-                "name": item_name, 
-                "image": item['image_url'] if item else None, 
-                "subtext": tracking,
-                "qty": item['quantity'] if item else 1,
-                "image_url": item['image_url'] if item else '',
-                "asin": item['asin'] if item and 'asin' in item.keys() else '',
-                "source_url": item['source_url'] if item and 'source_url' in item.keys() else ''
-            }]
+                # Check status BEFORE processing (to detect duplicates)
+                all_received = all(r['date_scanned'] for r in rows)
+                already_in_history = check_history(tracking)
+                
+                if all_received and already_in_history:
+                     msg = f"Duplicate: {len(rows)} Items"
+                     color = "#ffd700" # Gold
+                else:
+                     # Log Receipt (Updates ALL items with this tracking)
+                     # We use the first item's name for the log summary, but specific items are updated in DB
+                     log_receipt(tracking, rows[0]['item_name'], str(rows[0]['quantity']), current_user.username)
+                     
+                     # Check Priority (If ANY item is priority)
+                     is_priority = any((r['priority'] for r in rows if 'priority' in r.keys() and r['priority']))
+                     
+                     if is_priority:
+                         msg = "PRIORITY RECEIVED"
+                         color = "#C77DFF" 
+                     else:
+                         msg = f"Received: {len(rows)} Items"
+                         color = "#77dd77" # Green
+                
+                # Build Item List
+                items = []
+                for r in rows:
+                    items.append({
+                        "name": r['item_name'], 
+                        "image": r['image_url'], 
+                        "subtext": tracking,
+                        "qty": r['quantity'] or 1,
+                        "image_url": r['image_url'],
+                        "asin": r['asin'] if 'asin' in r.keys() else '',
+                        "source_url": r['source_url'] if 'source_url' in r.keys() else ''
+                    })
             
         except Exception as e:
             msg = f"Error: {e}"

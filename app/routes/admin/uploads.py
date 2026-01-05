@@ -48,7 +48,7 @@ def detect_column_mapping(df):
             break
     
     # Quantity detection
-    qty_hints = ['quantity', 'qty', 'units', 'count', 'amount']
+    qty_hints = ['order quantity', 'quantity', 'qty', 'units', 'count', 'amount', 'ordered']
     for hint in qty_hints:
         if hint in lower_cols:
             mapping['quantity'] = lower_cols[hint]

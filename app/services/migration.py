@@ -196,6 +196,7 @@ def _create_inventory_tables(conn):
             ('keywords', 'ALTER TABLE inventory_items ADD COLUMN keywords TEXT'),
             ('secondary_ids', 'ALTER TABLE inventory_items ADD COLUMN secondary_ids TEXT'),
             ('description', 'ALTER TABLE inventory_items ADD COLUMN description TEXT'),
+            ('first_stock_date', 'ALTER TABLE inventory_items ADD COLUMN first_stock_date TEXT'),
             ('addon_1', 'ALTER TABLE inventory_items ADD COLUMN addon_1 BOOLEAN DEFAULT 0'),
             ('addon_2', 'ALTER TABLE inventory_items ADD COLUMN addon_2 BOOLEAN DEFAULT 0'),
         ]

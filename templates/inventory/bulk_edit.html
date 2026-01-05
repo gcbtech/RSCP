@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Bulk Edit Items</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.bootstrap5.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            padding: 20px;
+            max-width: 800px;
+            margin: auto;
+        }
+
+        .item-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+        }
+
+        body.dark-mode {
+            background: #121212;
+            color: #eee;
+        }
+
+        body.dark-mode .card {
+            background: #1e1e1e;
+            border-color: #444;
+            color: #eee;
+        }
+
+        body.dark-mode .item-list {
+            background: #2a2a2a;
+            border-color: #444;
+        }
+
+        body.dark-mode .form-control,
+        body.dark-mode .form-select {
+            background: #2a2a2a;
+            color: #eee;
+            border-color: #555;
+        }
+
+        body.dark-mode .form-control:focus {
+            background: #333;
+            color: #fff;
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h2>✏️ Bulk Edit Inventory</h2>
+        <a href="/inventory" class="btn btn-outline-secondary">Cancel</a>
+    </div>
+
+    <form action="/inventory/bulk-edit" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="confirm_bulk_edit" value="1">
+
+        <!-- Pass through item IDs -->
+        {% for id in item_ids %}
+        <input type="hidden" name="item_ids" value="{{ id }}">
+        {% endfor %}
+
+        <div class="card mb-4">
+            <div class="card-header bg-info text-dark">
+                <strong>Selected Items ({{ items|length }})</strong>
+            </div>
+            <div class="card-body">
+                <div class="item-list">
+                    <ul class="list-unstyled mb-0">
+                        {% for item in items %}
+                        <li><code>{{ item.sku }}</code> - {{ item.name }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+                <div class="alert alert-warning mt-3 mb-0 py-2">
+                    <small>⚠️ Any value entered below will update <strong>ALL</strong> selected items. Leave fields
+                        blank to keep current values.</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- Location -->
+        <div class="card mb-3">
+            <div class="card-header">📍 Update Location</div>
+            <div class="card-body">
+                {% set loc_options = config.get('LOCATION_OPTIONS', {}) if config else {} %}
+                <div class="row g-2">
+                    <div class="col-md-3">
+                        <label class="form-label small">Area</label>
+                        <select name="location_area" class="form-select location-select">
+                            <option value="">(Unchanged)</option>
+                            {% for opt in loc_options.get('area', []) %}
+                            <option value="{{ opt }}">{{ opt }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small">Aisle</label>
+                        <select name="location_aisle" class="form-select location-select">
+                            <option value="">(Unchanged)</option>
+                            {% for opt in loc_options.get('aisle', []) %}
+                            <option value="{{ opt }}">{{ opt }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small">Shelf</label>
+                        <select name="location_shelf" class="form-select location-select">
+                            <option value="">(Unchanged)</option>
+                            {% for opt in loc_options.get('shelf', []) %}
+                            <option value="{{ opt }}">{{ opt }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label small">Bin</label>
+                        <select name="location_bin" class="form-select location-select">
+                            <option value="">(Unchanged)</option>
+                            {% for opt in loc_options.get('bin', []) %}
+                            <option value="{{ opt }}">{{ opt }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Pricing & Alerts -->
+        <div class="card mb-3">
+            <div class="card-header">💰 Pricing & Alerts</div>
+            <div class="card-body">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label">Buy Price ($)</label>
+                        <input type="number" step="0.01" name="buy_price" class="form-control"
+                            placeholder="(Unchanged)">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Sell Price ($)</label>
+                        <input type="number" step="0.01" name="sell_price" class="form-control"
+                            placeholder="(Unchanged)">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label">Low Stock Threshold</label>
+                        <input type="number" name="alert_threshold" class="form-control" min="0"
+                            placeholder="(Unchanged)">
+                        <small class="text-muted d-block mt-1" style="font-size: 0.75rem;">Set to 0 to disable
+                            alerts</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Addons -->
+        {% if config and (config.get('ITEM_ADDON_1_ENABLED') or config.get('ITEM_ADDON_2_ENABLED')) %}
+        <div class="card mb-3">
+            <div class="card-header">📝 Addons</div>
+            <div class="card-body">
+                <div class="row">
+                    {% if config.get('ITEM_ADDON_1_ENABLED') %}
+                    <div class="col-md-6">
+                        <label class="form-label">{{ config.get('ITEM_ADDON_1_LABEL') }}</label>
+                        <select name="addon_1" class="form-select">
+                            <option value="">(Unchanged)</option>
+                            <option value="1">Enabled</option>
+                            <option value="0">Disabled</option>
+                        </select>
+                    </div>
+                    {% endif %}
+                    {% if config.get('ITEM_ADDON_2_ENABLED') %}
+                    <div class="col-md-6">
+                        <label class="form-label">{{ config.get('ITEM_ADDON_2_LABEL') }}</label>
+                        <select name="addon_2" class="form-select">
+                            <option value="">(Unchanged)</option>
+                            <option value="1">Enabled</option>
+                            <option value="0">Disabled</option>
+                        </select>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="d-grid gap-2 mb-5">
+            <button type="submit" class="btn btn-primary btn-lg"
+                onclick="return confirm('Are you sure you want to update these items?')">Update All Selected
+                Items</button>
+        </div>
+    </form>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
+    <script>
+        // Dark mode
+        if (localStorage.getItem('rscp_darkmode') === 'true') {
+            document.body.classList.add('dark-mode');
+        }
+
+        // Init TomSelect for locations
+        var allowCustomLocations = {{ 'true' if config and config.LOCATION_ALLOW_CUSTOM else 'false' }};
+        document.querySelectorAll('.location-select').forEach(function (el) {
+            new TomSelect(el, {
+                create: allowCustomLocations,
+                createOnBlur: allowCustomLocations,
+                placeholder: '(Unchanged)',
+                allowEmptyOption: true
+            });
+        });
+    </script>
+</body>
+
+</html>
