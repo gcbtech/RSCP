@@ -555,6 +555,15 @@
                     </div>
                 </div>
 
+                <!-- Internal Notes -->
+                <div class="card mb-3">
+                    <div class="card-header">📝 Internal Notes</div>
+                    <div class="card-body">
+                        <textarea name="notes" class="form-control" rows="4"
+                            placeholder="Private internal notes for staff...">{{ item.notes if edit_mode and item.notes else (prefill.notes if prefill and prefill.notes else '') }}</textarea>
+                    </div>
+                </div>
+
                 <!-- Hidden tracking reference -->
                 {% if prefill and prefill.tracking %}
                 <input type="hidden" name="source_tracking" value="{{ prefill.tracking }}">

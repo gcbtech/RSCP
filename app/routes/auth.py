@@ -118,6 +118,95 @@ def login():
 
     return render_template('login.html')
 
+
+@auth_bp.route('/login/sso')
+def login_sso():
+    """Initiate OIDC Login Flow"""
+    if not hasattr(current_app, 'oauth') or not current_app.oauth:
+        flash("SSO is not configured.", "error")
+        return redirect(url_for('auth.login'))
+        
+    try:
+        redirect_uri = url_for('auth.sso_callback', _external=True)
+        return current_app.oauth.rscp_sso.authorize_redirect(redirect_uri)
+    except Exception as e:
+        logger.error(f"SSO Init Failed: {e}")
+        flash(f"Failed to start SSO: {e}", "error")
+        return redirect(url_for('auth.login'))
+
+
+@auth_bp.route('/login/callback')
+def sso_callback():
+    """Handle OIDC Callback"""
+    try:
+        oauth = current_app.oauth.rscp_sso
+        token = oauth.authorize_access_token()
+        user_info = oauth.userinfo()
+        
+        if not user_info or not user_info.get('email'):
+            flash("Failed to get user info from identity provider.", "error")
+            return redirect(url_for('auth.login'))
+            
+        email = user_info['email'].lower()
+        
+        # 1. Check Domain Whitelist
+        from app.services.data_manager import load_config
+        conf = load_config()
+        allowed_domains = conf.get('SSO_ALLOWED_DOMAINS', [])
+        
+        # If allowed_domains is set, check match
+        if allowed_domains:
+            domain = '@' + email.split('@')[-1]
+            if domain not in allowed_domains:
+                logger.warning(f"SSO Login Blocked: Domain {domain} not in whitelist.")
+                flash("Your email domain is not authorized to access this system.", "error")
+                return redirect(url_for('auth.login'))
+
+        # 2. Find User
+        user = User.get_by_email(email)
+        
+        # 3. Smart Linking (Fallback to username match)
+        if not user:
+            # Try matching username (e.g. 'bob' matches 'bob@company.com')
+            local_user = email.split('@')[0]
+            existing_user = User.get_by_username(local_user)
+            
+            if existing_user:
+                # Link account
+                User.link_sso_account(existing_user.id, email, 'oidc')
+                user = User.get(existing_user.id) # Reload
+                logger.info(f"SSO: Linked existing user '{local_user}' to '{email}'")
+        
+        # 4. Auto-Provisioning
+        if not user:
+            if conf.get('SSO_ALLOW_NEW_USERS', True):
+                # Create new user
+                preferred_username = email.split('@')[0]
+                # Ensure username uniqueness (simple check)
+                if User.get_by_username(preferred_username):
+                    preferred_username = f"{preferred_username}_{int(time.time())}"
+                
+                user = User.create_sso_user(preferred_username, email, 'oidc')
+                logger.info(f"SSO: Created new user '{preferred_username}' for '{email}'")
+            else:
+                flash("Account does not exist and auto-provisioning is disabled.", "error")
+                return redirect(url_for('auth.login'))
+        
+        # 5. Login
+        if user:
+            login_user(user)
+            # Store login timestamp for session timeout
+            session['login_time'] = time.time()
+            logger.info(f"SSO Login Success: {user.username} ({email})")
+            return redirect(url_for('main.index'))
+            
+    except Exception as e:
+        logger.error(f"SSO Callback Error: {e}")
+        # flash(f"Authentication failed: {str(e)}", "error") # Don't expose raw error Details
+        flash("Authentication failed. Please try again.", "error")
+        
+    return redirect(url_for('auth.login'))
+
 @auth_bp.route('/logout')
 def logout():
     import logging

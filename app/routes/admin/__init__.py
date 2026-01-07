@@ -41,6 +41,7 @@ from app.routes.admin import backup
 from app.routes.admin import logs
 from app.routes.admin import updates
 from app.routes.admin import automation
+from app.routes.admin import settings
 
 # Re-export functions for backward compatibility (used by tests)
 from app.routes.admin.users import validate_password

@@ -344,7 +344,18 @@ def shifts():
             s = dict(r)
             dt = datetime.datetime.strptime(s['start_time'], '%Y-%m-%d %H:%M:%S')
             s['date_fmt'] = dt.strftime('%A, %b %d')
-            s['time_range'] = f"{dt.strftime('%I:%M %p')} - {datetime.datetime.strptime(s['end_time'], '%Y-%m-%d %H:%M:%S').strftime('%I:%M %p')}"
+            # Manual formatting to prevent platform-specific zero-stripping (Fix "5:1" issue)
+            s_hr = dt.strftime('%I')
+            s_min = dt.strftime('%M')
+            s_ampm = dt.strftime('%p')
+            
+            e_dt = datetime.datetime.strptime(s['end_time'], '%Y-%m-%d %H:%M:%S')
+            e_hr = e_dt.strftime('%I')
+            e_min = e_dt.strftime('%M')
+            e_ampm = e_dt.strftime('%p')
+            
+            # Format: 05:15 PM - 09:00 PM
+            s['time_range'] = f"{s_hr}:{s_min} {s_ampm} - {e_hr}:{e_min} {e_ampm}"
             shifts.append(s)
             
         # Recurring Rules
@@ -891,11 +902,18 @@ def timesheets():
             # Duration Calc
             try:
                 start = datetime.datetime.strptime(entry['clock_in'], '%Y-%m-%d %H:%M:%S')
-                entry['clock_in_fmt'] = start.strftime('%m/%d %I:%M %p')
+                # Manual format to ensure minutes are zero-padded (windows strftime issue)
+                h = start.strftime('%I').lstrip('0') or '12' # optional: remove leading zero from hour
+                m = start.strftime('%M')
+                p = start.strftime('%p')
+                entry['clock_in_fmt'] = f"{start.strftime('%m/%d')} {h}:{m} {p}"
                 
                 if entry['clock_out']:
                     end = datetime.datetime.strptime(entry['clock_out'], '%Y-%m-%d %H:%M:%S')
-                    entry['clock_out_fmt'] = end.strftime('%m/%d %I:%M %p')
+                    h_end = end.strftime('%I').lstrip('0') or '12'
+                    m_end = end.strftime('%M')
+                    p_end = end.strftime('%p')
+                    entry['clock_out_fmt'] = f"{end.strftime('%m/%d')} {h_end}:{m_end} {p_end}"
                     diff = end - start
                     hours = diff.seconds // 3600
                     minutes = (diff.seconds % 3600) // 60
@@ -1250,14 +1268,39 @@ def edit_entry(entry_id):
         entry = dict(entry)
         # Format for datetime-local input (YYYY-MM-DDTHH:MM)
         # DB is YYYY-MM-DD HH:MM:SS
-        entry['clock_in_val'] = entry['clock_in'].replace(' ', 'T')[:16] if entry['clock_in'] else ''
-        entry['clock_out_val'] = entry['clock_out'].replace(' ', 'T')[:16] if entry['clock_out'] else ''
+        # DB is YYYY-MM-DD HH:MM:SS (or datetime object)
+        # Safely convert to string first
+        c_in_str = str(entry['clock_in']) if entry['clock_in'] else ''
+        c_out_str = str(entry['clock_out']) if entry['clock_out'] else ''
+        
+        entry['clock_in_val'] = c_in_str.replace(' ', 'T')[:16]
+        entry['clock_out_val'] = c_out_str.replace(' ', 'T')[:16]
         
         user = conn.execute('SELECT username FROM users WHERE id = ?', (entry['user_id'],)).fetchone()
+        username = user['username'] if user else "Unknown User (Deleted)"
         
-        return render_template('timeclock/entry_edit.html', entry=entry, username=user['username'])
+        return render_template('timeclock/entry_edit.html', entry=entry, username=username)
     finally:
         conn.close()
+
+@timeclock_bp.route('/manager/timesheet/delete/<int:entry_id>', methods=['POST'])
+@login_required
+def delete_entry(entry_id):
+    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+        return redirect(url_for('timeclock.index'))
+    
+    conn = get_db_connection()
+    try:
+        conn.execute('DELETE FROM time_entries WHERE id=?', (entry_id,))
+        conn.commit()
+        flash("Entry deleted.")
+    except Exception as e:
+        logger.error(f"Error deleting entry: {e}")
+        flash("Error deleting entry.")
+    finally:
+        conn.close()
+    
+    return redirect(url_for('timeclock.timesheets'))
 
 @timeclock_bp.route('/manager/export/custom', methods=['GET'])
 @login_required

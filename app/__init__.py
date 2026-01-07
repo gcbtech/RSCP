@@ -17,7 +17,7 @@ from app.services.data_manager import load_config, BASE_DIR
 from app.services.migration import ensure_db_ready
 from app.services.logger import log_exception
 
-def create_app():
+def create_app(test_config=None):
     # Logging Setup
     from logging.handlers import RotatingFileHandler
     
@@ -42,15 +42,16 @@ def create_app():
 
     logging.getLogger().setLevel(logging.INFO)
     
-    # DB Migration (Async)
-    import threading
-    def run_db_init():
-        try:
-            ensure_db_ready()
-        except Exception as e:
-            logging.error(f"Startup DB Init Error: {e}")
-            
-    threading.Thread(target=run_db_init, daemon=True).start()
+    # DB Migration (Async) - Skip during testing
+    if not test_config or not test_config.get('TESTING'):
+        import threading
+        def run_db_init():
+            try:
+                ensure_db_ready()
+            except Exception as e:
+                logging.error(f"Startup DB Init Error: {e}")
+                
+        threading.Thread(target=run_db_init, daemon=True).start()
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     
@@ -71,23 +72,30 @@ def create_app():
             g.user_id = 'Guest'
 
     # Config
-    conf = load_config()
-    secret_key = conf.get('SECRET_KEY')
-    
-    # SECRET_KEY validation: Only allow fallback during first-run setup
-    if not secret_key:
-        # Check if this is a first-run scenario (no users yet)
-        try:
-            from app.services.db import get_db_connection
-            conn = get_db_connection()
-            user_count = conn.execute("SELECT count(*) as c FROM users").fetchone()['c']
-            conn.close()
-            if user_count > 0:
-                logging.warning("SECRET_KEY missing from config.json but users exist. Using temp key - sessions will be invalid!")
-        except Exception:
-            pass  # DB not ready yet, first run
-        secret_key = 'temp_setup_key'
-    
+    if test_config:
+        # Load test config
+        app.config.update(test_config)
+        secret_key = app.config.get('SECRET_KEY', 'test_key')
+        
+    else:
+        # Load production config
+        conf = load_config()
+        secret_key = conf.get('SECRET_KEY')
+        
+        # SECRET_KEY validation: Only allow fallback during first-run setup
+        if not secret_key:
+            # Check if this is a first-run scenario (no users yet)
+            try:
+                from app.services.db import get_db_connection
+                conn = get_db_connection()
+                user_count = conn.execute("SELECT count(*) as c FROM users").fetchone()['c']
+                conn.close()
+                if user_count > 0:
+                    logging.warning("SECRET_KEY missing from config.json but users exist. Using temp key - sessions will be invalid!")
+            except Exception:
+                pass  # DB not ready yet, first run
+            secret_key = 'temp_setup_key'
+            
     app.secret_key = secret_key
     app.permanent_session_lifetime = timedelta(days=7)
     
@@ -114,6 +122,29 @@ def create_app():
     # Database connection cleanup (for request-scoped connections)
     from app.services.db import init_app as init_db_app
     init_db_app(app)
+
+    # Initialize Authlib (SSO)
+    from authlib.integrations.flask_client import OAuth
+    oauth = OAuth(app)
+    
+    # Register OIDC Provider if configured
+    # We use a try/except block to avoid crashing if config is missing (will just disable SSO)
+    try:
+        # load_config is already imported globally
+        conf = load_config()
+        if conf.get('SSO_CLIENT_ID') and conf.get('SSO_CLIENT_SECRET'):
+            oauth.register(
+                name='rscp_sso',
+                client_id=conf.get('SSO_CLIENT_ID'),
+                client_secret=conf.get('SSO_CLIENT_SECRET'),
+                server_metadata_url=conf.get('SSO_DISCOVERY_URL', 'https://accounts.google.com/.well-known/openid-configuration'),
+                client_kwargs={'scope': 'openid email profile'}
+            )
+    except Exception as e:
+        app.logger.warning(f"SSO Registration Failed: {e}")
+
+    # Make oauth available to blueprints
+    app.oauth = oauth
     
     # Blueprints
     app.register_blueprint(main_bp)

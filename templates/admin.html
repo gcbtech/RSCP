@@ -1517,6 +1517,70 @@
 
                     <!-- Right Column -->
                     <div class="col-lg-6">
+                        <!-- SSO / OIDC Configuration -->
+                        <div class="admin-card">
+                            <div class="card-header">
+                                <div class="icon" style="background: #e8eaf6; color: #3f51b5;">🔐</div>
+                                <span>SSO / OIDC Configuration</span>
+                            </div>
+                            <div class="card-body">
+                                <form action="/admin/settings" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+                                    <div class="form-check form-switch mb-3">
+                                        <input class="form-check-input" type="checkbox" name="sso_enabled"
+                                            id="ssoSwitch" {% if config.SSO_ENABLED %}checked{% endif %}>
+                                        <label class="form-check-label fw-bold" for="ssoSwitch">Enable SSO (OpenID
+                                            Connect)</label>
+                                    </div>
+
+                                    <div class="mb-2">
+                                        <label class="form-label small fw-bold">Client ID</label>
+                                        <input type="text" name="sso_client_id" class="form-control form-control-sm"
+                                            value="{{ config.SSO_CLIENT_ID or '' }}" placeholder="Required">
+                                    </div>
+
+                                    <div class="mb-2">
+                                        <label class="form-label small fw-bold">Client Secret</label>
+                                        <input type="password" name="sso_client_secret"
+                                            class="form-control form-control-sm"
+                                            value="{{ config.SSO_CLIENT_SECRET or '' }}" placeholder="Required">
+                                    </div>
+
+                                    <div class="mb-2">
+                                        <label class="form-label small fw-bold">Discovery URL</label>
+                                        <input type="text" name="sso_discovery_url" class="form-control form-control-sm"
+                                            value="{{ config.SSO_DISCOVERY_URL or 'https://accounts.google.com/.well-known/openid-configuration' }}"
+                                            placeholder="https://.../.well-known/openid-configuration">
+                                        <div class="form-text small">Default: Google Workspace</div>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label small fw-bold">Allowed Domains (comma
+                                            separated)</label>
+                                        <input type="text" name="sso_allowed_domains"
+                                            class="form-control form-control-sm"
+                                            value="{{ config.SSO_ALLOWED_DOMAINS|join(', ') if config.SSO_ALLOWED_DOMAINS else '@mycompany.com' }}"
+                                            placeholder="@company.com, @subsidiary.com">
+                                        <div class="form-text small">Only emails from these domains can log in.</div>
+                                    </div>
+
+                                    <div class="form-check mb-3">
+                                        <input class="form-check-input" type="checkbox" name="sso_allow_new_users"
+                                            id="ssoAutoProvision" {% if config.get('SSO_ALLOW_NEW_USERS', True)
+                                            %}checked{% endif %}>
+                                        <label class="form-check-label small" for="ssoAutoProvision">
+                                            <strong>Auto-Provision New Users</strong><br>
+                                            <span class="text-muted">Automatically create accounts for valid SSO
+                                                logins.</span>
+                                        </label>
+                                    </div>
+
+                                    <button class="btn btn-primary w-100" type="submit">Save SSO Settings</button>
+                                </form>
+                            </div>
+                        </div>
+
                         <!-- Automation -->
                         <div class="admin-card">
                             <div class="card-header">

@@ -140,6 +140,39 @@
                 </div>
             </div>
 
+            <!-- Reporting Settings -->
+            <div class="settings-card">
+                <div class="card-header bg-white border-bottom">
+                    <strong>📊 Reporting Settings</strong>
+                </div>
+                <div class="card-body">
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold mb-0">Default Report Timeframe</label>
+                            <p class="text-muted small mb-0">Select the default time range for POS reports</p>
+                        </div>
+                        <div class="col-md-4">
+                            <select name="pos_default_report_timeframe" class="form-select">
+                                <option value="1" {% if pos_default_report_timeframe=='1' %}selected{% endif %}>Today
+                                </option>
+                                <option value="7" {% if pos_default_report_timeframe=='7' %}selected{% endif %}>Last 7
+                                    Days
+                                </option>
+                                <option value="30" {% if pos_default_report_timeframe=='30' %}selected{% endif %}>Last
+                                    30 Days
+                                </option>
+                                <option value="90" {% if pos_default_report_timeframe=='90' %}selected{% endif %}>Last
+                                    90 Days
+                                </option>
+                                <option value="365" {% if pos_default_report_timeframe=='365' %}selected{% endif %}>Last
+                                    Year
+                                </option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Receipt Branding -->
             <div class="settings-card">
                 <div class="card-header bg-white border-bottom">

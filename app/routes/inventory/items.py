@@ -364,7 +364,9 @@ def add_item():
         supplier = request.form.get('supplier', '').strip() or None
         first_stock_date = request.form.get('first_stock_date', '').strip() or None
         resupply_interval = request.form.get('resupply_interval', '').strip()
+        resupply_interval = request.form.get('resupply_interval', '').strip()
         keywords = request.form.get('keywords', '').strip()
+        notes = request.form.get('notes', '').strip()
         
         if not name:
             flash("Name is required.")
@@ -391,6 +393,7 @@ def add_item():
                 'alert_enabled': request.form.get('alert_enabled') == 'on',
                 'alert_threshold': request.form.get('alert_threshold', 0),
                 'tracking': request.form.get('source_tracking'),
+                'notes': notes,
             }
             # Add secondary IDs for prefill
             secondary_ids = {'upc': request.form.get('upc'), 'part_number': request.form.get('part_number')}
@@ -426,6 +429,7 @@ def add_item():
                 'alert_enabled': request.form.get('alert_enabled') == 'on',
                 'alert_threshold': request.form.get('alert_threshold', 0),
                 'tracking': request.form.get('source_tracking'),
+                'notes': notes,
             }
             secondary_ids = {'upc': request.form.get('upc'), 'part_number': request.form.get('part_number')}
             return render_template('inventory/add.html', prefill=prefill, secondary_ids=secondary_ids, categories=CATEGORY_CODES)
@@ -493,12 +497,12 @@ def add_item():
                 INSERT INTO inventory_items 
                 (sku, name, quantity, location_area, location_aisle, location_shelf, location_bin,
                  asin, image_url, source_url, buy_price, sell_price, supplier, first_stock_date, 
-                 resupply_interval, alert_enabled, alert_threshold, secondary_ids, keywords, addon_1, addon_2)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 resupply_interval, alert_enabled, alert_threshold, secondary_ids, keywords, addon_1, addon_2, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (sku, name, quantity, location_area or None, location_aisle or None, 
                   location_shelf or None, location_bin or None, asin, image_url, source_url, 
                   buy_price, sell_price, supplier, first_stock_date, resupply_interval,
-                  1 if alert_enabled else 0, alert_threshold, secondary_ids_json, keywords, addon_1, addon_2))
+                  1 if alert_enabled else 0, alert_threshold, secondary_ids_json, keywords, addon_1, addon_2, notes))
             conn.commit()
             
             item_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
@@ -585,7 +589,9 @@ def edit_item(item_id):
             supplier = request.form.get('supplier', '').strip() or None
             first_stock_date = request.form.get('first_stock_date', '').strip() or None
             resupply_interval = request.form.get('resupply_interval', '').strip()
+            resupply_interval = request.form.get('resupply_interval', '').strip()
             keywords = request.form.get('keywords', '').strip()
+            notes = request.form.get('notes', '').strip()
             
             # Pagination state
             page = request.form.get('page')
@@ -670,14 +676,14 @@ def edit_item(item_id):
                     location_shelf = ?, location_bin = ?, asin = ?,
                     buy_price = ?, sell_price = ?, supplier = ?,
                     first_stock_date = ?, resupply_interval = ?, source_url = ?,
-                    image_url = ?, alert_enabled = ?, alert_threshold = ?,
-                    secondary_ids = ?, keywords = ?, addon_1 = ?, addon_2 = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            ''', (sku, name, location_area or None, location_aisle or None,
-                  location_shelf or None, location_bin or None, asin,
-                  buy_price, sell_price, supplier, first_stock_date,
-                  resupply_interval, source_url, image_url, 1 if alert_enabled else 0, 
-                  alert_threshold, secondary_ids_json, keywords, addon_1, addon_2, item_id))
+                     image_url = ?, alert_enabled = ?, alert_threshold = ?,
+                     secondary_ids = ?, keywords = ?, addon_1 = ?, addon_2 = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+                 WHERE id = ?
+             ''', (sku, name, location_area or None, location_aisle or None,
+                   location_shelf or None, location_bin or None, asin,
+                   buy_price, sell_price, supplier, first_stock_date,
+                   resupply_interval, source_url, image_url, 1 if alert_enabled else 0, 
+                   alert_threshold, secondary_ids_json, keywords, addon_1, addon_2, notes, item_id))
             conn.commit()
             
             flash("Item updated.")

@@ -74,7 +74,11 @@ def load_config(force_reload: bool = False) -> Dict[str, Any]:
             'IMAP_SERVER': os.environ.get('RSCP_IMAP_SERVER'),
             'EMAIL_USER': os.environ.get('RSCP_EMAIL_USER'),
             'EMAIL_PASS': os.environ.get('RSCP_EMAIL_PASS'),
+            'EMAIL_PASS': os.environ.get('RSCP_EMAIL_PASS'),
             'SECRET_KEY': os.environ.get('RSCP_SECRET_KEY'),
+            'SSO_CLIENT_ID': os.environ.get('RSCP_SSO_CLIENT_ID'),
+            'SSO_CLIENT_SECRET': os.environ.get('RSCP_SSO_CLIENT_SECRET'),
+            'SSO_DISCOVERY_URL': os.environ.get('RSCP_SSO_DISCOVERY_URL'),
         }
         
         for key, env_val in env_overrides.items():

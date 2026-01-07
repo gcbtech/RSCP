@@ -42,7 +42,9 @@ def management():
     conn = get_request_db()
     
     # Date range (default: last 30 days)
-    days = int(request.args.get('days', 30))
+    # Date range (default from settings or 30 days)
+    default_days = get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30')
+    days = int(request.args.get('days', default_days))
     # Use days-1 for inclusive range (e.g. days=1 is just Today)
     lookback = max(0, days - 1)
     start_date = (date.today() - timedelta(days=lookback)).strftime('%Y-%m-%d')
@@ -211,7 +213,8 @@ def top_sellers():
     """Top selling items analysis."""
     conn = get_request_db()
     
-    days = int(request.args.get('days', 30))
+    default_days = get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30')
+    days = int(request.args.get('days', default_days))
     start_date = (date.today() - timedelta(days=max(0, days - 1))).strftime('%Y-%m-%d')
     
     items = conn.execute('''
@@ -244,7 +247,8 @@ def margins():
     config = load_config() or {}
     preferred_margin = float(config.get('PREFERRED_MARGIN_PERCENT', 30))
     
-    days = int(request.args.get('days', 30))
+    default_days = get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30')
+    days = int(request.args.get('days', default_days))
     start_date = (date.today() - timedelta(days=max(0, days - 1))).strftime('%Y-%m-%d')
     sort = request.args.get('sort', 'high')  # high or low
     filter_type = request.args.get('filter', 'all')
@@ -292,7 +296,8 @@ def hourly_analysis():
     """Sales by hour and day of week."""
     conn = get_request_db()
     
-    days = int(request.args.get('days', 30))
+    default_days = get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30')
+    days = int(request.args.get('days', default_days))
     start_date = (date.today() - timedelta(days=max(0, days - 1))).strftime('%Y-%m-%d')
     
     # Hourly breakdown
@@ -335,7 +340,8 @@ def operator_performance():
     """Operator sales performance."""
     conn = get_request_db()
     
-    days = int(request.args.get('days', 30))
+    default_days = get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30')
+    days = int(request.args.get('days', default_days))
     start_date = (date.today() - timedelta(days=max(0, days - 1))).strftime('%Y-%m-%d')
     
     operators = conn.execute('''
@@ -362,7 +368,8 @@ def refunds_report():
     """Refund rate and analysis."""
     conn = get_request_db()
     
-    days = int(request.args.get('days', 30))
+    default_days = get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30')
+    days = int(request.args.get('days', default_days))
     start_date = (date.today() - timedelta(days=max(0, days - 1))).strftime('%Y-%m-%d')
     
     # Overall refund stats
@@ -478,6 +485,7 @@ def settings():
             flash('Invalid tax rate.')
         
         # Feature toggles
+        set_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', request.form.get('pos_default_report_timeframe', '30'))
         set_pos_setting('REQUIRE_MANAGER_VOID', 'true' if request.form.get('require_manager_void') else 'false')
         set_pos_setting('ALLOW_HOLD_ORDERS', 'true' if request.form.get('allow_hold_orders') else 'false')
         
@@ -504,6 +512,7 @@ def settings():
     
     return render_template('pos/settings.html',
                            tax_rate=round(get_tax_rate() * 100, 4),  # Round for display
+                           pos_default_report_timeframe=get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30'),
                            require_manager_void=get_pos_setting('REQUIRE_MANAGER_VOID', 'false') == 'true',
                            allow_hold_orders=get_pos_setting('ALLOW_HOLD_ORDERS', 'true') == 'true',
                            # Cash discount

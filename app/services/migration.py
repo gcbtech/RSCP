@@ -132,7 +132,17 @@ def ensure_db_ready():
         _create_pos_coupon_tables(conn)
         _create_timeclock_tables(conn)
         _create_scheduled_shifts_table(conn)
+        _create_scheduled_shifts_table(conn)
         _create_recurring_rules_table(conn)
+
+        # V2.4.2: Add SSO fields to users table
+        try:
+            conn.execute("ALTER TABLE users ADD COLUMN email TEXT UNIQUE")
+            conn.execute("ALTER TABLE users ADD COLUMN auth_provider TEXT")
+            conn.commit()
+            logger.info("Added SSO columns (email, auth_provider) to users.")
+        except sqlite3.OperationalError:
+            pass  # Columns likely already exist
             
             
     except Exception as e:
@@ -170,6 +180,7 @@ def _create_inventory_tables(conn):
                 keywords TEXT,
                 secondary_ids TEXT,
                 description TEXT,
+                notes TEXT,
                 
                 -- Item Addons (warranty/disclaimer)
                 addon_1 BOOLEAN DEFAULT 0,
@@ -199,6 +210,7 @@ def _create_inventory_tables(conn):
             ('first_stock_date', 'ALTER TABLE inventory_items ADD COLUMN first_stock_date TEXT'),
             ('addon_1', 'ALTER TABLE inventory_items ADD COLUMN addon_1 BOOLEAN DEFAULT 0'),
             ('addon_2', 'ALTER TABLE inventory_items ADD COLUMN addon_2 BOOLEAN DEFAULT 0'),
+            ('notes', 'ALTER TABLE inventory_items ADD COLUMN notes TEXT'),
         ]
         for col_name, sql in migrations:
             try:

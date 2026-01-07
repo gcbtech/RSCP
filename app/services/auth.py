@@ -86,11 +86,13 @@ def update_user_admin_status(username, is_admin):
 # -------------------------------------------------------
 
 class User(UserMixin):
-    def __init__(self, id, username, is_admin=False, roles=None):
+    def __init__(self, id, username, is_admin=False, roles=None, email=None, auth_provider=None):
         self.id = str(id)
         self.username = username
         self.is_admin = bool(is_admin)
         self._roles = roles or []
+        self.email = email
+        self.auth_provider = auth_provider
 
     @property
     def roles(self):
@@ -121,7 +123,75 @@ class User(UserMixin):
             logger.warning(f"Failed to parse roles for user ID {user_id}: {e}")
             roles = []
         
-        return User(user['id'], user['username'], user['is_admin'], roles)
+        # Safely get new columns (might handle migration lag)
+        email = user['email'] if 'email' in user.keys() else None
+        auth_provider = user['auth_provider'] if 'auth_provider' in user.keys() else None
+        
+        return User(user['id'], user['username'], user['is_admin'], roles, email, auth_provider)
+
+    @staticmethod
+    def get_by_email(email):
+        """Find user by email address."""
+        if not email: return None
+        conn = get_db_connection()
+        try:
+            # Check for direct email match
+            user = conn.execute("SELECT * FROM users WHERE email = ?", (email.lower(),)).fetchone()
+            if user:
+                return User.get(user['id'])
+            return None
+        finally:
+            conn.close()
+
+    @staticmethod
+    def get_by_username(username):
+        """Find user by username (case insensitive)."""
+        if not username: return None
+        conn = get_db_connection()
+        try:
+            user = conn.execute("SELECT * FROM users WHERE LOWER(username) = ?", (username.lower(),)).fetchone()
+            if user:
+                return User.get(user['id'])
+            return None
+        finally:
+            conn.close()
+
+    @staticmethod
+    def create_sso_user(username, email, provider='oidc'):
+        """Create a new user from SSO data."""
+        conn = get_db_connection()
+        try:
+            # Generate random password (they should only login via SSO)
+            import secrets
+            pwd_hash = "sso_managed_" + secrets.token_hex(8) 
+            
+            conn.execute("""
+                INSERT INTO users (username, password_hash, is_admin, roles, email, auth_provider) 
+                VALUES (?, ?, 0, '["user"]', ?, ?)
+            """, (username, pwd_hash, email, provider))
+            conn.commit()
+            
+            # Fetch and return the new user
+            return User.get_by_username(username)
+        except Exception as e:
+            logger.error(f"Failed to create SSO user {username}: {e}")
+            return None
+        finally:
+            conn.close()
+
+    @staticmethod
+    def link_sso_account(user_id, email, provider):
+        """Link an existing user account to an SSO identity."""
+        conn = get_db_connection()
+        try:
+            conn.execute("UPDATE users SET email = ?, auth_provider = ? WHERE id = ?", (email, provider, user_id))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Failed to link SSO account for user {user_id}: {e}")
+            return False
+        finally:
+            conn.close()
 
     @staticmethod
     def authenticate(username, password):
@@ -134,13 +204,14 @@ class User(UserMixin):
             
         # For now, simplistic password check (assumes plain hash or similar)
         # In production, use werkzeug.security.check_password_hash
-        # Current system seems to use hashed passwords in migration logs?
-        # Reusing existing logic if available, otherwise implementation standard check
-        # Assuming database has password_hash. 
         
         from werkzeug.security import check_password_hash
+        # Block SSO-only users from password login if password starts with sso_managed
+        if user['password_hash'] and user['password_hash'].startswith('sso_managed_'):
+            return None
+
         if user['password_hash'] and check_password_hash(user['password_hash'], password):
-             return User(user['id'], user['username'], user['is_admin'])
+             return User.get(user['id']) # Use get() to return full object
              
         return None
 

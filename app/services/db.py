@@ -18,10 +18,20 @@ def get_db_connection():
     Note: For request-scoped connections, use get_request_db() instead
     to avoid creating multiple connections per request.
     """
-    conn = sqlite3.connect(DB_PATH, timeout=10)
+    path = DB_PATH
+    try:
+        from flask import current_app
+        if current_app:
+            path = current_app.config.get('DATABASE', DB_PATH)
+    except Exception:
+        pass
+        
+    conn = sqlite3.connect(path, timeout=10)
     conn.row_factory = sqlite3.Row
     # Enable WAL mode for better concurrency (only needs to be set once per DB)
-    conn.execute('PRAGMA journal_mode=WAL')
+    # WAL mode doesn't work with :memory: databases
+    if path != ':memory:':
+        conn.execute('PRAGMA journal_mode=WAL')
     return conn
 
 
@@ -86,7 +96,10 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
                 password_hash TEXT NOT NULL,
-                is_admin BOOLEAN DEFAULT 0
+                is_admin BOOLEAN DEFAULT 0,
+                roles TEXT DEFAULT '[]',
+                email TEXT UNIQUE,
+                auth_provider TEXT
             )
         ''')
         
