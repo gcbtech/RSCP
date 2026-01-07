@@ -14,10 +14,18 @@ from app.services.db import get_db_connection
 logger = logging.getLogger(__name__)
 
 # Allowed columns map (CSV Header -> DB Field)
+import pandas as pd
+
+# Allowed columns map (CSV Header -> DB Field)
 COLUMN_MAP = {
     'sku': 'sku',
+    'item_id': 'sku', # eBay mapping (old)
+    'itemid': 'sku', # eBay mapping (current)
     'name': 'name',
-    'description': 'name', # Alias
+    'item_name': 'name', # eBay mapping (old)
+    'itemname': 'name', # eBay mapping (current)
+    'title': 'name',
+    'description': 'name',
     'qty': 'quantity',
     'quantity': 'quantity',
     'count': 'quantity',
@@ -27,40 +35,57 @@ COLUMN_MAP = {
     'bin': 'location_bin',
     'cost': 'buy_price',
     'buy_price': 'buy_price',
+    'total_price': 'buy_price', 
+    'ordertotal': 'buy_price', # eBay mapping
+    'itemprice': 'buy_price', # eBay mapping
     'price': 'sell_price',
     'sell_price': 'sell_price',
     'supplier': 'supplier',
+    'seller': 'supplier',
+    'seller_name': 'supplier',
     'asin': 'asin',
-    'upc': 'upc', # Special handling for secondary_ids
-    'part_number': 'part_number', # Special handling
+    'upc': 'upc',
+    'part_number': 'part_number',
     'keywords': 'keywords',
-    'category': 'category' # Logic maybe needed for SKU generation if SKU missing
+    'category': 'category'
 }
 
 @inventory_bp.route('/import', methods=['GET', 'POST'])
 @login_required
 def import_items():
-    """Import inventory items from CSV."""
+    """Import inventory items from CSV or Excel."""
     if request.method == 'POST':
         file = request.files.get('file')
         update_existing = request.form.get('update_existing') == 'on'
         
-        if not file or not file.filename.endswith('.csv'):
-            flash("Please upload a valid CSV file.")
+        if not file or (not file.filename.endswith('.csv') and not file.filename.endswith('.xlsx')):
+            flash("Please upload a valid CSV or Excel file.")
             return redirect(url_for('inventory.import_items'))
         
         try:
-            # Parse CSV
-            stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
-            csv_input = csv.DictReader(stream)
+            items_to_process = []
             
-            # Normalize headers
-            headers = [h.strip().lower().replace(' ', '_') for h in csv_input.fieldnames or []]
-            
-            # Map CSV headers to internal keys
-            # We create a mapping index: {csv_col_index: db_field_key}
-            # Or just normalize the row dict keys
-            
+            # Parse File
+            if file.filename.endswith('.xlsx'):
+                df = pd.read_excel(file)
+                # Normalize headers: strip, lower, replace spaces with underscores
+                df.columns = [str(c).strip().lower().replace(' ', '_') for c in df.columns]
+                items_to_process = df.to_dict('records')
+            else:
+                # CSV parsing
+                stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
+                csv_input = csv.DictReader(stream)
+                # No clean header normalization in basic DictReader, handled in loop mostly?
+                # Actually, our loop logic below relies on keys.
+                # Let's standardize the CSV DictReader to behave like our DF dicts
+                csv_data = list(csv_input)
+                # Manual header normalization for CSV to match our new logic
+                if csv_input.fieldnames:
+                    norm_map = {k: k.strip().lower().replace(' ', '_') for k in csv_input.fieldnames}
+                    for row in csv_data:
+                        new_row = {norm_map[k]: v for k, v in row.items() if k in norm_map}
+                        items_to_process.append(new_row)
+
             success_count = 0
             updated_count = 0
             skip_count = 0
@@ -68,7 +93,7 @@ def import_items():
             
             conn = get_db_connection()
             
-            for i, row in enumerate(csv_input):
+            for i, row in enumerate(items_to_process):
                 try:
                     # Clean and map row data
                     data = {}

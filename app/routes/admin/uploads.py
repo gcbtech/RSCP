@@ -18,30 +18,61 @@ logger = logging.getLogger(__name__)
 # Temp storage for preview data (file-based for large datasets)
 PREVIEW_TEMP_DIR = os.path.join(BASE_DIR, 'temp')
 
-
 def detect_column_mapping(df):
-    """Auto-detect column mappings based on column names."""
+    """Auto-detect column mappings based on column names and data quality."""
     mapping = {'tracking': None, 'name': None, 'date': None, 'quantity': None, 'asin': None, 'image': None, 'product_url': None}
     
     lower_cols = {c.lower(): c for c in df.columns}
     
-    # Tracking detection
-    tracking_hints = ['tracking number', 'tracking_number', 'tracking', 'carrier tracking', 'tracking #', 'carrier tracking #', 'carrier tracking number']
+    # helper to check valid count
+    def count_valid(col_name):
+        if not col_name or col_name not in df.columns: return 0
+        try:
+             non_empty = df[col_name].astype(str).str.strip().replace({'nan': '', 'None': '', 'none': ''}, regex=True)
+             return (non_empty != '').sum()
+        except:
+            return 0
+
+    # Tracking detection (Enhanced for eBay)
+    tracking_hints = [
+        'tracking number', 'tracking_number', 'trackingnumber', 
+        'tracking', 'carrier tracking', 'tracking #', 
+        'carrier tracking #', 'carrier tracking number'
+    ]
+    
+    found_tracking_col = None
     for hint in tracking_hints:
         if hint in lower_cols:
-            mapping['tracking'] = lower_cols[hint]
+            found_tracking_col = lower_cols[hint]
             break
+            
+    order_hints = ['order number', 'ordernumber', 'order #', 'order_id', 'orderid']
+    found_order_col = None
+    for hint in order_hints:
+        if hint in lower_cols:
+            found_order_col = lower_cols[hint]
+            break
+            
+    # Decide best column: Use whichever has MORE data
+    # This prevents selecting a partially-filled "Tracking" column over a full "Order Number" column
+    tracking_valid = count_valid(found_tracking_col)
+    order_valid = count_valid(found_order_col)
     
+    if order_valid > tracking_valid:
+        mapping['tracking'] = found_order_col
+    else:
+        mapping['tracking'] = found_tracking_col
+
     # Name detection
-    name_hints = ['item name', 'title', 'item title', 'product name', 'description', 'item description']
+    name_hints = ['item name', 'itemname', 'title', 'item title', 'product name', 'description', 'item description']
     for hint in name_hints:
         if hint in lower_cols:
             mapping['name'] = lower_cols[hint]
             break
     
-    # Date detection (prioritize expected dates)
+    # Date detection
     date_hints = ['expected delivery date', 'estimated delivery date', 'expected date', 'promise date', 
-                  'purchase date', 'order date', 'ship date', 'date']
+                  'purchase date', 'order date', 'orderdate', 'ship date', 'date']
     for hint in date_hints:
         if hint in lower_cols:
             mapping['date'] = lower_cols[hint]
@@ -74,7 +105,7 @@ def detect_column_mapping(df):
         if hint in lower_cols:
             mapping['product_url'] = lower_cols[hint]
             break
-    
+            
     return mapping
 
 
@@ -321,6 +352,32 @@ def upload_confirm():
         upload_mode = preview.get('mode', 'replace')
         file_exists = os.path.exists(MANIFEST_FILE)
         
+        # Schema Check for Append Mode
+        if upload_mode == 'append' and file_exists:
+            try:
+                existing_df = pd.read_csv(MANIFEST_FILE, nrows=1)
+                existing_cols = list(existing_df.columns)
+                new_cols = list(df.columns)
+                
+                # If columns don't match EXACTLY, fall back to 'replace' or re-index
+                # Re-indexing is safer: Add missing cols to new df, and ensure order matches
+                if existing_cols != new_cols:
+                    logger.warning("Manifest schema mismatch. Adaptation required.")
+                    # 1. Add missing specific columns from existing to new (padding with None)
+                    for col in existing_cols:
+                        if col not in df.columns:
+                            df[col] = None
+                    
+                    # 2. Reorder new df to match existing columns (ignore extra new cols? or add them?)
+                    # Safest: only keep columns that exist in target, or expand target.
+                    # Current simplifiction: Align to existing schema
+                    df = df.reindex(columns=existing_cols)
+                    
+            except Exception as e:
+                logger.error(f"Schema check failed: {e}")
+                # Fallback to replace if file is corrupt
+                upload_mode = 'replace'
+
         mode = 'a' if (upload_mode == 'append' and file_exists) else 'w'
         write_header = not (upload_mode == 'append' and file_exists)
         
