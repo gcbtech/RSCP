@@ -99,6 +99,7 @@ backups/
 *.tmp
 *.temp
 .cache/
+temp/
 
 # ----------------------------------
 # Git (don't track this test file)
