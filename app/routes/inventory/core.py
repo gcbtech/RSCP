@@ -200,7 +200,8 @@ def check_inventory_enabled():
     
     # Check user role (admins bypass role check)
     if not current_user.is_admin:
-        if not current_user.has_role('inventory'):
+        from app.utils.permissions import has_permission
+        if not has_permission(current_user, 'inventory.view'):
             flash("You don't have access to the Inventory module.")
             return redirect(url_for('main.index'))
 

@@ -232,6 +232,7 @@
             <form action="{% if edit_mode %}/inventory/edit/{{ item.id }}{% else %}/inventory/add{% endif %}"
                 method="POST" enctype="multipart/form-data">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="hidden" name="next" value="{{ request.args.get('next', '') }}">
 
                 {% if pagination_state %}
                 <input type="hidden" name="page" value="{{ pagination_state.page }}">

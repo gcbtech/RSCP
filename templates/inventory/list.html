@@ -100,8 +100,8 @@
             font-size: 0.8rem;
         }
 
-        /* Mobile Responsive Styles */
-        @media (max-width: 576px) {
+        /* Mobile Responsive Styles - Panasonic FZ-N1 has 720px width */
+        @media (max-width: 768px) {
             body {
                 padding: 10px;
                 font-size: 14px;
@@ -173,25 +173,29 @@
             }
 
             /* Hide less important columns on small screens */
-            .table .col-location {
-                display: none;
+            /* Hide Bulk Checkbox, Cost, Markup, Margin */
+            .col-bulk,
+            .col-cost,
+            .col-markup,
+            .col-margin {
+                display: none !important;
             }
 
-            .table th:nth-child(5),
-            .table td:nth-child(5) {
-                display: none;
+            /* Ensure Location IS Visible (User specifically requested) */
+            .col-location {
+                display: table-cell !important;
             }
 
-            /* Image column */
-            .table th:first-child,
-            .table td:first-child {
-                width: 35px !important;
+            /* Thumbnail column - ensure visible (second column after hidden bulk) */
+            .col-image {
+                display: table-cell !important;
+                width: 40px !important;
                 padding: 2px !important;
             }
 
-            .table td:first-child img {
-                width: 30px !important;
-                height: 30px !important;
+            .col-image img {
+                width: 35px !important;
+                height: 35px !important;
             }
 
             /* Actions - compact */
@@ -200,22 +204,49 @@
                 padding: 3px 6px;
             }
 
-            /* Alert */
-            .alert {
-                font-size: 0.85rem;
-                padding: 10px;
+            /* Search Bar Optimization */
+            /* Hide "All Locations" text, keep only emoji */
+            .input-group-text .form-check-label {
+                font-size: 0 !important;
             }
 
-            /* Pagination */
-            .pagination {
-                justify-content: center;
-                flex-wrap: wrap;
+            .input-group-text .form-check-label::before {
+                content: "🔗";
+                font-size: 1rem;
             }
 
-            .pagination .page-link {
-                padding: 6px 10px;
-                font-size: 0.85rem;
+            /* Shrink the All Locations container */
+            .input-group-text {
+                padding: 0.25rem 0.5rem !important;
             }
+
+            /* Search button - icon only */
+            .input-group>.btn-primary {
+                font-size: 0 !important;
+                padding: 0.5rem 0.75rem !important;
+            }
+
+            .input-group>.btn-primary::before {
+                content: "🔍";
+                font-size: 1rem;
+            }
+        }
+
+        /* Alert */
+        .alert {
+            font-size: 0.85rem;
+            padding: 10px;
+        }
+
+        /* Pagination */
+        .pagination {
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .pagination .page-link {
+            padding: 6px 10px;
+            font-size: 0.85rem;
         }
 
         /* Extra small screens (like FZ-N1 in portrait) */
@@ -452,16 +483,16 @@
         <table class="table table-striped table-hover" id="inventoryTable">
             <thead class="table-dark">
                 <tr>
-                    <th style="width: 40px;">
+                    <th class="col-bulk" style="width: 40px;">
                         <input type="checkbox" id="selectAll" class="form-check-input">
                     </th>
-                    <th style="width: 50px;"></th>
+                    <th class="col-image" style="width: 50px;"></th>
                     <th>SKU</th>
                     <th>Name</th>
                     <th>Qty</th>
-                    <th>Cost</th>
+                    <th class="col-cost">Cost</th>
                     <th>Price</th>
-                    <th>Location</th>
+                    <th class="col-location">Location</th>
                     <th>Actions</th>
                 </tr>
             </thead>

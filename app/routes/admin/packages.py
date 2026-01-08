@@ -39,6 +39,9 @@ def admin_panel():
     per_page = 50
     offset = (page - 1) * per_page
     
+    # Search query (form uses 'search', not 'q')
+    search_query = request.args.get('search', '').strip()
+    
     # Map sort keys to SQL columns
     sort_map = {
         'date': 'date_expected',
@@ -57,13 +60,31 @@ def admin_panel():
     
     conn = get_db_connection()
     try:
-        # Total Count
-        total = conn.execute("SELECT count(*) as c FROM packages").fetchone()['c']
+        # Query
+        base_query = "SELECT * FROM packages"
+        count_query = "SELECT count(*) as c FROM packages"
+        params = []
+        
+        if search_query:
+            # Add search filter
+            # Logic: Tracking LIKE %q% OR item_name LIKE %q% OR status LIKE %q%
+            where_clause = " WHERE tracking_number LIKE ? OR item_name LIKE ? OR status LIKE ?"
+            base_query += where_clause
+            count_query += where_clause
+            s_param = f"%{search_query}%"
+            params = [s_param, s_param, s_param]
+            
+        # Total Count (with filter)
+        total = conn.execute(count_query, params).fetchone()['c']
         total_pages = (total + per_page - 1) // per_page
         
-        # Query
-        query = f"SELECT * FROM packages ORDER BY {sql_sort} {sql_order} LIMIT ? OFFSET ?"
-        rows = conn.execute(query, (per_page, offset)).fetchall()
+        # Final Query with Sort/Limit
+        # Note: params currently has 3 search terms if search is active
+        # We need to add limit/offset to params
+        full_query = f"{base_query} ORDER BY {sql_sort} {sql_order} LIMIT ? OFFSET ?"
+        params.extend([per_page, offset])
+        
+        rows = conn.execute(full_query, params).fetchall()
         
         # Convert to dict list for template
         packages = []
@@ -88,11 +109,11 @@ def admin_panel():
 
     if request.args.get('partial'):
         return render_template('_admin_table_rows.html', 
-                              packages=packages, 
-                              date_format=load_config().get('DATE_FORMAT', 'US'))
+                               packages=packages, 
+                               date_format=load_config().get('DATE_FORMAT', 'US'))
 
     config = load_config()
-    search_query = request.args.get('search', '')
+    # search_query is already defined above
     
     # Load POS settings from database for POS tab
     pos_settings = {}
@@ -145,7 +166,8 @@ def add_manual_item():
         conn = get_db_connection()
         try:
             # Date Status Logic
-            status = 'pending'
+            # "Pending" is removed. Default is 'on_time' until it is past due.
+            status = 'on_time' 
             today = datetime.date.today()
             if date_input:
                 try:
@@ -318,9 +340,10 @@ def bulk_action():
              
         elif action == 'unreceive':
             for t in trackings:
-                res = conn.execute("SELECT id FROM packages WHERE tracking_number=?", (t,)).fetchone()
-                if res:
-                    pid = res['id']
+                # Get ALL packages with this tracking number (not just one)
+                rows = conn.execute("SELECT id FROM packages WHERE tracking_number=?", (t,)).fetchall()
+                for row in rows:
+                    pid = row['id']
                     conn.execute("DELETE FROM history WHERE package_id=? AND action='received'", (pid,))
                     conn.execute("UPDATE packages SET status='expected', date_scanned=NULL WHERE id=?", (pid,))
             conn.commit()

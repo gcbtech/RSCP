@@ -194,6 +194,7 @@
         <div style="text-align: left;">
             <div id="userDisplay" style="font-size: 0.8rem; margin-bottom: 2px;"></div>
             <div id="kbdStatus" class="mode-toggle" onclick="toggleKeyboardBlock()">KBD: AUTO</div>
+            <div id="histStatus" class="mode-toggle" onclick="toggleHistoryDisplay()">HISTORY: ON</div>
         </div>
         <a href="/receiving" class="nav-btn">Dashboard</a>
     </div>
@@ -234,7 +235,7 @@
             {% endif %}
 
             <!-- Add as new item -->
-            <a href="/inventory/add?tracking={{ item.subtext or '' }}&qty={{ item.qty or 1 }}&name={{ item.name|urlencode }}&image_url={{ item.image_url|urlencode if item.image_url else '' }}&asin={{ item.asin|urlencode if item.asin else '' }}&source_url={{ item.source_url|urlencode if item.source_url else '' }}"
+            <a href="/inventory/add?tracking={{ item.subtext or '' }}&qty={{ item.qty or 1 }}&name={{ item.name|urlencode }}&image_url={{ item.image_url|urlencode if item.image_url else '' }}&asin={{ item.asin|urlencode if item.asin else '' }}&source_url={{ item.source_url|urlencode if item.source_url else '' }}&next=scan"
                 class="btn btn-outline-secondary btn-sm" style="padding: 8px 16px; font-size: 0.85rem;">
                 📦 Add as New Inventory Item
             </a>
@@ -395,8 +396,31 @@
             applyKeyboardState();
         }
 
+        // --- HISTORY DISPLAY TOGGLE ---
+        let hideHistory = localStorage.getItem('rscp_hide_history') === 'true';
+
+        function applyHistoryDisplayState() {
+            const statusLabel = document.getElementById('histStatus');
+            if (hideHistory) {
+                statusLabel.innerText = "HISTORY: OFF";
+                statusLabel.style.color = "red";
+                document.getElementById('sessionHistory').style.display = 'none';
+            } else {
+                statusLabel.innerText = "HISTORY: ON";
+                statusLabel.style.color = "green";
+                renderHistory();
+            }
+            localStorage.setItem('rscp_hide_history', hideHistory);
+        }
+
+        function toggleHistoryDisplay() {
+            hideHistory = !hideHistory;
+            applyHistoryDisplayState();
+        }
+
         window.onload = function () {
             applyKeyboardState();
+            applyHistoryDisplayState();
             // V14.6: Haptic Feedback on Error/Duplicate
             const bg = "{{ color }}";
             if (bg === "#ff6961" || bg === "#ffd700") {

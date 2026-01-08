@@ -302,21 +302,23 @@ def get_dashboard_stats() -> Dict[str, Any]:
     thirty_days_ago = (datetime.date.today() - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
 
     # Expected
-    # Expected
-    today_scanned_filter = []
-    rows = conn.execute("SELECT status, date_scanned FROM packages WHERE date_expected = ?", (today_str,)).fetchall()
-    for r in rows:
-        # If not scanned, it's expected.
-        # If scanned TODAY, it's expected (and arrived).
-        # If scanned PREVIOUSLY, it is NOT expected today (it's done).
-        
-        is_scanned = (r['date_scanned'] is not None)
-        scanned_today = (is_scanned and str(r['date_scanned']).startswith(today_str))
-        
-        if not is_scanned or scanned_today:
-             stats["expected"]["total"] += 1
-             if is_scanned:
-                 stats["expected"]["scanned"] += 1
+    # Expected Today
+    # Total = count of items where date_expected == today
+    # Scanned = count of those items that have date_scanned not null
+    
+    expected_rows = conn.execute("SELECT date_scanned, status FROM packages WHERE date_expected = ?", (today_str,)).fetchall()
+    
+    total_expected = len(expected_rows)
+    scanned_count = 0
+    
+    for r in expected_rows:
+        # Check if scanned (date_scanned is not None or status is 'received'/'refunded'/'archived', etc?)
+        # Simplest: if date_scanned is set.
+        if r['date_scanned']:
+            scanned_count += 1
+            
+    stats["expected"]["total"] = total_expected
+    stats["expected"]["scanned"] = scanned_count
             
     # Past Due
     pd_count = conn.execute("SELECT count(*) as c FROM packages WHERE status='past_due' AND date_scanned IS NULL").fetchone()['c']

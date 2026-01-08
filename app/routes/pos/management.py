@@ -41,13 +41,33 @@ def management():
     """Management dashboard with analytics overview."""
     conn = get_request_db()
     
-    # Date range (default: last 30 days)
-    # Date range (default from settings or 30 days)
+    # Date range - support both "days" preset OR custom start/end dates
     default_days = get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30')
-    days = int(request.args.get('days', default_days))
-    # Use days-1 for inclusive range (e.g. days=1 is just Today)
-    lookback = max(0, days - 1)
-    start_date = (date.today() - timedelta(days=lookback)).strftime('%Y-%m-%d')
+    
+    # Check for custom date range first
+    custom_start = request.args.get('start_date', '').strip()
+    custom_end = request.args.get('end_date', '').strip()
+    
+    if custom_start and custom_end:
+        # Custom date range mode
+        start_date = custom_start
+        end_date = custom_end
+        # Calculate days for display
+        from datetime import datetime
+        try:
+            d1 = datetime.strptime(custom_start, '%Y-%m-%d')
+            d2 = datetime.strptime(custom_end, '%Y-%m-%d')
+            days = (d2 - d1).days + 1
+        except:
+            days = 0
+        use_custom_range = True
+    else:
+        # Days preset mode
+        days = int(request.args.get('days', default_days))
+        lookback = max(0, days - 1)
+        start_date = (date.today() - timedelta(days=lookback)).strftime('%Y-%m-%d')
+        end_date = date.today().strftime('%Y-%m-%d')
+        use_custom_range = False
     
     # Summary stats
     stats = conn.execute('''
@@ -58,8 +78,8 @@ def management():
             COALESCE(SUM(discount_amount), 0) as total_discounts,
             COALESCE(SUM(tax_amount), 0) as total_tax
         FROM pos_orders
-        WHERE date(created_at, 'localtime') >= ? AND status != 'held'
-    ''', (start_date,)).fetchone()
+        WHERE date(created_at, 'localtime') BETWEEN ? AND ? AND status != 'held'
+    ''', (start_date, end_date)).fetchone()
     
     # Refund stats
     refund_stats = conn.execute('''
@@ -67,8 +87,8 @@ def management():
             COUNT(*) as refund_count,
             COALESCE(SUM(amount), 0) as refund_total
         FROM pos_refunds
-        WHERE date(created_at, 'localtime') >= ?
-    ''', (start_date,)).fetchone()
+        WHERE date(created_at, 'localtime') BETWEEN ? AND ?
+    ''', (start_date, end_date)).fetchone()
     
     # Daily sales trend
     days_data = conn.execute('''
@@ -76,41 +96,48 @@ def management():
                COUNT(*) as orders,
                COALESCE(SUM(total), 0) as revenue
         FROM pos_orders
-        WHERE date(created_at, 'localtime') >= ? AND status != 'held'
+        WHERE date(created_at, 'localtime') BETWEEN ? AND ? AND status != 'held'
         GROUP BY date(created_at, 'localtime')
         ORDER BY day
-    ''', (start_date,)).fetchall()
+    ''', (start_date, end_date)).fetchall()
     
     # Fill in missing dates with 0
     daily_sales = []
-    # Create date map
     sales_map = {row['day']: row for row in days_data}
     
-    for i in range(days):
-        d = (date.today() - timedelta(days=lookback - i)).strftime('%Y-%m-%d')
-        if d in sales_map:
-            daily_sales.append(sales_map[d])
-        else:
-             daily_sales.append({'day': d, 'orders': 0, 'revenue': 0})
+    # Generate date range
+    from datetime import datetime as dt
+    try:
+        range_start = dt.strptime(start_date, '%Y-%m-%d')
+        range_end = dt.strptime(end_date, '%Y-%m-%d')
+        delta_days = (range_end - range_start).days + 1
+        for i in range(delta_days):
+            d = (range_start + timedelta(days=i)).strftime('%Y-%m-%d')
+            if d in sales_map:
+                daily_sales.append(sales_map[d])
+            else:
+                daily_sales.append({'day': d, 'orders': 0, 'revenue': 0})
+    except:
+        daily_sales = list(days_data)
     
     # Top sellers
     top_sellers = conn.execute('''
         SELECT sku, name, SUM(quantity) as sold, SUM(line_total) as revenue
         FROM pos_order_items oi
         JOIN pos_orders o ON oi.order_id = o.id
-        WHERE date(o.created_at, 'localtime') >= ? AND o.status != 'held'
+        WHERE date(o.created_at, 'localtime') BETWEEN ? AND ? AND o.status != 'held'
         GROUP BY sku
         ORDER BY sold DESC
         LIMIT 10
-    ''', (start_date,)).fetchall()
+    ''', (start_date, end_date)).fetchall()
     
     # Payment method breakdown
     payment_breakdown = conn.execute('''
         SELECT payment_method, COUNT(*) as count, SUM(total) as amount
         FROM pos_orders
-        WHERE date(created_at, 'localtime') >= ? AND status != 'held'
+        WHERE date(created_at, 'localtime') BETWEEN ? AND ? AND status != 'held'
         GROUP BY payment_method
-    ''', (start_date,)).fetchall()
+    ''', (start_date, end_date)).fetchall()
     
     return render_template('pos/management.html',
                            stats=stats,
@@ -119,6 +146,9 @@ def management():
                            top_sellers=top_sellers,
                            payment_breakdown=payment_breakdown,
                            days=days,
+                           start_date=start_date,
+                           end_date=end_date,
+                           use_custom_range=use_custom_range,
                            tax_rate=get_tax_rate() * 100)
 
 

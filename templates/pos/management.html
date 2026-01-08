@@ -68,23 +68,59 @@
         <div class="d-flex justify-content-between align-items-center">
             <div>
                 <h2>📊 POS Management</h2>
+                {% if use_custom_range %}
+                <small>{{ start_date }} to {{ end_date }} ({{ days }} days)</small>
+                {% else %}
                 <small>Last {{ days }} days</small>
+                {% endif %}
             </div>
-            <div class="d-flex gap-2">
-                <select onchange="location.href='?days='+this.value" class="form-select form-select-sm"
+            <div class="d-flex gap-2 align-items-center flex-wrap">
+                <!-- Days Preset Dropdown -->
+                <select id="daysSelect" onchange="handleDaysChange(this.value)" class="form-select form-select-sm"
                     style="width: auto;">
-                    <option value="1" {% if days==1 %}selected{% endif %}>Today</option>
-                    <option value="7" {% if days==7 %}selected{% endif %}>7 days</option>
-                    <option value="30" {% if days==30 %}selected{% endif %}>30 days</option>
-                    <option value="60" {% if days==60 %}selected{% endif %}>60 days</option>
-                    <option value="90" {% if days==90 %}selected{% endif %}>90 days</option>
-                    <option value="180" {% if days==180 %}selected{% endif %}>180 days</option>
-                    <option value="365" {% if days==365 %}selected{% endif %}>365 days</option>
+                    <option value="1" {% if not use_custom_range and days==1 %}selected{% endif %}>Today</option>
+                    <option value="7" {% if not use_custom_range and days==7 %}selected{% endif %}>7 days</option>
+                    <option value="30" {% if not use_custom_range and days==30 %}selected{% endif %}>30 days</option>
+                    <option value="60" {% if not use_custom_range and days==60 %}selected{% endif %}>60 days</option>
+                    <option value="90" {% if not use_custom_range and days==90 %}selected{% endif %}>90 days</option>
+                    <option value="180" {% if not use_custom_range and days==180 %}selected{% endif %}>180 days</option>
+                    <option value="365" {% if not use_custom_range and days==365 %}selected{% endif %}>365 days</option>
+                    <option value="custom" {% if use_custom_range %}selected{% endif %}>Custom Range...</option>
                 </select>
+
+                <!-- Custom Date Range (shown when custom selected) -->
+                <div id="customRangeInputs"
+                    style="display: {% if use_custom_range %}flex{% else %}none{% endif %}; gap: 0.5rem; align-items: center;">
+                    <input type="date" id="startDate" class="form-control form-control-sm" value="{{ start_date }}"
+                        style="width: auto;">
+                    <span class="text-light">to</span>
+                    <input type="date" id="endDate" class="form-control form-control-sm" value="{{ end_date }}"
+                        style="width: auto;">
+                    <button onclick="applyCustomRange()" class="btn btn-sm btn-light">Apply</button>
+                </div>
+
                 <a href="{{ url_for('pos.sales') }}" class="btn btn-outline-light btn-sm">← Back to Sales</a>
             </div>
         </div>
     </div>
+
+    <script>
+        function handleDaysChange(value) {
+            if (value === 'custom') {
+                document.getElementById('customRangeInputs').style.display = 'flex';
+            } else {
+                location.href = '?days=' + value;
+            }
+        }
+
+        function applyCustomRange() {
+            const start = document.getElementById('startDate').value;
+            const end = document.getElementById('endDate').value;
+            if (start && end) {
+                location.href = '?start_date=' + start + '&end_date=' + end;
+            }
+        }
+    </script>
 
     <div class="container-fluid p-4">
         <div class="row">

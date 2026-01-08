@@ -516,6 +516,13 @@ def add_item():
             
             flash(f"Item added: {sku}")
             
+            # Check for redirect (next) param
+            next_url = request.args.get('next') or request.form.get('next')
+            if next_url:
+                if next_url == 'scan':
+                    return redirect(url_for('main.scan_page', mode='receiving'))
+                return redirect(next_url)
+            
             # Check for Auto-Copy SKU setting
             conf = load_config()
             if conf.get('INVENTORY_AUTO_COPY_SKU'):

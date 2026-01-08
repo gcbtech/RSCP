@@ -1,10 +1,10 @@
 {% for item in items %}
 <tr data-secondary-ids="{{ item.secondary_ids or '' }}">
-    <td>
+    <td class="col-bulk">
         <input type="checkbox" name="item_ids" value="{{ item.id }}"
             class="item-checkbox form-check-input border-primary">
     </td>
-    <td>
+    <td class="col-image">
         <!-- Hidden searchable data for UPC/Part Number and Keywords -->
         <span style="display:none;">{{ item.secondary_ids or '' }} {{ item.keywords or '' }}</span>
         {% if item.image_url %}
@@ -28,7 +28,7 @@
                 <span class="badge bg-success" title="In Stock">{{ item.quantity }}</span>
                 {% endif %}
     </td>
-    <td>
+    <td class="col-cost">
         ${{ "%.2f"|format(item.buy_price or 0) }}
     </td>
     <td>
@@ -55,7 +55,7 @@
                 {% if pref_type == 'markup' %}
                 {% set markup_class = "bg-success" if markup >= pref_val else "bg-danger" %}
                 {% endif %}
-                <span class="badge {{ markup_class }}" title="Markup: {{ " %.1f"|format(markup) }}%">
+                <span class="badge col-markup {{ markup_class }}" title="Markup: {{ " %.1f"|format(markup) }}%">
                     Mk: {{ "%.0f"|format(markup) }}%
                 </span>
 
@@ -64,7 +64,7 @@
                 {% if pref_type == 'margin' %}
                 {% set margin_class = "bg-success" if margin >= pref_val else "bg-danger" %}
                 {% endif %}
-                <span class="badge {{ margin_class }}" title="Margin: {{ " %.1f"|format(margin) }}%">
+                <span class="badge col-margin {{ margin_class }}" title="Margin: {{ " %.1f"|format(margin) }}%">
                     Mg: {{ "%.0f"|format(margin) }}%
                 </span>
                 {% endif %}
@@ -74,7 +74,7 @@
                 {% endif %}
         </div>
     </td>
-    <td>
+    <td class="col-location">
         <span class="location-badge">
             {% set locs = [] %}
             {% if item.location_area and item.location_area != 'None' %}{% set _ = locs.append(item.location_area) %}{%

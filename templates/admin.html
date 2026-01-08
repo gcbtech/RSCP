@@ -370,11 +370,14 @@
                         <!-- Search Row -->
                         <div class="row g-2 align-items-center mb-3">
                             <div class="col-md-6">
-                                <form method="GET" action="/admin" class="d-flex gap-2">
+                                <form method="GET" action="{{ url_for('admin.admin_panel') }}" class="d-flex gap-2">
+                                    <input type="hidden" name="tab" value="packages">
+                                    <!-- Ensure we stay on packages tab -->
                                     <input type="text" name="search" class="form-control"
                                         placeholder="Search tracking, name, or status..." value="{{ search_query }}">
                                     {% if search_query %}
-                                    <a href="/admin" class="btn btn-outline-secondary">Clear</a>
+                                    <a href="{{ url_for('admin.admin_panel', tab='packages') }}"
+                                        class="btn btn-outline-secondary">Clear</a>
                                     {% else %}
                                     <button type="submit" class="btn btn-primary">Search</button>
                                     {% endif %}
@@ -1489,14 +1492,20 @@
                                         </div>
                                     </form>
                                 </div>
-                                <form action="/admin/toggle_pos" method="POST">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" name="enabled"
-                                            onchange="this.form.submit()" {% if pos_enabled %}checked{% endif %}
-                                            style="transform: scale(1.4);">
+                                <div class="d-flex justify-content-between align-items-center mt-3">
+                                    <div>
+                                        <strong>POS Module</strong>
+                                        <p class="small text-muted mb-0">Point of Sale & Checkout</p>
                                     </div>
-                                </form>
+                                    <form action="/admin/toggle_pos" method="POST">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" name="enabled"
+                                                onchange="this.form.submit()" {% if pos_enabled %}checked{% endif %}
+                                                style="transform: scale(1.4);">
+                                        </div>
+                                    </form>
+                                </div>
                             </div>
                             <div class="d-flex justify-content-between align-items-center mt-3">
                                 <div>
