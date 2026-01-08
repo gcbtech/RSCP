@@ -265,8 +265,20 @@
                     </summary>
                     {% for item in cart['items'] %}
                     <div class="order-item">
-                        <span>{{ item.name }} ×{{ item.quantity }}</span>
-                        <span>${{ "%.2f"|format(item.line_total) }}</span>
+                        <span>
+                            {{ item.name }} ×{{ item.quantity }}
+                            {% if item.is_on_sale %}
+                            <span class="badge bg-danger ms-1" style="font-size: 0.7rem;">SALE</span>
+                            {% endif %}
+                        </span>
+                        <div class="text-end">
+                            {% if item.is_on_sale and item.regular_price %}
+                            <small class="text-muted text-decoration-line-through me-1" style="font-size: 0.85rem;">
+                                ${{ "%.2f"|format(item.regular_price * item.quantity) }}
+                            </small>
+                            {% endif %}
+                            <span>${{ "%.2f"|format(item.line_total) }}</span>
+                        </div>
                     </div>
                     {% endfor %}
                     <div class="summary-row">

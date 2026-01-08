@@ -239,9 +239,13 @@
                         </div>
                         <div class="receipt-item-detail">
                             {{ item.sku }} × {{ item.quantity }} @ ${{ "%.2f"|format(item.unit_price) }}
-                            {% if item.discount_amount %}
-                            <span class="text-warning">(−${{ "%.2f"|format(item.discount_amount) }})</span>
-                            {% endif %}
+                            {% if item.current_reg_price and item.unit_price < item.current_reg_price %} <span
+                                class="text-decoration-line-through text-muted small ms-1">Reg: ${{
+                                "%.2f"|format(item.current_reg_price) }}</span>
+                                {% endif %}
+                                {% if item.discount_amount %}
+                                <span class="text-warning">(−${{ "%.2f"|format(item.discount_amount) }})</span>
+                                {% endif %}
                         </div>
                         {% if item.addon_1 and config and config.get('ITEM_ADDON_1_TEXT') %}
                         <div class="receipt-addon-text"

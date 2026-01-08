@@ -134,7 +134,16 @@
             </div>
             <div class="item-detail">
                 {{ item.quantity }} × ${{ "%.2f"|format(item.unit_price) }}
-                {% if item.discount_amount %} (-${{ "%.2f"|format(item.discount_amount) }}){% endif %}
+                {% if item.current_reg_price %}
+                <!-- Debug: Reg={{ item.current_reg_price }}, Unit={{ item.unit_price }} -->
+                {% if item.unit_price < item.current_reg_price %} <span
+                    style="text-decoration: line-through; color: #666; font-size: 11px; margin-left: 4px;">Reg: ${{
+                    "%.2f"|format(item.current_reg_price) }}</span>
+                    {% endif %}
+                    {% else %}
+                    <!-- Debug: No Reg Price -->
+                    {% endif %}
+                    {% if item.discount_amount %} (-${{ "%.2f"|format(item.discount_amount) }}){% endif %}
             </div>
             {% if item.addon_1 and config and config.get('ITEM_ADDON_1_TEXT') %}
             <div class="addon-text" style="font-size: 9pt; margin-left: 8px; font-style: italic;">

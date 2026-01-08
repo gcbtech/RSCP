@@ -106,7 +106,7 @@ def cart_add():
         flash(f'⚠️ STOCK WARNING: Selling {total_qty} but only {item["quantity"]} in inventory!', 'warning')
     
     # Calculate line total
-    unit_price = item.get('sell_price') or 0
+    unit_price = item.get('current_price') or item.get('sell_price') or 0
     line_total = calculate_line_total(unit_price, quantity)
     
     # Check if item already in cart - if so, update quantity
@@ -125,7 +125,9 @@ def cart_add():
             'name': item['name'],
             'quantity': quantity,
             'unit_price': unit_price,
-            'sell_price': unit_price,  # For template price warning
+            'regular_price': item.get('regular_price', unit_price),
+            'sell_price': item.get('regular_price', unit_price),  # For template price warning
+            'is_on_sale': item.get('is_on_sale', False),
             'stock_quantity': item['quantity'],  # Current inventory stock level
             'discount_amount': 0,
             'discount_type': None,

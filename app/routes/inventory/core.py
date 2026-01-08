@@ -83,6 +83,38 @@ def get_inventory_item(sku):
             SELECT * FROM inventory_items WHERE sku = ?
         ''', (sku,)).fetchone()
         
+        if result:
+            item = dict(result)
+            
+            # --- Sale Logic ---
+            now = datetime.now()
+            item['regular_price'] = item['sell_price'] # Keep track of original price
+            item['is_on_sale'] = False
+            item['current_price'] = item['sell_price']
+            
+            if item.get('sale_enabled'):
+                try:
+                    start_valid = True
+                    end_valid = True
+                    
+                    if item.get('sale_start'):
+                        start_dt = datetime.strptime(item['sale_start'], '%Y-%m-%dT%H:%M')
+                        if now < start_dt:
+                            start_valid = False
+                            
+                    if item.get('sale_end'):
+                        end_dt = datetime.strptime(item['sale_end'], '%Y-%m-%dT%H:%M')
+                        if now > end_dt:
+                            end_valid = False
+                            
+                    if start_valid and end_valid:
+                        item['current_price'] = item['sale_price']
+                        item['is_on_sale'] = True
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Error parsing sale dates for item {sku}: {e}")
+            
+            return item
+            
         # If not found, search in secondary_ids (UPC, part_number)
         if not result:
             import json
@@ -94,19 +126,48 @@ def get_inventory_item(sku):
                 SELECT * FROM inventory_items WHERE secondary_ids IS NOT NULL AND secondary_ids != '{}'
             ''').fetchall()
             
-            for item in all_items:
+            for row in all_items:
                 try:
-                    if item['secondary_ids']:
-                        ids = json.loads(item['secondary_ids'])
+                    if row['secondary_ids']:
+                        ids = json.loads(row['secondary_ids'])
                         # Check UPC or Part Number
-                        # Case insensitive match could be added here if needed
                         if str(ids.get('upc', '')).strip() == sku or str(ids.get('part_number', '')).strip() == sku:
+                            # Apply same sale logic to secondary ID match
+                            item = dict(row)
+                            
+                            # --- Sale Logic (Duplicated for fallback) ---
+                            now = datetime.now()
+                            item['regular_price'] = item['sell_price']
+                            item['is_on_sale'] = False
+                            item['current_price'] = item['sell_price']
+                            
+                            if item.get('sale_enabled'):
+                                try:
+                                    start_valid = True
+                                    end_valid = True
+                                    
+                                    if item.get('sale_start'):
+                                        start_dt = datetime.strptime(item['sale_start'], '%Y-%m-%dT%H:%M')
+                                        if now < start_dt:
+                                            start_valid = False
+                                            
+                                    if item.get('sale_end'):
+                                        end_dt = datetime.strptime(item['sale_end'], '%Y-%m-%dT%H:%M')
+                                        if now > end_dt:
+                                            end_valid = False
+                                            
+                                    if start_valid and end_valid:
+                                        item['current_price'] = item['sale_price']
+                                        item['is_on_sale'] = True
+                                except (ValueError, TypeError):
+                                    pass
+                                    
                             result = item
                             break
                 except json.JSONDecodeError:
                     continue
         
-        return dict(result) if result else None
+        return result
     except Exception as e:
         logger.error(f"Error looking up inventory item: {e}")
         return None

@@ -211,6 +211,11 @@ def _create_inventory_tables(conn):
             ('addon_1', 'ALTER TABLE inventory_items ADD COLUMN addon_1 BOOLEAN DEFAULT 0'),
             ('addon_2', 'ALTER TABLE inventory_items ADD COLUMN addon_2 BOOLEAN DEFAULT 0'),
             ('notes', 'ALTER TABLE inventory_items ADD COLUMN notes TEXT'),
+            ('sale_price', 'ALTER TABLE inventory_items ADD COLUMN sale_price REAL DEFAULT 0.0'),
+            ('sale_start', 'ALTER TABLE inventory_items ADD COLUMN sale_start TEXT'),
+            ('sale_end', 'ALTER TABLE inventory_items ADD COLUMN sale_end TEXT'),
+            ('sale_enabled', 'ALTER TABLE inventory_items ADD COLUMN sale_enabled BOOLEAN DEFAULT 0'),
+            ('sale_end_on_stock', 'ALTER TABLE inventory_items ADD COLUMN sale_end_on_stock BOOLEAN DEFAULT 0'),
         ]
         for col_name, sql in migrations:
             try:

@@ -767,6 +767,9 @@
                                 ({{ item.stock_quantity }} in stock)
                             </span>
                             {% endif %}
+                            {% if item.is_on_sale %}
+                            <span class="badge bg-danger ms-2">SALE</span>
+                            {% endif %}
                         </div>
                         {% if item.discount_amount %}
                         <small class="text-warning">-${{ "%.2f"|format(item.discount_amount) }} off</small>
@@ -790,6 +793,11 @@
                     </div>
                     <div
                         class="cart-item-price {% if not item.sell_price or item.sell_price <= 0 %}text-danger{% endif %}">
+                        {% if item.is_on_sale %}
+                        <small class="text-muted text-decoration-line-through d-block" style="font-size: 0.8rem;">
+                            ${{ "%.2f"|format(item.regular_price * item.quantity) }}
+                        </small>
+                        {% endif %}
                         ${{ "%.2f"|format(item.line_total) }}
                     </div>
                     <form action="{{ url_for('pos.cart_remove', index=loop.index0) }}" method="POST" class="d-inline">

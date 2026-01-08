@@ -229,6 +229,19 @@ def checkout_process():
                     item['inventory_item_id'], -item['quantity'], 
                     'Sold/Consumed', str(current_user.id), order_number
                 ))
+                
+                # Check for "End Sale on Out of Stock" condition
+                updated_item = conn.execute('''
+                    SELECT quantity, sale_enabled, sale_end_on_stock 
+                    FROM inventory_items WHERE id = ?
+                ''', (item['inventory_item_id'],)).fetchone()
+                
+                if updated_item and updated_item['quantity'] <= 0:
+                    if updated_item['sale_enabled'] and updated_item['sale_end_on_stock']:
+                        conn.execute('''
+                            UPDATE inventory_items SET sale_enabled = 0 WHERE id = ?
+                        ''', (item['inventory_item_id'],))
+                        logger.info(f"Sale auto-ended for item {item['inventory_item_id']} due to stock depletion.")
         
         conn.commit()
         clear_cart()
@@ -267,7 +280,7 @@ def receipt(order_number):
     
     # JOIN with inventory_items to get addon_1 and addon_2 fields
     items = conn.execute('''
-        SELECT oi.*, ii.addon_1, ii.addon_2
+        SELECT oi.*, ii.addon_1, ii.addon_2, ii.sell_price as current_reg_price
         FROM pos_order_items oi
         LEFT JOIN inventory_items ii ON oi.inventory_item_id = ii.id
         WHERE oi.order_id = ?
@@ -322,7 +335,7 @@ def receipt_print(order_number):
     
     # JOIN with inventory_items to get addon_1 and addon_2 fields
     items = conn.execute('''
-        SELECT oi.*, ii.addon_1, ii.addon_2
+        SELECT oi.*, ii.addon_1, ii.addon_2, ii.sell_price as current_reg_price
         FROM pos_order_items oi
         LEFT JOIN inventory_items ii ON oi.inventory_item_id = ii.id
         WHERE oi.order_id = ?

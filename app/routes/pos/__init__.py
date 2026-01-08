@@ -37,6 +37,7 @@ from app.routes.pos import management
 from app.routes.pos import api
 from app.routes.pos import auth as pos_auth
 from app.routes.pos import coupons
+from app.routes.pos import sales_mgmt
 
 # Re-export commonly used functions for convenience
 from app.routes.pos.core import is_pos_enabled, get_tax_rate, get_pos_setting
