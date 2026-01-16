@@ -109,6 +109,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS packages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tracking_number TEXT UNIQUE NOT NULL,
+                sku TEXT,
                 item_name TEXT,
                 status TEXT DEFAULT 'pending', 
                 source TEXT DEFAULT 'manifest',
@@ -143,7 +144,20 @@ def init_db():
         cur.execute('CREATE INDEX IF NOT EXISTS idx_status ON packages (status)')
         cur.execute('CREATE INDEX IF NOT EXISTS idx_date_expected ON packages (date_expected)')
         
-        # 4. Login Attempts Table (Security Logging)
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_date_expected ON packages (date_expected)')
+        
+        # 4. Product Mappings (V2.5.0)
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS product_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                package_name TEXT NOT NULL,
+                inventory_sku TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        cur.execute('CREATE INDEX IF NOT EXISTS idx_mapping_pkg_name ON product_mappings(package_name)')
+
+        # 5. Login Attempts Table (Security Logging)
         cur.execute('''
             CREATE TABLE IF NOT EXISTS login_attempts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,

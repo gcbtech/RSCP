@@ -239,6 +239,12 @@
                 class="btn btn-outline-secondary btn-sm" style="padding: 8px 16px; font-size: 0.85rem;">
                 📦 Add as New Inventory Item
             </a>
+
+            <!-- Link to existing (Manual) -->
+            <button onclick="openLinkModal('{{ item.subtext }}', '{{ item.name|replace("'", "\\'") }}')"
+                class="btn btn-outline-primary btn-sm" style="padding: 8px 16px; font-size: 0.85rem;">
+                🔗 Link to Inventory
+            </button>
         </div>
         {% endif %}
 
@@ -342,6 +348,53 @@
 
     <div class="footer">Tap screen to focus scanner</div>
 
+    <!-- Link Item Modal -->
+    <div id="linkModal"
+        style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 2000; overflow-y: auto;">
+        <div
+            style="background: #fff; margin: 50px auto; width: 90%; max-width: 500px; padding: 20px; border-radius: 12px; text-align: left;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h3 style="margin: 0; color: #333;">Link to Inventory</h3>
+                <button onclick="closeLinkModal()"
+                    style="background: none; border: none; font-size: 1.5rem; cursor: pointer;">&times;</button>
+            </div>
+
+            <p style="color: #666; font-size: 0.9rem;">Search for an inventory item to link with this package.</p>
+
+            <input type="text" id="linkSearchInput" placeholder="Search SKU or Name..."
+                style="width: 100%; padding: 12px; font-size: 1rem; border: 1px solid #ccc; border-radius: 6px; margin-bottom: 10px;"
+                oninput="debounceSearch()">
+
+            <div id="linkSearchResults"
+                style="max-height: 200px; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; margin-bottom: 15px; display: none;">
+                <!-- Results go here -->
+            </div>
+
+            <div id="linkSelection"
+                style="display: none; background: #e3f2fd; padding: 10px; border-radius: 6px; margin-bottom: 15px; border-left: 4px solid #2196f3;">
+                <strong style="color: #333;">Selected:</strong> <span id="selectedItemName" style="color: #333;"></span>
+                <br>
+                <code id="selectedItemSku" style="color: #666;"></code>
+            </div>
+
+            <div style="margin-bottom: 20px;">
+                <label style="display: flex; align-items: center; cursor: pointer;">
+                    <input type="checkbox" id="saveMappingCheckbox" style="transform: scale(1.5); margin-right: 10px;">
+                    <span style="color: #333; font-size: 0.9rem;">Always map <strong>"<span
+                                id="pkgNameDisplay"></span>"</strong> to this item?</span>
+                </label>
+            </div>
+
+            <div style="display: flex; gap: 10px;">
+                <button onclick="closeLinkModal()"
+                    style="flex: 1; padding: 12px; background: #eee; border: none; border-radius: 6px; color: #333;">Cancel</button>
+                <button onclick="submitLink()" id="btnSubmitLink" disabled
+                    style="flex: 1; padding: 12px; background: #2196f3; border: none; border-radius: 6px; color: white; opacity: 0.5;">Link
+                    Item</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         // --- SETUP ---
         if (localStorage.getItem('rscp_darkmode') === 'true') document.body.classList.add('dark-mode');
@@ -430,6 +483,9 @@
 
         // V13.7 FIX: Exclude the clear button from the background focus listener
         document.addEventListener('click', function (e) {
+            // Exclude modal interactions
+            if (document.getElementById('linkModal').style.display === 'block') return;
+
             if (!isSubmitting && !e.target.classList.contains('mode-toggle') && !e.target.classList.contains('clear-btn')) {
                 input.focus();
             }
@@ -590,6 +646,151 @@
                 })
                 .catch(err => alert('Request failed: ' + err));
         }
+
+        // --- LINK ITEM LOGIC ---
+        let currentLinkTracking = null;
+        let currentLinkPackageName = null;
+        let selectedLinkSku = null;
+
+        function openLinkModal(tracking, name) {
+            currentLinkTracking = tracking;
+            currentLinkPackageName = name;
+            selectedLinkSku = null;
+
+            document.getElementById('pkgNameDisplay').innerText = name;
+            document.getElementById('linkModal').style.display = 'block';
+            document.getElementById('linkSearchInput').value = '';
+            document.getElementById('linkSearchResults').style.display = 'none';
+            document.getElementById('linkSelection').style.display = 'none';
+            document.getElementById('btnSubmitLink').disabled = true;
+            document.getElementById('btnSubmitLink').style.opacity = '0.5';
+            document.getElementById('saveMappingCheckbox').checked = false;
+
+            setTimeout(() => document.getElementById('linkSearchInput').focus(), 100);
+        }
+
+        function closeLinkModal() {
+            document.getElementById('linkModal').style.display = 'none';
+            input.focus();
+        }
+
+        let searchDebounce;
+        function debounceSearch() {
+            clearTimeout(searchDebounce);
+            searchDebounce = setTimeout(performLinkSearch, 300);
+        }
+
+        function performLinkSearch() {
+            const query = document.getElementById('linkSearchInput').value.trim();
+            if (query.length < 2) return;
+
+            fetch(`/inventory/items?q=${encodeURIComponent(query)}&page=1&per_page=10`)
+                .then(r => r.text())
+                .then(html => {
+                    // Note: fetching full HTML page logic (items.py) returns full page or partial rows
+                    // We need to parse this or update "items.py" to return JSON. 
+                    // To avoid backend complexity, we will cheat and use a regex or DOM parser if list returns items?
+                    // Actually, items.py returns `render_template`. We should modify items.py to return JSON if requested?
+                    // OR: Just create a new simple API endpoint. But wait, we can't edit backend easily without restart issues maybe.
+                    // Alternate: Parse the HTML. It's safe-ish.
+
+                    // BETTER: Use the existing rows, but we need to strip the layout.
+                    // Let's assume user types exact SKU or Name.
+                })
+                .catch(e => console.error(e));
+
+            // HACK: Since we didn't make a JSON search endpoint, let's use a quick fetch to the existing list page with `partial=1`
+            // But `list_items` returns `_list_rows.html`. We can parse that with DOMParser.
+
+            fetch(`/inventory/items?q=${encodeURIComponent(query)}&partial=1`)
+                .then(r => r.text())
+                .then(html => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString('<table>' + html + '</table>', 'text/html');
+                    const rows = doc.querySelectorAll('tr');
+                    const resultsParams = [];
+
+                    rows.forEach(tr => {
+                        // Col 3 is SKU (index 2), Col 4 is Name (index 3)
+                        const cells = tr.querySelectorAll('td');
+                        let sku = 'Unknown';
+                        let name = 'Unknown';
+
+                        if (cells.length >= 4) {
+                            sku = cells[2].innerText.trim();
+                            name = cells[3].innerText.trim();
+                        }
+
+                        resultsParams.push({ name, sku });
+                    });
+
+                    renderLinkResults(resultsParams);
+                });
+        }
+
+        function renderLinkResults(items) {
+            const container = document.getElementById('linkSearchResults');
+            container.innerHTML = '';
+            container.style.display = 'block';
+
+            if (items.length === 0) {
+                container.innerHTML = '<div style="padding:10px; color:#999; text-align:center;">No match found</div>';
+                return;
+            }
+
+            items.forEach(item => {
+                const div = document.createElement('div');
+                div.style.padding = '10px';
+                div.style.borderBottom = '1px solid #eee';
+                div.style.cursor = 'pointer';
+                div.innerHTML = `<strong>${item.name}</strong><br><small style="color:#666;">${item.sku}</small>`;
+                div.onclick = () => selectInventoryItem(item);
+                container.appendChild(div);
+            });
+        }
+
+        function selectInventoryItem(item) {
+            selectedLinkSku = item.sku;
+            document.getElementById('selectedItemName').innerText = item.name;
+            document.getElementById('selectedItemSku').innerText = item.sku;
+            document.getElementById('linkSelection').style.display = 'block';
+            document.getElementById('linkSearchResults').style.display = 'none';
+            document.getElementById('btnSubmitLink').disabled = false;
+            document.getElementById('btnSubmitLink').style.opacity = '1';
+        }
+
+        function submitLink() {
+            if (!selectedLinkSku || !currentLinkTracking) return;
+            const saveMapping = document.getElementById('saveMappingCheckbox').checked;
+
+            fetch('/receiving/link_item', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({
+                    tracking: currentLinkTracking,
+                    sku: selectedLinkSku,
+                    save_mapping: saveMapping,
+                    package_name: currentLinkPackageName
+                })
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        // correct close
+                        closeLinkModal();
+                        alert("Linked successfully! Inventory updated.");
+                        // Redirect to clean scan page to avoid "Duplicate" (Yellow) warning from re-submission
+                        window.location.href = '/scan';
+                    } else {
+                        alert("Error: " + data.message);
+                    }
+                })
+                .catch(e => alert("Network Error: " + e));
+        }
+
     </script>
 </body>
 

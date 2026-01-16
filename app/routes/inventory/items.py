@@ -295,7 +295,12 @@ def list_items():
             total = conn.execute(f'SELECT COUNT(*) FROM inventory_items {search_clause}', search_params).fetchone()[0]
             
             items = conn.execute(f'''
-                SELECT * FROM inventory_items 
+                SELECT *,
+                (SELECT SUM(quantity) FROM packages p 
+                 WHERE p.sku = inventory_items.sku 
+                 AND p.status NOT IN ('received', 'refunded', 'return_pending', 'returned', 'archived')
+                ) as incoming_count
+                FROM inventory_items 
                 {search_clause}
                 ORDER BY {sort_by} {order_dir}
                 LIMIT ? OFFSET ?
@@ -305,7 +310,12 @@ def list_items():
             total = conn.execute('SELECT COUNT(*) FROM inventory_items').fetchone()[0]
             
             items = conn.execute(f'''
-                SELECT * FROM inventory_items 
+                SELECT *,
+                (SELECT SUM(quantity) FROM packages p 
+                 WHERE p.sku = inventory_items.sku 
+                 AND p.status NOT IN ('received', 'refunded', 'return_pending', 'returned', 'archived')
+                ) as incoming_count
+                FROM inventory_items 
                 ORDER BY {sort_by} {order_dir}
                 LIMIT ? OFFSET ?
             ''', (per_page, offset)).fetchall()

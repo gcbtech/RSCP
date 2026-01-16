@@ -27,6 +27,10 @@
                 {% else %}
                 <span class="badge bg-success" title="In Stock">{{ item.quantity }}</span>
                 {% endif %}
+                {% if item.incoming_count and item.incoming_count > 0 %}
+                <span class="badge bg-info text-dark" title="Incoming (Expected/Pending)"
+                    style="font-size: 0.75rem;">+{{ item.incoming_count }} incoming</span>
+                {% endif %}
     </td>
     <td class="col-cost">
         ${{ "%.2f"|format(item.buy_price or 0) }}
@@ -113,49 +117,50 @@
                 <button type="submit" class="btn btn-outline-danger">🗑️</button>
             </form>
         </div>
+        <!-- Adjust Modal -->
+        <div class="modal fade" id="adjustModal{{ item.id }}" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content text-start">
+                    <form action="/inventory/adjust/{{ item.id }}" method="POST">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Adjust: {{ item.name }}</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label class="form-label">Current Quantity: <strong>{{ item.quantity
+                                        }}</strong></label>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Quantity Change (+/-)</label>
+                                <input type="number" name="quantity_change" class="form-control"
+                                    placeholder="e.g., -1 or +5" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Reason</label>
+                                <select name="reason" class="form-select" id="reasonSelect{{ item.id }}">
+                                    <option value="Sold/Consumed" selected>Sold/Consumed</option>
+                                    <option value="Received">Received</option>
+                                    <option value="Returned">Returned</option>
+                                    <option value="Damaged">Damaged</option>
+                                    <option value="Count Correction">Count Correction</option>
+                                    <option value="custom">Other (specify)...</option>
+                                </select>
+                                <input type="text" id="customReason{{ item.id }}" class="form-control mt-2"
+                                    placeholder="Enter custom reason" style="display:none;">
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" class="btn btn-primary">Apply</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
     </td>
 </tr>
 
-<!-- Adjust Modal -->
-<div class="modal fade" id="adjustModal{{ item.id }}" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <form action="/inventory/adjust/{{ item.id }}" method="POST">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <div class="modal-header">
-                    <h5 class="modal-title">Adjust: {{ item.name }}</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">Current Quantity: <strong>{{ item.quantity
-                                }}</strong></label>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Quantity Change (+/-)</label>
-                        <input type="number" name="quantity_change" class="form-control" placeholder="e.g., -1 or +5"
-                            required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Reason</label>
-                        <select name="reason" class="form-select" id="reasonSelect{{ item.id }}">
-                            <option value="Sold/Consumed" selected>Sold/Consumed</option>
-                            <option value="Received">Received</option>
-                            <option value="Returned">Returned</option>
-                            <option value="Damaged">Damaged</option>
-                            <option value="Count Correction">Count Correction</option>
-                            <option value="custom">Other (specify)...</option>
-                        </select>
-                        <input type="text" id="customReason{{ item.id }}" class="form-control mt-2"
-                            placeholder="Enter custom reason" style="display:none;">
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Apply</button>
-                </div>
-            </form>
-        </div>
-    </div>
-</div>
+
 {% endfor %}

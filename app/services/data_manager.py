@@ -182,10 +182,29 @@ def sync_manifest():
             
             skipped_count = 0
             
+            # Detect Header Format
+            has_duplicate_headers = 'TrackingNumber.1' in headers
+            
+            ids_to_clean = set()
+            
             for row in rows:
-                # Clean Tracking Number (Handle Excel format ="123")
-                raw_tracking = str(row.get('TrackingNumber', '')).strip()
-                tracking = raw_tracking.replace('="', '').replace('"', '').strip()
+                tracking = ""
+                # Strict Header Logic
+                if has_duplicate_headers:
+                    # eBay format: TrackingNumber (Col 0) is Order ID, TrackingNumber.1 (Col 12) is Real Tracking
+                    real_tracking = str(row.get('TrackingNumber.1', '')).strip().replace('="', '').replace('"', '')
+                    order_id = str(row.get('TrackingNumber', '')).strip().replace('="', '').replace('"', '')
+                    
+                    if real_tracking:
+                        tracking = real_tracking
+                    
+                    # Always mark the Order ID for cleanup if it looks like an ID
+                    if order_id and len(order_id) > 5 and order_id != tracking:
+                        ids_to_clean.add(order_id)
+                else:
+                    # Standard Format
+                    raw_tracking = str(row.get('TrackingNumber', '')).strip()
+                    tracking = raw_tracking.replace('="', '').replace('"', '').strip()
                 
                 if not tracking: 
                     skipped_count += 1
@@ -195,7 +214,6 @@ def sync_manifest():
                 item_name = str(row.get('ItemName', 'Unknown')).strip().replace('="', '').replace('"', '')
                 
                 # ... existing date/qty logic ...
-                # Re-implementing simplified for the replacement block
                 date_str = parse_date(str(row.get('Date', '')))
                 
                 try:
@@ -210,12 +228,17 @@ def sync_manifest():
                 asin = str(row.get('ASIN', '')).strip().replace('="', '').replace('"', '')
                 if asin.lower() == 'nan': asin = ""
                 
-                source_url = str(row.get('SourceURL', row.get('URL', row.get('PurchaseURL', row.get('Link', row.get('ProductLink', row.get('Product URL', ''))))))).strip()
-                if source_url.lower() == 'nan': source_url = ""
+                # Fix Source URL: Check all possible variants
+                source_url = ""
+                for key in ['SourceURL', 'URL', 'PurchaseURL', 'Link', 'ProductLink', 'Product URL', 'View Order Detail']:
+                    val = str(row.get(key, '')).strip()
+                    if val and val.lower() != 'nan':
+                        source_url = val
+                        break
 
                 # Composite Key Match: Strict sync to avoid merging different items
                 # We match on Tracking + Item Name to allows multiple items per tracking number
-                cur.execute("SELECT id, manual_date, status, date_scanned, quantity, item_name FROM packages WHERE tracking_number = ? AND item_name = ?", (tracking, item_name))
+                cur.execute("SELECT id, manual_date, status, date_scanned, quantity, item_name, sku FROM packages WHERE tracking_number = ? AND item_name = ?", (tracking, item_name))
                 existing = cur.fetchone()
                 
                 status = 'on_time'
@@ -249,12 +272,18 @@ def sync_manifest():
                          if existing['date_scanned']:
                              status = 'received' 
                 
+                    # Check mapping for update as well
+                    sku = existing['sku']
+                    if not sku:
+                         mapping = conn.execute("SELECT inventory_sku FROM product_mappings WHERE package_name = ?", (item_name,)).fetchone()
+                         if mapping: sku = mapping['inventory_sku']
+
                     # Update strict match
                     cur.execute('''
                         UPDATE packages SET 
-                        date_expected=?, quantity=?, image_url=?, status=?, asin=?, source_url=?
+                        date_expected=?, quantity=?, image_url=?, status=?, asin=?, source_url=?, sku=?
                         WHERE id=?
-                    ''', (date_final, qty, img, status, asin, source_url, existing['id']))
+                    ''', (date_final, qty, img, status, asin, source_url, sku, existing['id']))
                     
                 else:
                     # New Package (Distinct Item)
@@ -267,13 +296,31 @@ def sync_manifest():
                     except ValueError:
                         pass 
 
+                    # Auto-Map Check
+                    sku = None
+                    mapping = conn.execute("SELECT inventory_sku FROM product_mappings WHERE package_name = ?", (item_name,)).fetchone()
+                    if mapping:
+                        sku = mapping['inventory_sku']
+
                     cur.execute('''
-                        INSERT INTO packages (tracking_number, item_name, date_expected, quantity, image_url, status, asin, source_url)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (tracking, item_name, date_str, qty, img, status, asin, source_url))
+                        INSERT INTO packages (tracking_number, item_name, date_expected, quantity, image_url, status, asin, source_url, sku)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (tracking, item_name, date_str, qty, img, status, asin, source_url, sku))
             
             if skipped_count > 0:
                 logger.info(f"Manifest Sync: Skipped {skipped_count} rows due to missing tracking numbers.")
+            
+            # Batch Cleanup of Invalid Order IDs
+            if ids_to_clean:
+                logger.info(f"Cleaning occurred: Removes {len(ids_to_clean)} invalid tracking numbers (Order IDs)")
+                # Delete in chunks OF 500
+                clean_list = list(ids_to_clean)
+                chunk_size = 500
+                for i in range(0, len(clean_list), chunk_size):
+                    chunk = clean_list[i:i + chunk_size]
+                    placeholders = ','.join('?' for _ in chunk)
+                    # Protect Manual Items from deletion
+                    cur.execute(f"DELETE FROM packages WHERE tracking_number IN ({placeholders}) AND source != 'manual'", chunk)
             
             conn.commit()
             conn.close()
@@ -465,10 +512,15 @@ def log_receipt(tracking: str, item_name: str, quantity: str, user: str) -> None
 
         else:
             # Create Package (Auto-Manifest)
+            # Check mapping for auto-manifest items too
+            sku = None
+            mapping = conn.execute("SELECT inventory_sku FROM product_mappings WHERE package_name = ?", (item_name,)).fetchone()
+            if mapping: sku = mapping['inventory_sku']
+
             conn.execute('''
-                INSERT INTO packages (tracking_number, item_name, quantity, status, source, date_expected, date_scanned)
-                VALUES (?, ?, ?, 'received', 'scan', CURRENT_DATE, CURRENT_TIMESTAMP)
-            ''', (tracking, item_name, quantity))
+                INSERT INTO packages (tracking_number, item_name, quantity, status, source, date_expected, date_scanned, sku)
+                VALUES (?, ?, ?, 'received', 'scan', CURRENT_DATE, CURRENT_TIMESTAMP, ?)
+            ''', (tracking, item_name, quantity, sku))
             
             # Get the new ID
             pkg_id = conn.execute("SELECT id FROM packages WHERE tracking_number = ?", (tracking,)).fetchone()['id']

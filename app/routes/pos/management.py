@@ -635,6 +635,32 @@ def daily_report():
     total_card = 0
     total_card_net = 0
     
+    # Fetch Split Payment Details for precise allocation
+    split_orders = conn.execute('''
+        SELECT payment_details, total, tax_amount
+        FROM pos_orders
+        WHERE created_at BETWEEN ? AND ? AND status != 'held' AND payment_method = 'split'
+    ''', (start_dt, end_dt)).fetchall()
+
+    split_cash_total = 0
+    split_card_total = 0
+    
+    # Pre-calculate totals from individual split orders
+    for sp in split_orders:
+        try:
+            details = json.loads(sp['payment_details'])
+            cash_part = float(details.get('cash', 0))
+            # Cards can be a list of amounts
+            card_part = sum(float(x) for x in details.get('cards', []))
+            
+            split_cash_total += cash_part
+            split_card_total += card_part
+        except (ValueError, TypeError, json.JSONDecodeError):
+            pass
+
+    # 4. Hourly Sales (Chart data) - Fix Timezone
+    # (Leaving this comment to match context, but we are editing the loop above)
+    
     for p in payments:
         method = p['payment_method']
         amount = p['total_amount'] or 0
@@ -643,14 +669,43 @@ def daily_report():
         
         refund_amount = refund_map.get(method, 0)
         
-        # Adjust for refunds
-        # Note: We subtract refunds from the Gross Amount for the "Total Card/Cash" display
-        # and also from the Net amount.
-        
         if method == 'cash':
             total_cash += (amount - refund_amount)
             total_cash_net += (net - refund_amount)
+        elif method == 'split':
+            # Use our calculated split totals
+            # We must also allocate tax/net. 
+            # Simplified: Attribute Tax proportionally to the total split amounts
+            
+            # Total money in splits
+            s_total = split_cash_total + split_card_total
+            if s_total > 0:
+                s_cash_ratio = split_cash_total / s_total
+                s_card_ratio = split_card_total / s_total
+            else:
+                s_cash_ratio = 0
+                s_card_ratio = 1
+            
+            # Calc tax portions for the aggregate 'split' row
+            # (Use the aggregate tax from the main query to ensure totals match exactly)
+            split_tax_cash = tax * s_cash_ratio
+            split_tax_card = tax * s_card_ratio
+            
+            # Net parts
+            s_cash_net = split_cash_total - split_tax_cash
+            s_card_net = split_card_total - split_tax_card
+            
+            # We assume refunds on splits come out of Card for safety/simplicity 
+            # (unless we track refund types strictly, which is out of scope for this bugfix)
+            
+            total_cash += split_cash_total
+            total_cash_net += s_cash_net
+            
+            total_card += (split_card_total - refund_amount)
+            total_card_net += (s_card_net - refund_amount)
+            
         else:
+            # Card or other
             total_card += (amount - refund_amount)
             total_card_net += (net - refund_amount)
 
@@ -783,9 +838,30 @@ def daily_report_print():
     total_cash = 0
     total_card = 0
     
+    # Fetch split details inline
+    split_orders = conn.execute('''
+        SELECT payment_details
+        FROM pos_orders
+        WHERE created_at BETWEEN ? AND ? AND status != 'held' AND payment_method = 'split'
+    ''', (start_dt, end_dt)).fetchall()
+    
+    split_cash_total = 0
+    split_card_total = 0
+    
+    for sp in split_orders:
+        try:
+            details = json.loads(sp['payment_details'])
+            split_cash_total += float(details.get('cash', 0))
+            split_card_total += sum(float(x) for x in details.get('cards', []))
+        except:
+            pass
+    
     for p in payments:
         if p['payment_method'] == 'cash':
             total_cash += p['total_amount']
+        elif p['payment_method'] == 'split':
+            total_cash += split_cash_total
+            total_card += split_card_total
         else:
             total_card += p['total_amount']
 

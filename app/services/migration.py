@@ -129,7 +129,7 @@ def ensure_db_ready():
         # POS Module Tables (V1.18)
         _create_pos_tables(conn)
         
-        _create_pos_coupon_tables(conn)
+        # _create_pos_coupon_tables(conn)
         _create_timeclock_tables(conn)
         _create_scheduled_shifts_table(conn)
         _create_scheduled_shifts_table(conn)
@@ -144,6 +144,26 @@ def ensure_db_ready():
         except sqlite3.OperationalError:
             pass  # Columns likely already exist
             
+            
+        # V2.5.0: SKU Matching Support
+        try:
+            conn.execute("ALTER TABLE packages ADD COLUMN sku TEXT")
+            conn.commit()
+            logger.info("Added sku column to packages.")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
+        # Product Mappings Table (for recurring order matching)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS product_mappings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                package_name TEXT NOT NULL,
+                inventory_sku TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_mapping_pkg_name ON product_mappings(package_name)')
+        conn.commit()
             
     except Exception as e:
         logger.error(f"Migration Schema Check Error: {e}")

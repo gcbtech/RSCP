@@ -6,7 +6,7 @@ import os
 import datetime
 import logging
 import pandas as pd
-from flask import render_template, request, redirect, url_for, session, flash
+from flask import render_template, request, redirect, url_for, session, flash, jsonify
 from flask_login import current_user
 
 from app.routes.admin import admin_bp, require_admin, save_config_value
@@ -159,6 +159,7 @@ def add_manual_item():
     
     tracking = request.form.get('tracking', '').strip()
     name = request.form.get('name', '').strip()
+    sku = request.form.get('sku', '').strip() or None
     date_input = request.form.get('date', '')
     is_priority = request.form.get('priority') == 'on' 
     
@@ -178,9 +179,9 @@ def add_manual_item():
                     pass  # Date parsing failed
             
             conn.execute('''
-                INSERT INTO packages (tracking_number, item_name, date_expected, quantity, status, source, priority, manual_date)
-                VALUES (?, ?, ?, 1, ?, 'manual', ?, ?)
-            ''', (tracking, name, date_input, status, 1 if is_priority else 0, date_input))
+                INSERT INTO packages (tracking_number, item_name, date_expected, quantity, status, source, priority, manual_date, sku)
+                VALUES (?, ?, ?, 1, ?, 'manual', ?, ?, ?)
+            ''', (tracking, name, date_input, status, 1 if is_priority else 0, date_input, sku))
             conn.commit()
             
             # In-app notification for new package
@@ -213,8 +214,57 @@ def add_manual_item():
     return redirect(url_for('admin.admin_panel'))
 
 
-@admin_bp.route('/delete_package/<tracking>', methods=['POST'])
-def delete_package_from_db(tracking):
+@admin_bp.route('/set_sku/<int:package_id>', methods=['POST'])
+def set_package_sku(package_id):
+    """Update package SKU."""
+    error = require_admin()
+    if error:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        
+    sku = request.form.get('sku', '').strip() or None
+    
+    conn = get_db_connection()
+    try:
+        conn.execute("UPDATE packages SET sku = ? WHERE id = ?", (sku, package_id))
+        conn.commit()
+        return {'success': True}
+    except Exception as e:
+        logger.error(f"Error setting SKU: {e}")
+        return {'success': False, 'error': str(e)}, 500
+    finally:
+        conn.close()
+
+
+
+
+
+@admin_bp.route('/set_quantity/<int:package_id>', methods=['POST'])
+def set_package_quantity(package_id):
+    """Update package Quantity."""
+    error = require_admin()
+    if error:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        
+    try:
+        qty = int(request.form.get('quantity', '1'))
+        if qty < 0: raise ValueError("Negative quantity")
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid Quantity'}), 400
+    
+    conn = get_db_connection()
+    try:
+        conn.execute("UPDATE packages SET quantity = ? WHERE id = ?", (qty, package_id))
+        conn.commit()
+        return {'success': True}
+    except Exception as e:
+        logger.error(f"Error setting Quantity: {e}")
+        return {'success': False, 'error': str(e)}, 500
+    finally:
+        conn.close()
+
+
+@admin_bp.route('/delete_package/<int:package_id>', methods=['POST'])
+def delete_package_from_db(package_id):
     """Delete a package."""
     error = require_admin()
     if error:
@@ -222,10 +272,21 @@ def delete_package_from_db(tracking):
     
     conn = get_db_connection()
     try:
-        conn.execute("DELETE FROM packages WHERE tracking_number = ?", (tracking,))
+        # Get package details for logging
+        pkg = conn.execute("SELECT tracking_number, item_name FROM packages WHERE id = ?", (package_id,)).fetchone()
+        
+        conn.execute("DELETE FROM packages WHERE id = ?", (package_id,))
+        # Also delete history for this specific package ID
+        conn.execute("DELETE FROM history WHERE package_id = ?", (package_id,))
         conn.commit()
+        
+        if pkg:
+            logger.info(f"Deleted package {pkg['tracking_number']} ({pkg['item_name']})")
+            flash(f"Deleted package {pkg['tracking_number']}", 'success')
+            
     except Exception as e:
         logger.error(f"Delete error: {e}")
+        flash(f"Error deleting package: {e}", 'error')
     finally:
         conn.close()
     

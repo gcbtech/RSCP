@@ -264,7 +264,7 @@ def scan_page_legacy():
         config = load_config()
         inv_enabled = config.get('INVENTORY_ENABLED', False) if config else False
         
-        # V1.16.1: Check if received package matches existing inventory item
+            # V1.16.1: Check if received package matches existing inventory item
         if inv_enabled and color == "#77dd77" and items:
             try:
                 inv_conn = get_db_connection()
@@ -272,8 +272,24 @@ def scan_page_legacy():
                     pkg_asin = items[0].get('asin', '') or ''
                     pkg_name = items[0].get('name', '') or ''
                     
-                    # Try ASIN match first (exact)
-                    if pkg_asin and pkg_asin.strip():
+                    # 1. Try SKU Match (if package has one from Manifest or Mapping)
+                    # We need to fetch the SKU from the package row we just fetched if it exists
+                    pkg_sku = None
+                    if rows and 'sku' in rows[0].keys():
+                        pkg_sku = rows[0]['sku']
+                    
+                    # If no SKU on package, check product_mappings (Real-time check)
+                    if not pkg_sku:
+                        mapping = inv_conn.execute("SELECT inventory_sku FROM product_mappings WHERE package_name = ?", (pkg_name,)).fetchone()
+                        if mapping: pkg_sku = mapping['inventory_sku']
+
+                    if pkg_sku:
+                        match = inv_conn.execute("SELECT id, name, sku, quantity, image_url FROM inventory_items WHERE sku = ?", (pkg_sku,)).fetchone()
+                        if match:
+                            inventory_match = dict(match)
+
+                    # 2. Try ASIN match (exact)
+                    if not inventory_match and pkg_asin and pkg_asin.strip():
                         match = inv_conn.execute(
                             "SELECT id, name, sku, quantity, image_url FROM inventory_items WHERE asin = ?",
                             (pkg_asin.strip(),)
@@ -281,7 +297,7 @@ def scan_page_legacy():
                         if match:
                             inventory_match = dict(match)
                     
-                    # Try name match (fuzzy - case insensitive contains)
+                    # 3. Try name match (fuzzy - case insensitive contains)
                     if not inventory_match and pkg_name and pkg_name.strip():
                         # Use first 30 chars for matching (handles truncated names)
                         search_prefix = pkg_name[:30].lower().rstrip('.').rstrip()
@@ -594,5 +610,57 @@ def expected_view():
     return render_template('expected.html', items=items)
 
 @main_bp.route('/search')
-def global_search():
-    return redirect(url_for('main.history_view'))
+@main_bp.route('/receiving/link_item', methods=['POST'])
+@login_required
+def link_item():
+    data = request.json
+    tracking = data.get('tracking')
+    inventory_sku = data.get('sku')
+    save_mapping = data.get('save_mapping', False)
+    package_name = data.get('package_name')
+
+    if not tracking or not inventory_sku:
+        return {"status": "error", "message": "Missing Data"}
+
+    conn = get_db_connection()
+    try:
+        # 1. Update Package SKU
+        conn.execute("UPDATE packages SET sku = ? WHERE tracking_number = ?", (inventory_sku, tracking))
+        
+        # 2. Update Product Mapping (if requested)
+        if save_mapping and package_name:
+            # Check if mapping exists
+            existing = conn.execute("SELECT id FROM product_mappings WHERE package_name = ?", (package_name,)).fetchone()
+            if existing:
+                conn.execute("UPDATE product_mappings SET inventory_sku = ? WHERE id = ?", (inventory_sku, existing['id']))
+            else:
+                conn.execute("INSERT INTO product_mappings (package_name, inventory_sku) VALUES (?, ?)", (package_name, inventory_sku))
+        
+        # 3. Add to Inventory (if package was already received)
+        # Calculate total quantity of RECEIVED packages with this tracking that were just linked
+        # We assume they weren't added before because the user is manually linking them now.
+        received_rows = conn.execute("""
+            SELECT quantity FROM packages 
+            WHERE tracking_number = ? AND date_scanned IS NOT NULL
+        """, (tracking,)).fetchall()
+        
+        total_qty = sum([r['quantity'] for r in received_rows])
+        logger.info(f"Link Item: Tracking={tracking}, SKU={inventory_sku}, ReceivedRows={len(received_rows)}, TotalQty={total_qty}")
+        
+        if total_qty > 0:
+            inv_item = conn.execute("SELECT id, name FROM inventory_items WHERE sku = ?", (inventory_sku,)).fetchone()
+            if inv_item:
+                conn.execute("UPDATE inventory_items SET quantity = quantity + ? WHERE id = ?", (total_qty, inv_item['id']))
+                logger.info(f"Linked & Added Stock: ID={inv_item['id']} ({inv_item['name']}) += {total_qty}")
+            else:
+                logger.warning(f"Link Item: Inventory Item NOT FOUND for SKU={inventory_sku}")
+        else:
+             logger.warning(f"Link Item: No received packages found (or qty=0) for {tracking}. date_scanned might be NULL.")
+
+        conn.commit()
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Link Item Error: {e}")
+        return {"status": "error", "message": str(e)}
+    finally:
+        conn.close()

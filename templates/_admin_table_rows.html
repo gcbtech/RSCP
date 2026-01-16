@@ -46,6 +46,40 @@
         <span class="fw-bold" title="{{ data.name }}">{{ data.name[:80] }}{% if
             data.name|length > 80 %}...{% endif %}</span>
     </td>
+    </td>
+    <td>
+        <div class="qty-display" id="qtyDisplay_{{ data.id }}">
+            <span onclick="toggleQtyEdit({{ data.id }})" style="cursor: pointer;" title="Click to edit Qty">
+                <code>{{ data.quantity or 1 }}</code>
+            </span>
+        </div>
+        <div class="qty-editor d-none" id="qtyEditor_{{ data.id }}">
+            <div class="d-flex" style="width: 80px;">
+                <input type="number" id="qtyInput_{{ data.id }}" class="form-control form-control-sm px-1 py-0 me-1"
+                    value="{{ data.quantity or 1 }}" min="1" step="1" style="height: 24px;">
+                <button type="button" class="btn btn-sm btn-success py-0 px-1" onclick="submitQty({{ data.id }})"
+                    style="height: 24px; line-height: 1;">✓</button>
+            </div>
+        </div>
+    </td>
+    <td>
+        <div class="sku-display" id="skuDisplay_{{ data.id }}">
+            <span onclick="toggleSkuEdit({{ data.id }})" style="cursor: pointer;" title="Click to edit SKU">
+                {% if data.sku %}
+                <code>{{ data.sku }}</code>
+                {% else %}
+                <small class="text-muted">Set SKU</small>
+                {% endif %}
+            </span>
+        </div>
+        <div class="sku-editor d-none" id="skuEditor_{{ data.id }}">
+            <div class="d-flex">
+                <input type="text" id="skuInput_{{ data.id }}" class="form-control form-control-sm me-1"
+                    value="{{ data.sku or '' }}" placeholder="SKU" style="width: 100px;">
+                <button type="button" class="btn btn-sm btn-success" onclick="submitSku({{ data.id }})">✓</button>
+            </div>
+        </div>
+    </td>
     <td>
         <div style="font-family: monospace; font-size: 0.85rem;">{{ tracking }}
         </div>
@@ -101,7 +135,7 @@
             </a>
             {% endif %}
 
-            <form action="/admin/delete_package/{{ tracking }}" method="POST" style="display:inline;"
+            <form action="/admin/delete_package/{{ data.id }}" method="POST" style="display:inline;"
                 onsubmit="return confirm('Delete {{ tracking }}? This will also remove it from history.');">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-sm btn-danger ms-1">DELETE</button>

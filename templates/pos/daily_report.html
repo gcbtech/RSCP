@@ -107,19 +107,6 @@
         <!-- User Requested Financials: Cash, Card, Tax, Overall -->
         <div class="row g-3 mb-4">
             <div class="col-md-3 col-6">
-                <div class="card h-100 border-success border-start border-3">
-                    <div class="card-body">
-                        <h6 class="text-muted text-uppercase small">Total Cash</h6>
-                        <h3 class="fw-bold text-success">${{ "%.2f"|format(total_cash or 0) }}</h3>
-                        <small class="text-muted d-block">Gross (collected)</small>
-                        <small class="text-dark fw-bold border-top pt-1 mt-1 d-block" style="font-size: 0.85em;">
-                            ${{ "%.2f"|format(total_cash_net or 0) }} <span class="text-muted fw-normal">(ex.
-                                tax)</span>
-                        </small>
-                    </div>
-                </div>
-            </div>
-            <div class="col-md-3 col-6">
                 <div class="card h-100 border-info border-start border-3">
                     <div class="card-body">
                         <h6 class="text-muted text-uppercase small">Total Card</h6>
@@ -127,6 +114,19 @@
                         <small class="text-muted d-block">Gross (collected)</small>
                         <small class="text-dark fw-bold border-top pt-1 mt-1 d-block" style="font-size: 0.85em;">
                             ${{ "%.2f"|format(total_card_net or 0) }} <span class="text-muted fw-normal">(ex.
+                                tax)</span>
+                        </small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card h-100 border-success border-start border-3">
+                    <div class="card-body">
+                        <h6 class="text-muted text-uppercase small">Total Cash</h6>
+                        <h3 class="fw-bold text-success">${{ "%.2f"|format(total_cash or 0) }}</h3>
+                        <small class="text-muted d-block">Gross (collected)</small>
+                        <small class="text-dark fw-bold border-top pt-1 mt-1 d-block" style="font-size: 0.85em;">
+                            ${{ "%.2f"|format(total_cash_net or 0) }} <span class="text-muted fw-normal">(ex.
                                 tax)</span>
                         </small>
                     </div>

@@ -531,6 +531,8 @@
                             <div class="card-body">
                                 <form action="/admin/add_manual_item" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="text" name="sku" class="form-control mb-2"
+                                        placeholder="SKU (Optional)">
                                     <input type="text" name="tracking" class="form-control mb-2"
                                         placeholder="Tracking Number" required>
                                     <input type="text" name="name" class="form-control mb-2" placeholder="Item Name"
@@ -1131,6 +1133,8 @@
                                     <thead>
                                         <tr>
                                             <th>Name</th>
+                                            <th>Qty</th>
+                                            <th>SKU</th>
                                             <th>Prefix</th>
                                             <th>Status</th>
                                             <th>Actions</th>
@@ -1817,18 +1821,31 @@
         });
 
         // Live Update
-        setInterval(function () {
+        // Live Update
+        function refreshPackages() {
             const url = new URL(window.location.href);
             url.searchParams.set('partial', '1');
             fetch(url)
                 .then(r => r.ok ? r.text() : Promise.reject('Network error'))
                 .then(html => {
                     const tbody = document.getElementById('packagesBody');
+                    if (!tbody) return;
+
                     const checked = tbody.querySelectorAll('input[type="checkbox"]:checked');
-                    if (checked.length === 0) tbody.innerHTML = html;
+
+                    // Check if user is editing a date (pencil icon clicked), sku, or has focus
+                    const isEditing = tbody.querySelector('.date-editor:not(.d-none)') || tbody.querySelector('.sku-editor:not(.d-none)');
+                    const hasFocus = tbody.contains(document.activeElement);
+
+                    // Only refresh if no items checked AND not editing
+                    if (checked.length === 0 && !isEditing && !hasFocus) {
+                        tbody.innerHTML = html;
+                    }
                 })
                 .catch(err => console.error('Live update failed:', err));
-        }, 5000);
+        }
+
+        setInterval(refreshPackages, 5000);
 
         // Helpers
         function showImage(src) {
@@ -1856,6 +1873,94 @@
         function toggleDateEdit(tracking) {
             document.getElementById('dateDisplay_' + tracking)?.classList.toggle('d-none');
             document.getElementById('dateEditor_' + tracking)?.classList.toggle('d-none');
+        }
+
+        function toggleSkuEdit(id) {
+            const display = document.getElementById('skuDisplay_' + id);
+            const editor = document.getElementById('skuEditor_' + id);
+            if (display && editor) {
+                display.classList.toggle('d-none');
+                editor.classList.toggle('d-none');
+            }
+        }
+
+        function toggleQtyEdit(id) {
+            const display = document.getElementById('qtyDisplay_' + id);
+            const editor = document.getElementById('qtyEditor_' + id);
+            if (display && editor) {
+                display.classList.toggle('d-none');
+                editor.classList.toggle('d-none');
+            }
+        }
+
+        function submitQty(id) {
+            const input = document.getElementById('qtyInput_' + id);
+            const val = input.value.trim();
+
+            fetch('/admin/set_quantity/' + id, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': "{{ csrf_token() }}"
+                },
+                body: 'quantity=' + encodeURIComponent(val)
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        // Optimistic Update
+                        const displayDiv = document.getElementById('qtyDisplay_' + id);
+                        const displaySpan = displayDiv.querySelector('span');
+
+                        displaySpan.innerHTML = `<code>${val || 1}</code>`;
+
+                        // Close editor
+                        toggleQtyEdit(id);
+
+                        // Background refresh
+                        refreshPackages();
+                    } else {
+                        alert('Error: ' + (data.error || 'Unknown'));
+                    }
+                })
+                .catch(e => console.error(e));
+        }
+
+        function submitSku(id) {
+            const input = document.getElementById('skuInput_' + id);
+            const val = input.value.trim();
+
+            fetch('/admin/set_sku/' + id, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': "{{ csrf_token() }}"
+                },
+                body: 'sku=' + encodeURIComponent(val)
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        // Optimistic Update
+                        const displayDiv = document.getElementById('skuDisplay_' + id);
+                        const displaySpan = displayDiv.querySelector('span');
+
+                        if (val) {
+                            displaySpan.innerHTML = `<code>${val}</code>`;
+                        } else {
+                            displaySpan.innerHTML = '<small class="text-muted">Set SKU</small>';
+                        }
+
+                        // Close editor
+                        toggleSkuEdit(id);
+
+                        // Background refresh
+                        refreshPackages();
+                    } else {
+                        alert('Error: ' + (data.error || 'Unknown'));
+                    }
+                })
+                .catch(e => console.error(e));
         }
 
         function submitDate(tracking) {
