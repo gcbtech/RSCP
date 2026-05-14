@@ -17,8 +17,10 @@ received_log.csv
 # Logs
 # ----------------------------------
 *.log
+*.log.*
 *.LOG
 app.log
+app.log.*
 logs/
 error_logs*.csv
 
