@@ -435,6 +435,8 @@
                                                     else %}↕{% endif %}
                                                 </a>
                                             </th>
+                                            <th style="width: 50px;">Qty</th>
+                                            <th style="width: 80px;">SKU</th>
                                             <th>Tracking</th>
                                             <th>
                                                 <a href="{{ url_for('admin.admin_panel', sort_by='status', order='desc' if sort_by=='status' and order=='asc' else 'asc', search=search_query) }}"
@@ -1634,7 +1636,15 @@
                                         <label class="form-check-label" for="ingestSwitch">Enable
                                             Auto-Ingest</label>
                                     </div>
-                                    <button class="btn btn-primary w-100" type="submit">Save</button>
+                                    <button class="btn btn-primary w-100 mb-2" type="submit">Save Settings</button>
+                                </form>
+                                <hr>
+                                <form action="/admin/run_email_ingest" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button class="btn btn-warning w-100" type="submit" {% if not
+                                        config.get('EMAIL_INGEST_ENABLED') %}disabled{% endif %}>
+                                        ⚡ Run Ingest Now
+                                    </button>
                                 </form>
                             </div>
                         </div>
@@ -1955,6 +1965,45 @@
                         toggleSkuEdit(id);
 
                         // Background refresh
+                        refreshPackages();
+                    } else {
+                        alert('Error: ' + (data.error || 'Unknown'));
+                    }
+                })
+                .catch(e => console.error(e));
+        }
+
+        function toggleTrackingEdit(id) {
+            const display = document.getElementById('trackingDisplay_' + id);
+            const editor = document.getElementById('trackingEditor_' + id);
+            if (display && editor) {
+                display.classList.toggle('d-none');
+                editor.classList.toggle('d-none');
+            }
+        }
+
+        function submitTracking(id) {
+            const input = document.getElementById('trackingInput_' + id);
+            const val = input.value.trim();
+            if (!val) return alert("Tracking number cannot be empty");
+
+            fetch('/admin/set_tracking/' + id, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': "{{ csrf_token() }}"
+                },
+                body: 'tracking=' + encodeURIComponent(val)
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        // Optimistic Update
+                        const displayDiv = document.getElementById('trackingDisplay_' + id);
+                        const textDiv = displayDiv.querySelector('div');
+                        textDiv.innerHTML = `${val} <small class="text-muted ms-1">✏️</small>`;
+
+                        toggleTrackingEdit(id);
                         refreshPackages();
                     } else {
                         alert('Error: ' + (data.error || 'Unknown'));

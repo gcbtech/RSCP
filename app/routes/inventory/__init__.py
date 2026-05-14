@@ -18,7 +18,7 @@ CATEGORY_CODES = {
 }
 
 # Import all route modules to register their routes with inventory_bp
-from app.routes.inventory import core, items, audit, alerts, api, imports
+from app.routes.inventory import core, items, audit, alerts, api, imports, lookup
 
 # Re-export commonly used functions for backward compatibility
 from app.routes.inventory.core import is_inventory_enabled, generate_sku, validate_location, get_inventory_stats, get_inventory_item

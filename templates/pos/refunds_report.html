@@ -29,6 +29,14 @@
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
             overflow: hidden;
         }
+
+        .filter-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1rem 1.5rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            margin-bottom: 1.5rem;
+        }
     </style>
 </head>
 
@@ -37,11 +45,61 @@
 
     <div class="header">
         <h2>↩️ Refunds Report</h2>
-        <small>Last {{ days }} days</small>
+        <small>
+            {% if use_custom_range %}
+                {{ date_from }} to {{ date_to }}
+            {% else %}
+                Last {{ days }} days
+            {% endif %}
+        </small>
     </div>
 
     <div class="container-fluid p-4">
         <a href="{{ url_for('pos.management') }}" class="btn btn-outline-primary mb-3">← Back to Dashboard</a>
+
+        <!-- Date Filter Controls -->
+        <div class="filter-card">
+            <form action="{{ url_for('pos.refunds_report') }}" method="GET" class="row g-2 align-items-end">
+                <div class="col-auto">
+                    <label class="form-label small mb-0 fw-bold">📅 Date Range</label>
+                </div>
+                <div class="col-md-2">
+                    <input type="date" name="date_from" class="form-control form-control-sm"
+                        value="{{ date_from }}" placeholder="From">
+                </div>
+                <div class="col-md-2">
+                    <input type="date" name="date_to" class="form-control form-control-sm"
+                        value="{{ date_to }}" placeholder="To">
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-outline-primary btn-sm">Apply</button>
+                </div>
+                <div class="col-auto border-start ps-3">
+                    <label class="form-label small mb-0 text-muted">Quick:</label>
+                </div>
+                <div class="col-auto">
+                    <a href="{{ url_for('pos.refunds_report', days=1) }}"
+                       class="btn btn-sm {{ 'btn-primary' if days == 1 and not use_custom_range else 'btn-outline-secondary' }}">Today</a>
+                </div>
+                <div class="col-auto">
+                    <a href="{{ url_for('pos.refunds_report', days=7) }}"
+                       class="btn btn-sm {{ 'btn-primary' if days == 7 and not use_custom_range else 'btn-outline-secondary' }}">7 Days</a>
+                </div>
+                <div class="col-auto">
+                    <a href="{{ url_for('pos.refunds_report', days=30) }}"
+                       class="btn btn-sm {{ 'btn-primary' if days == 30 and not use_custom_range else 'btn-outline-secondary' }}">30 Days</a>
+                </div>
+                <div class="col-auto">
+                    <a href="{{ url_for('pos.refunds_report', days=90) }}"
+                       class="btn btn-sm {{ 'btn-primary' if days == 90 and not use_custom_range else 'btn-outline-secondary' }}">90 Days</a>
+                </div>
+                {% if use_custom_range %}
+                <div class="col-auto">
+                    <a href="{{ url_for('pos.refunds_report') }}" class="btn btn-sm btn-outline-danger">✕ Clear</a>
+                </div>
+                {% endif %}
+            </form>
+        </div>
 
         <div class="row mb-4">
             <div class="col-md-4">

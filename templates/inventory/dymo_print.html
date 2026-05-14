@@ -1,0 +1,27 @@
+<!-- RSCP DYMO Print Protocol Bridge -->
+<script>
+async function printDymoLabel(sku, quantity = 1) {
+    if (!sku) {
+        alert("❌ DYMO Error:\nInvalid SKU provided for printing.");
+        return false;
+    }
+
+    try {
+        // Send the print request completely out of the browser into the Windows Protocol Handler
+        // This universally bypasses all HTTPS, CORS, and PNA sandboxes in modern Chromium
+        
+        // Ensure the URI is properly encoded in case SKUs contain spaces
+        const redirectUrl = `dymoprint://${encodeURIComponent(sku)}?qty=${encodeURIComponent(quantity)}`;
+        
+        // Firing the protocol handler
+        window.location.href = redirectUrl;
+
+        console.log(`Fired Bridge Protocol: ${redirectUrl}`);
+        return true;
+    } catch (e) {
+        console.error("Failed to execute dymoprint protocol", e);
+        alert('❌ DYMO Error:\nFailed to launch the DYMO bridge handler. Please run install.ps1');
+        return false;
+    }
+}
+</script>

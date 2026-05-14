@@ -647,6 +647,24 @@
     <div class="pos-header">
         <h1>💳 Point of Sale</h1>
         <div class="d-flex gap-2 align-items-center">
+            <!-- Terminal Pairing Controls -->
+            <div id="pairingControls">
+                {% if session.get('pos_pairing') %}
+                <span class="badge bg-success me-1" title="Paired terminal">
+                    🔗 {{ session['pos_pairing']['session_code'] }} ({{ session['pos_pairing']['terminal_type'] }})
+                </span>
+                <button type="button" class="btn btn-outline-warning btn-sm" onclick="unpairTerminal()"
+                    title="Disconnect from paired session">
+                    Unpair
+                </button>
+                {% else %}
+                <button type="button" class="btn btn-outline-light btn-sm" onclick="showPairingMenu()"
+                    data-bs-toggle="modal" data-bs-target="#pairingMenuModal" title="Connect terminals">
+                    🔗 Link
+                </button>
+                {% endif %}
+            </div>
+
             {% if pos_operator and pos_operator != local_user %}
             <span class="badge bg-warning text-dark" title="Active Operator">🧑‍💼 {{ pos_operator }}</span>
             {% endif %}
@@ -659,20 +677,78 @@
         </div>
     </div>
 
-    <!-- Flash Messages -->
-    {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-    <div class="flash-container" style="padding: 0 1rem;">
-        {% for category, message in messages %}
-        <div class="alert alert-{{ 'warning' if category == 'warning' else 'success' }} alert-dismissible fade show"
-            role="alert" style="margin-bottom: 0.5rem;">
-            {{ message }}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    <!-- Pairing Menu Modal (New) -->
+    <div class="modal fade" id="pairingMenuModal" tabindex="-1">
+        <div class="modal-dialog modal-sm">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">🔗 Terminal Pairing</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body d-grid gap-2">
+                    <p class="text-muted small text-center mb-2">Connect existing screen or start new session</p>
+
+                    <a href="{{ url_for('pos.pairing_page') }}?type=staff" class="btn btn-outline-primary btn-lg">
+                        👤 Staff Terminal
+                        <div class="small text-muted" style="font-size: 0.7rem">Scan & Checkout</div>
+                    </a>
+
+                    <a href="{{ url_for('pos.pairing_page') }}?type=customer" class="btn btn-outline-info btn-lg">
+                        📺 Customer Display
+                        <div class="small text-muted" style="font-size: 0.7rem">Show Cart Only</div>
+                    </a>
+
+                    <hr class="my-1">
+
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="startPairing()">
+                        Start New Session (Generate Code)
+                    </button>
+                </div>
+            </div>
         </div>
-        {% endfor %}
     </div>
-    {% endif %}
-    {% endwith %}
+
+    <!-- Pairing Code Modal (Renamed from pairingModal) -->
+    <div class="modal fade" id="pairingCodeModal" tabindex="-1" data-bs-backdrop="static">
+        <div class="modal-dialog">
+            <div class="modal-content text-center">
+                <div class="modal-header">
+                    <h5 class="modal-title">🔗 Terminal Pairing Code</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body py-4">
+                    <p class="mb-2">Enter this code on the other terminal:</p>
+                    <div id="pairingCode" class="display-3 fw-bold font-monospace text-primary my-3">
+                        ------
+                    </div>
+                    <div class="text-muted small">
+                        Waiting for connection...
+                    </div>
+                </div>
+                <div class="modal-footer justify-content-center gap-2">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-outline-danger" onclick="stopPairing()">Cancel Session</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Flash Messages -->
+    <div id="flashMessagesContainer">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        <div class="flash-container" style="padding: 0 1rem;">
+            {% for category, message in messages %}
+            <div class="alert alert-{{ 'warning' if category == 'warning' else 'success' }} alert-dismissible fade show"
+                role="alert" style="margin-bottom: 0.5rem;">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endwith %}
+    </div>
 
     <div class="pos-container">
         <!-- Left: Search and Item Entry -->
@@ -741,7 +817,7 @@
         </div>
 
         <!-- Right: Cart -->
-        <div class="pos-card pos-cart-card d-flex flex-column">
+        <div class="pos-card pos-cart-card d-flex flex-column" id="posCartContainer">
             <div class="pos-card-header">
                 <span>🛒 Cart ({{ cart['items']|length }} items)</span>
                 {% if cart['items'] %}
@@ -920,6 +996,61 @@
         </div>
     </div>
 
+    <!-- Pairing Menu Modal (New) -->
+    <div class="modal fade" id="pairingMenuModal" tabindex="-1">
+        <div class="modal-dialog modal-sm">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">🔗 Terminal Pairing</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body d-grid gap-2">
+                    <p class="text-muted small text-center mb-2">Connect existing screen or start new session</p>
+
+                    <a href="{{ url_for('pos.pairing_page') }}?type=staff" class="btn btn-outline-primary btn-lg">
+                        👤 Staff Terminal
+                        <div class="small text-muted" style="font-size: 0.7rem">Scan & Checkout</div>
+                    </a>
+
+                    <a href="{{ url_for('pos.pairing_page') }}?type=customer" class="btn btn-outline-info btn-lg">
+                        📺 Customer Display
+                        <div class="small text-muted" style="font-size: 0.7rem">Show Cart Only</div>
+                    </a>
+
+                    <hr class="my-1">
+
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="startPairing()">
+                        Start New Session (Generate Code)
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pairing Code Modal (Renamed from pairingModal) -->
+    <div class="modal fade" id="pairingCodeModal" tabindex="-1" data-bs-backdrop="static">
+        <div class="modal-dialog">
+            <div class="modal-content text-center">
+                <div class="modal-header">
+                    <h5 class="modal-title">🔗 Terminal Pairing Code</h5>
+                    <button type="button" onclick="stopPairing()" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body py-4">
+                    <p class="mb-2">Enter this code on the other terminal:</p>
+                    <div id="pairingCode" class="display-3 fw-bold font-monospace text-primary my-3">
+                        ------
+                    </div>
+                    <div class="text-muted small">
+                        Waiting for connection...
+                    </div>
+                </div>
+                <div class="modal-footer justify-content-center">
+                    <button type="button" class="btn btn-outline-danger" onclick="stopPairing()">Cancel & Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Hold Order Modal -->
     <div class="modal fade" id="holdModal" tabindex="-1">
         <div class="modal-dialog">
@@ -951,11 +1082,75 @@
         const autocomplete = document.getElementById('autocompleteResults');
         let debounceTimer;
 
-        // Auto-submit on barcode scan (fast input)
+        // Ultra-Fast Asynchronous Scan Queue
+        const scanQueue = [];
+        let isScanning = false;
+
+        async function processScanQueue() {
+            if (isScanning || scanQueue.length === 0) return;
+            isScanning = true;
+            
+            const sku = scanQueue.shift();
+            
+            try {
+                const formData = new URLSearchParams();
+                formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+                formData.append('sku', sku);
+                formData.append('quantity', '1');
+                
+                // Fetch to standard POS cart add logic
+                const response = await fetch("{{ url_for('pos.cart_add') }}", {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+                
+                // Fetch follows redirects by default! It gets the new sales HTML.
+                if (response.ok) {
+                    const html = await response.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+                    
+                    // Seamlessly hot-swap the cart and flash messages
+                    const newCart = doc.getElementById('posCartContainer');
+                    const newFlashes = doc.getElementById('flashMessagesContainer');
+                    
+                    if (newCart) document.getElementById('posCartContainer').innerHTML = newCart.innerHTML;
+                    if (newFlashes) document.getElementById('flashMessagesContainer').innerHTML = newFlashes.innerHTML;
+                    
+                    // Update CSRF token in case it rotated
+                    const newCsrf = doc.querySelector('input[name="csrf_token"]');
+                    if (newCsrf) {
+                        document.querySelectorAll('input[name="csrf_token"]').forEach(el => el.value = newCsrf.value);
+                    }
+                } else {
+                    console.error("Scan submission failed with status:", response.status);
+                }
+            } catch (err) {
+                console.error("Error processing scan queue", err);
+            } finally {
+                isScanning = false;
+                // Maintain relentless focus on the input box
+                if (skuInput) skuInput.focus();
+                // Process the next item in line seamlessly
+                processScanQueue();
+            }
+        }
+
+        // Auto-queue on barcode scan (ultra-fast input without reload)
         skuInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                addForm.submit();
+                const val = skuInput.value.trim();
+                if (val) {
+                    scanQueue.push(val);
+                    // Clear barcode input INSTANTLY so user can zap the next item
+                    skuInput.value = '';
+                    processScanQueue();
+                }
             }
         });
 
@@ -999,9 +1194,10 @@
         });
 
         function selectItem(sku) {
-            skuInput.value = sku;
             autocomplete.classList.remove('show');
-            addForm.submit();
+            scanQueue.push(sku);
+            skuInput.value = '';
+            processScanQueue();
         }
 
         // Close autocomplete on outside click
@@ -1157,6 +1353,203 @@
                 setTimeout(() => errorDiv.style.display = 'none', 4000);
             });
         }
+    </script>
+
+    <!-- Terminal Pairing Scripts -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script>
+        let pairingSocket = null;
+        let pairingCodeModal = null;
+
+        // Generate unique terminal ID per browser instance (not synced by Chrome)
+        function getTerminalId() {
+            let id = localStorage.getItem('rscp_terminal_id');
+            if (!id) {
+                id = 'term_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('rscp_terminal_id', id);
+            }
+            return id;
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            pairingCodeModal = document.getElementById('pairingCodeModal') ? new bootstrap.Modal(document.getElementById('pairingCodeModal')) : null;
+        });
+
+        function showPairingMenu() {
+            // Nothing needed here if using data-bs-target, but keeping for future logic
+        }
+
+        function startPairing() {
+            fetch('/pos/terminal/start', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token() }}'
+                },
+                body: JSON.stringify({
+                    terminal_id: getTerminalId()
+                })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        // Close menu modal if open
+                        const menuModalEl = document.getElementById('pairingMenuModal');
+                        if (menuModalEl) {
+                            const menuModal = bootstrap.Modal.getInstance(menuModalEl);
+                            if (menuModal) menuModal.hide();
+                        }
+
+                        document.getElementById('pairingCode').textContent = data.session_code;
+                        if (pairingCodeModal) pairingCodeModal.show();
+
+                        // Connect to WebSocket for this session
+                        connectPairingSocket(data.session_code);
+
+                        // Update UI to show paired status (without reloading)
+                        const pairingControls = document.getElementById('pairingControls');
+                        pairingControls.innerHTML = `
+                            <span class="badge bg-success me-1" title="Paired terminal">
+                                🔗 ${data.session_code} (main)
+                            </span>
+                            <button type="button" class="btn btn-outline-warning btn-sm" onclick="unpairTerminal()" title="Disconnect">
+                                Unpair
+                            </button>
+                        `;
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                })
+                .catch(err => alert('Error starting pairing: ' + err));
+        }
+
+        function unpairTerminal() {
+            if (!confirm('Unpair from this session? You will return to independent mode.')) return;
+
+            fetch('/pos/terminal/unpair', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token() }}'
+                },
+                body: JSON.stringify({
+                    terminal_id: getTerminalId()
+                })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        location.reload();
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                })
+                .catch(err => alert('Error unpairing: ' + err));
+        }
+
+        function stopPairing() {
+            unpairTerminal();
+            if (pairingCodeModal) pairingCodeModal.hide();
+        }
+
+        function connectPairingSocket(sessionCode) {
+            // Check if Socket.IO is available
+            if (typeof io === 'undefined') {
+                console.warn('Socket.IO not loaded, real-time updates disabled');
+                return;
+            }
+
+            if (pairingSocket) {
+                pairingSocket.disconnect();
+            }
+
+            // Check if Socket.IO is available
+            if (typeof io === 'undefined') {
+                console.warn('Socket.IO not available, using polling for sync');
+                startSalesPolling(sessionCode);
+                return;
+            }
+
+            pairingSocket = io({
+                transports: ['websocket', 'polling'],
+                timeout: 5000
+            });
+
+            pairingSocket.on('connect', () => {
+                console.log('Pairing socket connected');
+                pairingSocket.emit('join_session', { session_code: sessionCode });
+
+                // Stop polling if running
+                if (salesPollingInterval) {
+                    clearInterval(salesPollingInterval);
+                    salesPollingInterval = null;
+                }
+            });
+
+            pairingSocket.on('cart_update', (data) => {
+                console.log('Cart update received from paired terminal');
+                // Reload page to show updated cart
+                location.reload();
+            });
+
+            pairingSocket.on('session_closed', (data) => {
+                alert('Pairing session ended: ' + (data.reason || 'Session closed'));
+                location.reload();
+            });
+
+            pairingSocket.on('connect_error', (err) => {
+                console.log('WebSocket error, falling back to polling');
+                startSalesPolling(sessionCode);
+            });
+
+            // Fallback to polling if WebSocket doesn't connect in 3 seconds
+            setTimeout(() => {
+                if (!pairingSocket.connected) {
+                    console.log('WebSocket timeout, using polling');
+                    startSalesPolling(sessionCode);
+                }
+            }, 3000);
+        }
+
+        // Polling fallback for sales page
+        let salesPollingInterval = null;
+        let lastSalesCartHash = '';
+
+        function startSalesPolling(sessionCode) {
+            if (salesPollingInterval) return; // Already polling
+
+            console.log('Starting sales polling for session:', sessionCode);
+
+            function pollSalesCart() {
+                fetch('/pos/api/shared-cart/' + sessionCode, {
+                    credentials: 'include'
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            const cartHash = JSON.stringify(data.cart);
+                            if (lastSalesCartHash && cartHash !== lastSalesCartHash) {
+                                // Cart changed - reload page
+                                console.log('Cart changed from another terminal, reloading');
+                                location.reload();
+                            }
+                            lastSalesCartHash = cartHash;
+                        }
+                    })
+                    .catch(err => console.error('Sales poll error:', err));
+            }
+
+            // Poll every 2 seconds (less aggressive than customer display)
+            salesPollingInterval = setInterval(pollSalesCart, 2000);
+            pollSalesCart(); // Initial fetch to set baseline
+        }
+
+        // If already paired, connect to WebSocket
+        {% if session.get('pos_pairing') %}
+        document.addEventListener('DOMContentLoaded', function () {
+            connectPairingSocket('{{ session["pos_pairing"]["session_code"] }}');
+        });
+        {% endif %}
     </script>
 </body>
 

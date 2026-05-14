@@ -101,8 +101,12 @@
                         </td>
                         <td>{{ order.payment_method }}</td>
                         <td class="text-end fw-bold">${{ "%.2f"|format(order.total) }}</td>
-                        <td><a href="{{ url_for('pos.receipt', order_number=order.order_number) }}"
-                                class="btn btn-sm btn-outline-primary">View</a></td>
+                        <td>
+                            <a href="{{ url_for('pos.receipt', order_number=order.order_number) }}"
+                                class="btn btn-sm btn-outline-primary">View</a>
+                            <a href="{{ url_for('pos.edit_sale', order_id=order.id) }}"
+                                class="btn btn-sm btn-outline-warning" title="Edit Sale">✏️</a>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>

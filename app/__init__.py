@@ -158,6 +158,19 @@ def create_app(test_config=None):
     from app.routes.notifications import notifications_bp
     app.register_blueprint(notifications_bp)
     
+    # Initialize SocketIO for POS terminal pairing
+    try:
+        from app.services.websocket import init_socketio
+        socketio = init_socketio(app)
+        app.socketio = socketio
+        logging.info("SocketIO initialized for terminal pairing")
+    except ImportError as e:
+        logging.warning(f"SocketIO not available (flask-socketio not installed): {e}")
+        app.socketio = None
+    except Exception as e:
+        logging.warning(f"SocketIO initialization failed: {e}")
+        app.socketio = None
+    
     # Global Error Handler
     from app.utils.errors import RscpError
     from flask import render_template
@@ -172,6 +185,24 @@ def create_app(test_config=None):
 
     @app.errorhandler(Exception)
     def unhandled_exception(e):
+        # Handle standard HTTP errors (e.g. 404, 403, 405)
+        # We must catch this before 'UnhandledCrasher' to prevent rapid scanning
+        # or invalid URLs from triggering the RSCP-999 crash screen
+        from werkzeug.exceptions import HTTPException
+        if isinstance(e, HTTPException):
+            if request.path.startswith('/api/'):
+                from flask import jsonify
+                return jsonify({
+                    'error': e.name if hasattr(e, 'name') else 'HTTP Error',
+                    'message': e.description if hasattr(e, 'description') else str(e),
+                    'request_id': getattr(g, 'request_id', 'unknown')
+                }), e.code
+                
+            return render_template('error.html', 
+                                 error_code=f"HTTP {e.code}", 
+                                 message=e.description if hasattr(e, 'description') else "An HTTP error occurred.",
+                                 request_id=getattr(g, 'request_id', 'Initial')), e.code
+                                 
         # Catch-all for non-RscpError exceptions
         log_exception(e, source="UnhandledCrasher")
         
@@ -278,11 +309,11 @@ def create_app(test_config=None):
         # Content Security Policy - Prevent XSS attacks
         response.headers['Content-Security-Policy'] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdn.socket.io; "
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com; "
             "img-src 'self' data: https: http:; "
-            "connect-src 'self'"
+            "connect-src 'self' ws: wss:"
         )
         if request.is_secure or request.headers.get('X-Forwarded-Proto') == 'https':
             response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
@@ -341,7 +372,7 @@ def create_app(test_config=None):
             try:
                 from app.services.db import get_request_db
                 conn = get_request_db()
-                result = conn.execute('SELECT COUNT(*) as cnt FROM inventory_items').fetchone()
+                result = conn.execute('SELECT COUNT(*) as cnt FROM inventory_items WHERE COALESCE(is_legacy, 0) = 0').fetchone()
                 inventory_count = result['cnt'] if result else 0
                 # No need to close - teardown handles it
             except Exception:
@@ -355,6 +386,8 @@ def create_app(test_config=None):
         local_user = current_user.username if current_user.is_authenticated else None
         is_admin = current_user.is_admin if current_user.is_authenticated else False
         
+        from app.utils.helpers import guess_shipper
+        
         return {
             'app_name': "RSCP",
             'app_version': app_version,
@@ -367,6 +400,7 @@ def create_app(test_config=None):
             'is_admin': is_admin,
             'local_user': local_user,
             'csrf_token': generate_csrf_token,
+            'guess_shipper': guess_shipper,
             'config': c  # Full config for templates that need it
         }
         

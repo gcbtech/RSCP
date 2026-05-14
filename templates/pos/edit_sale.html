@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Edit Sale</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {
+            background: #f1f5f9;
+        }
+
+        .edit-header {
+            background: linear-gradient(135deg, #b45309 0%, #d97706 100%);
+            color: white;
+            padding: 1.5rem 2rem;
+        }
+
+        .edit-card {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .item-row {
+            display: flex;
+            gap: 0.75rem;
+            align-items: center;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid #f1f5f9;
+        }
+
+        .item-row:last-child {
+            border-bottom: none;
+        }
+
+        .item-row.deleted {
+            opacity: 0.4;
+            text-decoration: line-through;
+            pointer-events: none;
+        }
+
+        .item-name-col {
+            flex: 3;
+        }
+
+        .item-name-col input {
+            width: 100%;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 0.375rem 0.5rem;
+        }
+
+        .item-sku {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            font-family: monospace;
+        }
+
+        .item-qty-col,
+        .item-price-col {
+            flex: 1;
+        }
+
+        .item-qty-col input,
+        .item-price-col input {
+            width: 100%;
+            text-align: center;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 0.375rem 0.5rem;
+        }
+
+        .item-total-col {
+            flex: 1;
+            text-align: right;
+            font-weight: 600;
+        }
+
+        .item-action-col {
+            flex: 0 0 40px;
+            text-align: center;
+        }
+
+        .totals-section {
+            background: #f8fafc;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+
+        .total-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.25rem 0;
+        }
+
+        .total-row.grand {
+            font-size: 1.25rem;
+            font-weight: 700;
+            border-top: 2px solid #e2e8f0;
+            padding-top: 0.75rem;
+            margin-top: 0.5rem;
+        }
+
+        .warning-banner {
+            background: #fef3c7;
+            border: 1px solid #f59e0b;
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            margin-bottom: 1rem;
+            font-size: 0.875rem;
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="edit-header">
+        <h2>✏️ Edit Sale</h2>
+        <small>Order #{{ order.order_number }} · {{ order.created_at | local_time }} · Operator: {{ order.operator_name }}</small>
+    </div>
+
+    <div class="container p-4" style="max-width: 900px;">
+        <div class="mb-3">
+            <a href="{{ url_for('pos.sales_history') }}" class="btn btn-outline-secondary">← Back to Sales History</a>
+        </div>
+
+        <div class="warning-banner">
+            ⚠️ <strong>Editing a completed sale</strong> — Changes will be logged to the audit trail.
+            Inventory adjustments will be made automatically if item quantities change.
+        </div>
+
+        <form method="POST" id="editForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <!-- Date/Time -->
+            <div class="edit-card">
+                <h5 class="mb-3">📅 Sale Date & Time</h5>
+                <div class="row g-2">
+                    <div class="col-md-6">
+                        <label class="form-label">Date</label>
+                        <input type="date" name="sale_date" class="form-control"
+                            value="{{ order.created_at[:10] if order.created_at else '' }}">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label">Time</label>
+                        <input type="time" name="sale_time" class="form-control" step="1"
+                            value="{{ order.created_at[11:19] if order.created_at and order.created_at|length > 10 else '' }}">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Items -->
+            <div class="edit-card">
+                <h5 class="mb-3">📦 Line Items</h5>
+
+                <!-- Header -->
+                <div class="d-flex gap-3 px-1 mb-2 text-muted" style="font-size: 0.8rem; text-transform: uppercase;">
+                    <div style="flex: 3;">Item</div>
+                    <div style="flex: 1; text-align: center;">Qty</div>
+                    <div style="flex: 1; text-align: center;">Price</div>
+                    <div style="flex: 1; text-align: right;">Line Total</div>
+                    <div style="flex: 0 0 40px;"></div>
+                </div>
+
+                <div id="itemRows">
+                    {% for item in items %}
+                    <div class="item-row" id="item-row-{{ item.id }}" data-item-id="{{ item.id }}">
+                        <input type="hidden" name="item_id" value="{{ item.id }}">
+                        <div class="item-name-col">
+                            <input type="text" name="item_name" value="{{ item.name }}" oninput="recalculate()">
+                            <div class="item-sku">{{ item.sku }}</div>
+                            <input type="hidden" name="item_sku" value="{{ item.sku }}">
+                        </div>
+                        <div class="item-qty-col">
+                            <input type="number" name="item_quantity" value="{{ item.quantity }}" min="1"
+                                oninput="recalculate()">
+                        </div>
+                        <div class="item-price-col">
+                            <input type="number" name="item_price" value="{{ '%.2f'|format(item.unit_price) }}"
+                                step="0.01" min="0" oninput="recalculate()">
+                        </div>
+                        <div class="item-total-col" id="line-total-{{ item.id }}">
+                            ${{ "%.2f"|format(item.line_total) }}
+                        </div>
+                        <div class="item-action-col">
+                            <button type="button" class="btn btn-sm btn-outline-danger"
+                                onclick="removeItem({{ item.id }})" title="Remove Item">🗑️</button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <!-- Totals -->
+                <div class="totals-section">
+                    <div class="total-row">
+                        <span>Subtotal</span>
+                        <span id="editSubtotal">${{ "%.2f"|format(order.subtotal) }}</span>
+                    </div>
+                    {% if order.discount_amount and order.discount_amount > 0 %}
+                    <div class="total-row text-warning">
+                        <span>Discount ({{ order.discount_type }})</span>
+                        <span>-${{ "%.2f"|format(order.discount_amount) }}</span>
+                    </div>
+                    {% endif %}
+                    <div class="total-row">
+                        <span>Tax ({{ "%.2f"|format(tax_rate) }}%)</span>
+                        <span id="editTax">${{ "%.2f"|format(order.tax_amount) }}</span>
+                    </div>
+                    <div class="total-row grand">
+                        <span>Total</span>
+                        <span id="editTotal">${{ "%.2f"|format(order.total) }}</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hidden inputs for deleted items -->
+            <div id="deletedItemsContainer"></div>
+
+            <!-- Order Info (read-only context) -->
+            <div class="edit-card">
+                <h5 class="mb-3">ℹ️ Order Info</h5>
+                <div class="row">
+                    <div class="col-md-4">
+                        <small class="text-muted">Payment Method</small>
+                        <div class="fw-bold">{{ order.payment_method }}</div>
+                    </div>
+                    <div class="col-md-4">
+                        <small class="text-muted">Status</small>
+                        <div>
+                            <span
+                                class="badge bg-{% if order.status == 'completed' %}success{% elif order.status == 'refunded' %}danger{% else %}warning{% endif %}">
+                                {{ order.status }}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <small class="text-muted">Order Number</small>
+                        <div class="font-monospace">{{ order.order_number }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-flex gap-2 mb-5">
+                <a href="{{ url_for('pos.sales_history') }}" class="btn btn-outline-secondary flex-grow-1">Cancel</a>
+                <button type="submit" class="btn btn-warning flex-grow-1 fw-bold"
+                    onclick="return confirm('Save changes to this sale? Inventory will be adjusted automatically.')">
+                    💾 Save Changes
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const taxRatePercent = {{ tax_rate }};
+        const taxRate = taxRatePercent / 100;
+        const discountAmount = {{ order.discount_amount or 0 }};
+        const discountType = '{{ order.discount_type or "" }}';
+
+        function recalculate() {
+            let subtotal = 0;
+            const rows = document.querySelectorAll('.item-row:not(.deleted)');
+
+            rows.forEach(row => {
+                const qty = parseInt(row.querySelector('input[name="item_quantity"]').value) || 0;
+                const price = parseFloat(row.querySelector('input[name="item_price"]').value) || 0;
+                const lineTotal = Math.round(qty * price * 100) / 100;
+                subtotal += lineTotal;
+
+                const id = row.dataset.itemId;
+                const lineTotalEl = document.getElementById('line-total-' + id);
+                if (lineTotalEl) {
+                    lineTotalEl.textContent = '$' + lineTotal.toFixed(2);
+                }
+            });
+
+            // Apply discount
+            let discount = 0;
+            if (discountType === 'percent') {
+                discount = subtotal * (discountAmount / 100);
+            } else if (discountAmount > 0) {
+                discount = discountAmount;
+            }
+
+            const discountedSubtotal = Math.max(0, subtotal - discount);
+            const tax = Math.round(discountedSubtotal * taxRate * 100) / 100;
+            const total = Math.round((discountedSubtotal + tax) * 100) / 100;
+
+            document.getElementById('editSubtotal').textContent = '$' + subtotal.toFixed(2);
+            document.getElementById('editTax').textContent = '$' + tax.toFixed(2);
+            document.getElementById('editTotal').textContent = '$' + total.toFixed(2);
+        }
+
+        function removeItem(itemId) {
+            const row = document.getElementById('item-row-' + itemId);
+            if (!row) return;
+
+            if (!confirm('Remove this item from the sale? Inventory will be restored.')) return;
+
+            row.classList.add('deleted');
+            // Remove the hidden item_id input so form doesn't submit this item
+            const hiddenId = row.querySelector('input[name="item_id"]');
+            if (hiddenId) hiddenId.remove();
+            const nameInput = row.querySelector('input[name="item_name"]');
+            if (nameInput) nameInput.remove();
+            const qtyInput = row.querySelector('input[name="item_quantity"]');
+            if (qtyInput) qtyInput.remove();
+            const priceInput = row.querySelector('input[name="item_price"]');
+            if (priceInput) priceInput.remove();
+            const skuInput = row.querySelector('input[name="item_sku"]');
+            if (skuInput) skuInput.remove();
+
+            // Add hidden input for deleted item
+            const container = document.getElementById('deletedItemsContainer');
+            const hidden = document.createElement('input');
+            hidden.type = 'hidden';
+            hidden.name = 'deleted_items';
+            hidden.value = itemId;
+            container.appendChild(hidden);
+
+            recalculate();
+        }
+    </script>
+</body>
+
+</html>

@@ -136,12 +136,11 @@ def low_stock_report():
     """Show report of items with low stock or out of stock."""
     conn = get_db_connection()
     try:
-        # User requested list of all low stock and OOS items
-        # Logic: (quantity <= alert_threshold AND alert_threshold > 0) OR quantity <= 0
+        # Exclude legacy items from low stock report
         items = conn.execute('''
             SELECT * FROM inventory_items 
-            WHERE quantity <= 0 
-               OR (quantity <= alert_threshold AND alert_threshold > 0)
+            WHERE COALESCE(is_legacy, 0) = 0
+            AND (quantity <= 0 OR (quantity <= alert_threshold AND alert_threshold > 0))
             ORDER BY quantity ASC, name ASC
         ''').fetchall()
         return render_template('inventory/low_stock.html', items=items)
@@ -256,6 +255,7 @@ def list_items():
     sort_by = request.args.get('sort', 'name')
     order = request.args.get('order', 'asc')
     search_query = request.args.get('q', '').strip()
+    show_legacy = request.args.get('show_legacy', '0') == '1'
     
     # Pagination parameters
     page = int(request.args.get('page', 1))
@@ -269,6 +269,9 @@ def list_items():
     
     # Validate order direction
     order_dir = 'ASC' if order.lower() == 'asc' else 'DESC'
+    
+    # Legacy filter clause
+    legacy_clause = "" if show_legacy else "AND COALESCE(is_legacy, 0) = 0"
     
     conn = get_db_connection()
     try:
@@ -288,7 +291,7 @@ def list_items():
                 ''')
                 search_params_list.extend([pattern, pattern, pattern, pattern])
             
-            search_clause = "WHERE " + " AND ".join(search_conditions)
+            search_clause = "WHERE (" + " AND ".join(search_conditions) + f") {legacy_clause}"
             search_params = tuple(search_params_list)
             
             # Get total count with search filter
@@ -306,8 +309,9 @@ def list_items():
                 LIMIT ? OFFSET ?
             ''', search_params + (per_page, offset)).fetchall()
         else:
-            # No search - get all
-            total = conn.execute('SELECT COUNT(*) FROM inventory_items').fetchone()[0]
+            # No search - get all (applying legacy filter)
+            where_clause = "WHERE 1=1 " + legacy_clause
+            total = conn.execute(f'SELECT COUNT(*) FROM inventory_items {where_clause}').fetchone()[0]
             
             items = conn.execute(f'''
                 SELECT *,
@@ -316,6 +320,7 @@ def list_items():
                  AND p.status NOT IN ('received', 'refunded', 'return_pending', 'returned', 'archived')
                 ) as incoming_count
                 FROM inventory_items 
+                {where_clause}
                 ORDER BY {sort_by} {order_dir}
                 LIMIT ? OFFSET ?
             ''', (per_page, offset)).fetchall()
@@ -338,7 +343,8 @@ def list_items():
                                    sort_by=sort_by,
                                    order=order,
                                    page=page,
-                                   search_query=search_query)
+                                   search_query=search_query,
+                                   show_legacy=show_legacy)
             
         return render_template('inventory/list.html', 
                                items=items_with_thumbs, 
@@ -348,7 +354,8 @@ def list_items():
                                per_page=per_page,
                                total_pages=total_pages,
                                total_items=total,
-                               search_query=search_query)
+                               search_query=search_query,
+                               show_legacy=show_legacy)
     finally:
         conn.close()
 
@@ -686,6 +693,9 @@ def edit_item(item_id):
             # Get addon selections
             addon_1 = 1 if request.form.get('addon_1') == 'on' else 0
             addon_2 = 1 if request.form.get('addon_2') == 'on' else 0
+            
+            # Get legacy status
+            is_legacy = 1 if request.form.get('is_legacy') == 'on' else 0
 
             conn.execute('''
                 UPDATE inventory_items SET
@@ -694,13 +704,14 @@ def edit_item(item_id):
                     buy_price = ?, sell_price = ?, supplier = ?,
                     first_stock_date = ?, resupply_interval = ?, source_url = ?,
                      image_url = ?, alert_enabled = ?, alert_threshold = ?,
-                     secondary_ids = ?, keywords = ?, addon_1 = ?, addon_2 = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+                     secondary_ids = ?, keywords = ?, addon_1 = ?, addon_2 = ?, notes = ?, 
+                     is_legacy = ?, updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?
              ''', (sku, name, location_area or None, location_aisle or None,
                    location_shelf or None, location_bin or None, asin,
                    buy_price, sell_price, supplier, first_stock_date,
                    resupply_interval, source_url, image_url, 1 if alert_enabled else 0, 
-                   alert_threshold, secondary_ids_json, keywords, addon_1, addon_2, notes, item_id))
+                   alert_threshold, secondary_ids_json, keywords, addon_1, addon_2, notes, is_legacy, item_id))
             conn.commit()
             
             flash("Item updated.")
@@ -770,6 +781,36 @@ def delete_item(item_id):
         conn.close()
     
     return redirect(url_for('inventory.list_items'))
+
+
+@inventory_bp.route('/toggle-legacy/<int:item_id>', methods=['POST'])
+@login_required
+def toggle_legacy(item_id):
+    """Toggle the legacy status of an inventory item."""
+    conn = get_db_connection()
+    try:
+        # Get current status
+        item = conn.execute('SELECT is_legacy, name FROM inventory_items WHERE id = ?', (item_id,)).fetchone()
+        if not item:
+            flash("Item not found.")
+            return redirect(request.referrer or url_for('inventory.list_items'))
+        
+        current = item['is_legacy'] or 0
+        new_status = 0 if current else 1
+        
+        conn.execute('UPDATE inventory_items SET is_legacy = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
+                     (new_status, item_id))
+        conn.commit()
+        
+        status_text = "marked as Legacy" if new_status else "restored to Active"
+        flash(f"'{item['name']}' {status_text}.")
+    except Exception as e:
+        logger.error(f"Error toggling legacy status: {e}")
+        flash(f"Error: {e}")
+    finally:
+        conn.close()
+    
+    return redirect(request.referrer or url_for('inventory.list_items'))
 
 
 @inventory_bp.route('/transaction/delete/<int:tx_id>', methods=['POST'])

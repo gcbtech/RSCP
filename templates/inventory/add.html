@@ -556,6 +556,31 @@
                     </div>
                 </div>
 
+                <!-- Legacy Status (Edit Mode Only) -->
+                {% if edit_mode %}
+                <div class="card mb-3">
+                    <div class="card-header">📦 Legacy Status</div>
+                    <div class="card-body">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" name="is_legacy" id="isLegacy" {% if
+                                item.is_legacy %}checked{% endif %}>
+                            <label class="form-check-label" for="isLegacy">
+                                <strong>Mark as Legacy/Discontinued</strong>
+                            </label>
+                        </div>
+                        <small class="text-muted d-block mt-2">
+                            Legacy items are:
+                            <ul class="mb-0 ps-3">
+                                <li>Hidden from inventory lists by default</li>
+                                <li>Excluded from low stock alerts and counts</li>
+                                <li>Still available for sale at POS (with a warning)</li>
+                                <li>Quantity is preserved</li>
+                            </ul>
+                        </small>
+                    </div>
+                </div>
+                {% endif %}
+
                 <!-- Internal Notes -->
                 <div class="card mb-3">
                     <div class="card-header">📝 Internal Notes</div>

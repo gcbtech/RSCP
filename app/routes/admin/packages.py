@@ -81,7 +81,11 @@ def admin_panel():
         # Final Query with Sort/Limit
         # Note: params currently has 3 search terms if search is active
         # We need to add limit/offset to params
-        full_query = f"{base_query} ORDER BY {sql_sort} {sql_order} LIMIT ? OFFSET ?"
+        # For date sorting, push 'received' status to the bottom so unreceived packages show first
+        if sql_sort == 'date_expected':
+            full_query = f"{base_query} ORDER BY (CASE WHEN status = 'received' THEN 1 ELSE 0 END) ASC, {sql_sort} {sql_order} LIMIT ? OFFSET ?"
+        else:
+            full_query = f"{base_query} ORDER BY {sql_sort} {sql_order} LIMIT ? OFFSET ?"
         params.extend([per_page, offset])
         
         rows = conn.execute(full_query, params).fetchall()
@@ -398,6 +402,31 @@ def bulk_action():
             placeholders = ','.join(['?']*len(trackings))
             conn.execute(f"DELETE FROM packages WHERE tracking_number IN ({placeholders})", trackings)
             conn.commit()
+            
+            # Also remove from manifest.csv to prevent re-sync
+            try:
+                if os.path.exists(MANIFEST_FILE):
+                    df = pd.read_csv(MANIFEST_FILE)
+                    original_len = len(df)
+                    
+                    # Find ALL tracking columns (eBay has multiple like TrackingNumber, TrackingNumber.1)
+                    track_cols = [col for col in df.columns if 'tracking' in col.lower()]
+                    
+                    if track_cols:
+                        # Create a mask: row should be removed if ANY tracking column matches
+                        # Normalize Excel-quoted values like ="12345" -> 12345
+                        mask = pd.Series([False] * len(df))
+                        for col in track_cols:
+                            # Normalize: remove ="..." wrapping and quotes
+                            normalized = df[col].astype(str).str.replace(r'^="?', '', regex=True).str.replace(r'"$', '', regex=True).str.strip()
+                            mask = mask | normalized.isin(trackings)
+                        
+                        df = df[~mask]
+                        if len(df) < original_len:
+                            df.to_csv(MANIFEST_FILE, index=False)
+                            logger.info(f"Removed {original_len - len(df)} items from manifest.csv")
+            except Exception as csv_e:
+                logger.error(f"Error removing from manifest: {csv_e}")
              
         elif action == 'unreceive':
             for t in trackings:
@@ -429,3 +458,75 @@ def clear_history():
     conn.commit()
     conn.close()
     return redirect(url_for('admin.admin_panel'))
+
+
+@admin_bp.route('/set_tracking/<int:package_id>', methods=['POST'])
+def set_tracking(package_id):
+    """Update package Tracking Number."""
+    error = require_admin()
+    if error:
+        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
+        
+    new_tracking = request.form.get('tracking', '').strip()
+    if not new_tracking:
+        return jsonify({'success': False, 'error': 'Empty tracking number'}), 400
+        
+    conn = get_db_connection()
+    try:
+        # Get old tracking first
+        old_pkg = conn.execute("SELECT tracking_number, item_name FROM packages WHERE id = ?", (package_id,)).fetchone()
+        if not old_pkg:
+            return jsonify({'success': False, 'error': 'Package not found'}), 404
+            
+        old_tracking = old_pkg['tracking_number']
+        
+        # Check if new tracking already exists (to avoid unique constraint fail)
+        exists = conn.execute("SELECT id FROM packages WHERE tracking_number = ? AND id != ?", (new_tracking, package_id)).fetchone()
+        if exists:
+             return jsonify({'success': False, 'error': 'Tracking number already exists'}), 409
+
+        conn.execute("UPDATE packages SET tracking_number = ? WHERE id = ?", (new_tracking, package_id))
+        conn.commit()
+        
+        # Update Manifest if exists
+        if os.path.exists(MANIFEST_FILE):
+            try:
+                # Use pandas like in delete/bulk_action
+                # We need to find the row with old_tracking and update it
+                df = pd.read_csv(MANIFEST_FILE, dtype=str)
+                
+                # Find columns that might hold the tracking number
+                track_cols = [col for col in df.columns if 'tracking' in col.lower()]
+                
+                updated = False
+                for col in track_cols:
+                    # Clean comparisons
+                    # If we find a match, update it
+                    # Note: This might be tricky if multiple rows have the same tracking (unlikely for manifest, but possible)
+                    # We will update ALL occurrences of the old tracking in the manifest
+                    
+                    # Normalize column for comparison
+                    normalized = df[col].astype(str).str.replace(r'^="?', '', regex=True).str.replace(r'"$', '', regex=True).str.strip()
+                    
+                    mask = normalized == old_tracking
+                    if mask.any():
+                        # Update the original column
+                        # If existing format was ="...", we should probably keep it? 
+                        # For simplicity, just write the raw number. sync_manifest handles raw numbers fine.
+                        df.loc[mask, col] = new_tracking
+                        updated = True
+                        
+                if updated:
+                    with atomic_write(MANIFEST_FILE, 'w') as f:
+                        df.to_csv(f, index=False)
+                    logger.info(f"Updated manifest tracking from {old_tracking} to {new_tracking}")
+                    
+            except Exception as e:
+                logger.error(f"Error updating manifest tracking: {e}")
+                
+        return {'success': True}
+    except Exception as e:
+        logger.error(f"Error setting Tracking: {e}")
+        return {'success': False, 'error': str(e)}, 500
+    finally:
+        conn.close()

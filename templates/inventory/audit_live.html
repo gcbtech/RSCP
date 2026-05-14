@@ -67,11 +67,15 @@
 <body>
     <div class="container mt-3">
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <span class="badge bg-primary">{{ audit_session.mode|capitalize }} Mode</span>
+            <div>
+                <span class="badge bg-primary">{{ audit_session.mode|capitalize }} Mode</span>
+                <span id="kbdStatus" class="badge bg-secondary ms-2" style="cursor:pointer;"
+                    onclick="toggleKeyboardBlock()">KBD: AUTO</span>
+            </div>
             <form action="{{ url_for('inventory.audit_finalize', session_id=audit_session.id) }}" method="POST"
                 onsubmit="return confirm('Finish Audit? This will generate the report.')">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button class="btn btn-outline-danger btn-sm">Finalize Session</button>
+                <button class="btn btn-outline-danger btn-sm">Finish & View Report</button>
             </form>
         </div>
 
@@ -90,6 +94,10 @@
             <img id="itemImg" src="" style="max-height: 120px; display: none; margin: 0 auto 15px; border-radius: 8px;">
             <h2 id="itemName"></h2>
             <code id="itemSku" class="text-muted"></code>
+
+            <div id="itemPriceRow" class="mt-2 mb-1" style="display: none;">
+                <span class="badge bg-success fs-6" id="itemPrice">$0.00</span>
+            </div>
 
             <div class="highlight-box">
                 <div class="d-flex justify-content-center gap-4 text-center">
@@ -184,9 +192,47 @@
 
         scanInput.addEventListener('blur', () => {
             setTimeout(() => {
-                if (!isModalOpen()) scanInput.focus();
+                if (!isModalOpen() && !blockKeyboard) scanInput.focus();
             }, 100);
         });
+
+        // --- KEYBOARD BLOCKER LOGIC ---
+        let blockKeyboard = localStorage.getItem('rscp_audit_block_kbd') === 'true';
+
+        function applyKeyboardState() {
+            const statusLabel = document.getElementById('kbdStatus');
+            if (blockKeyboard) {
+                statusLabel.innerText = 'KBD: HIDDEN';
+                statusLabel.className = 'badge bg-danger ms-2';
+                statusLabel.style.cursor = 'pointer';
+            } else {
+                statusLabel.innerText = 'KBD: AUTO';
+                statusLabel.className = 'badge bg-success ms-2';
+                statusLabel.style.cursor = 'pointer';
+            }
+            localStorage.setItem('rscp_audit_block_kbd', blockKeyboard);
+            if (!blockKeyboard) scanInput.focus();
+        }
+
+        function toggleKeyboardBlock() {
+            blockKeyboard = !blockKeyboard;
+            applyKeyboardState();
+            if (blockKeyboard) {
+                scanInput.blur();
+            } else {
+                scanInput.focus();
+            }
+        }
+
+        scanInput.addEventListener('focus', function () {
+            if (blockKeyboard) {
+                scanInput.setAttribute('readonly', 'readonly');
+                setTimeout(() => { scanInput.removeAttribute('readonly'); }, 50);
+            }
+        });
+
+        // Apply keyboard state on load
+        applyKeyboardState();
 
         // Scan Handler
         scanInput.addEventListener('change', async (e) => {
@@ -259,6 +305,15 @@
             document.getElementById('itemName').innerText = currentItem.name;
             document.getElementById('itemSku').innerText = currentItem.sku;
             document.getElementById('systemQty').innerText = currentItem.quantity;
+
+            // Show price if available
+            const priceRow = document.getElementById('itemPriceRow');
+            if (currentItem.sell_price && currentItem.sell_price > 0) {
+                document.getElementById('itemPrice').innerText = '$' + parseFloat(currentItem.sell_price).toFixed(2);
+                priceRow.style.display = 'block';
+            } else {
+                priceRow.style.display = 'none';
+            }
 
             const img = document.getElementById('itemImg');
             if (currentItem.image_url) { img.src = currentItem.image_url; img.style.display = 'block'; }
@@ -336,12 +391,20 @@
                 });
 
                 if (res.ok) {
-                    // Success
+                    // Success - reset state and allow next scan
                     currentItem = null;
                     localCount = 0;
                     document.getElementById('itemCard').classList.add('d-none');
                     document.getElementById('welcomeState').classList.remove('d-none');
+                    
                     document.querySelector('#welcomeState h1').innerText = "Saved! Scan Next";
+                    let helperHtml = document.querySelector('#welcomeState p');
+                    if (helperHtml) {
+                        helperHtml.innerHTML = '<span class="text-success fw-bold">✓ Inventory updated immediately</span>';
+                    }
+                    
+                    // Restore focus to scan input after a short delay
+                    setTimeout(() => scanInput.focus(), 200);
                 } else {
                     alert("Error saving count.");
                 }

@@ -3,6 +3,7 @@
 
 <head>
     <title>{{ org_name or 'RSCP' }} | Receipt {{ order.order_number }}</title>
+    <link rel="icon" href="{{ favicon }}">
     <style>
         * {
             margin: 0;
@@ -171,7 +172,7 @@
         </div>
         {% endif %}
         <div class="row">
-            <span>Tax ({{ "%.1f"|format(order.tax_rate * 100) }}%)</span>
+            <span>Tax ({{ "%.2f"|format(order.tax_rate * 100) }}%)</span>
             <span>${{ "%.2f"|format(order.tax_amount) }}</span>
         </div>
         <div class="row total-row">

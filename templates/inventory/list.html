@@ -340,7 +340,7 @@
                     </div>
                     <div class="col-md-1">
                         <label class="form-label small">Qty</label>
-                        <input type="number" name="quantity" class="form-control form-control-sm" value="0" min="0">
+                        <input type="number" name="quantity" class="form-control form-control-sm" value="1" min="0">
                     </div>
                     <div class="col-md-2">
                         <label class="form-label small">Cost ($)</label>
@@ -351,6 +351,11 @@
                         <label class="form-label small">Price ($)</label>
                         <input type="number" name="sell_price" class="form-control form-control-sm" step="0.01" min="0"
                             placeholder="0.00">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label small">UPC/EAN Barcode</label>
+                        <input type="text" name="upc" class="form-control form-control-sm"
+                            placeholder="e.g. 012345678901">
                     </div>
                     <div class="col-md-2">
                         <label class="form-label small">Image (Opt)</label>
@@ -398,28 +403,49 @@
     <!-- Sort Controls -->
     <div class="mb-3 d-flex gap-2 align-items-center sort-controls">
         <label class="form-label mb-0">Sort by:</label>
-        <a href="?sort=name&order={{ 'desc' if sort_by == 'name' and order == 'asc' else 'asc' }}"
+        <a href="?sort=name&order={{ 'desc' if sort_by == 'name' and order == 'asc' else 'asc' }}{% if show_legacy %}&show_legacy=1{% endif %}"
             class="btn btn-sm {{ 'btn-primary' if sort_by == 'name' else 'btn-outline-secondary' }}">
             Name {{ '↑' if sort_by == 'name' and order == 'asc' else ('↓' if sort_by == 'name' else '') }}
         </a>
-        <a href="?sort=quantity&order={{ 'desc' if sort_by == 'quantity' and order == 'asc' else 'asc' }}"
+        <a href="?sort=quantity&order={{ 'desc' if sort_by == 'quantity' and order == 'asc' else 'asc' }}{% if show_legacy %}&show_legacy=1{% endif %}"
             class="btn btn-sm {{ 'btn-primary' if sort_by == 'quantity' else 'btn-outline-secondary' }}">
             Qty {{ '↑' if sort_by == 'quantity' and order == 'asc' else ('↓' if sort_by == 'quantity' else '') }}
         </a>
-        <a href="?sort=sku&order={{ 'desc' if sort_by == 'sku' and order == 'asc' else 'asc' }}"
+        <a href="?sort=sku&order={{ 'desc' if sort_by == 'sku' and order == 'asc' else 'asc' }}{% if show_legacy %}&show_legacy=1{% endif %}"
             class="btn btn-sm {{ 'btn-primary' if sort_by == 'sku' else 'btn-outline-secondary' }}">
             SKU {{ '↑' if sort_by == 'sku' and order == 'asc' else ('↓' if sort_by == 'sku' else '') }}
         </a>
-        <a href="?sort=location_area&order={{ 'desc' if sort_by == 'location_area' and order == 'asc' else 'asc' }}"
+        <a href="?sort=location_area&order={{ 'desc' if sort_by == 'location_area' and order == 'asc' else 'asc' }}{% if show_legacy %}&show_legacy=1{% endif %}"
             class="btn btn-sm {{ 'btn-primary' if sort_by == 'location_area' else 'btn-outline-secondary' }}">
             Location {{ '↑' if sort_by == 'location_area' and order == 'asc' else ('↓' if sort_by == 'location_area'
             else '') }}
         </a>
-        <a href="?sort=created_at&order={{ 'desc' if sort_by == 'created_at' and order == 'asc' else 'asc' }}"
+        <a href="?sort=created_at&order={{ 'desc' if sort_by == 'created_at' and order == 'asc' else 'asc' }}{% if show_legacy %}&show_legacy=1{% endif %}"
             class="btn btn-sm {{ 'btn-primary' if sort_by == 'created_at' else 'btn-outline-secondary' }}">
             Date Added {{ '↑' if sort_by == 'created_at' and order == 'asc' else ('↓' if sort_by == 'created_at' else
             '') }}
         </a>
+        <a href="?sort=buy_price&order={{ 'desc' if sort_by == 'buy_price' and order == 'asc' else 'asc' }}{% if show_legacy %}&show_legacy=1{% endif %}"
+            class="btn btn-sm {{ 'btn-primary' if sort_by == 'buy_price' else 'btn-outline-secondary' }}">
+            Buy $ {{ '↑' if sort_by == 'buy_price' and order == 'asc' else ('↓' if sort_by == 'buy_price' else '') }}
+        </a>
+        <a href="?sort=sell_price&order={{ 'desc' if sort_by == 'sell_price' and order == 'asc' else 'asc' }}{% if show_legacy %}&show_legacy=1{% endif %}"
+            class="btn btn-sm {{ 'btn-primary' if sort_by == 'sell_price' else 'btn-outline-secondary' }}">
+            Sell $ {{ '↑' if sort_by == 'sell_price' and order == 'asc' else ('↓' if sort_by == 'sell_price' else '') }}
+        </a>
+
+        <!-- Legacy Filter Toggle + Hide Cost -->
+        <div class="ms-auto d-flex gap-2 align-items-center">
+            <div class="form-check form-check-inline mb-0">
+                <input class="form-check-input" type="checkbox" id="hideCostToggle">
+                <label class="form-check-label small" for="hideCostToggle">Hide Cost</label>
+            </div>
+            <a href="?sort={{ sort_by }}&order={{ order }}{% if search_query %}&q={{ search_query }}{% endif %}{% if not show_legacy %}&show_legacy=1{% endif %}"
+                class="btn btn-sm {{ 'btn-warning' if show_legacy else 'btn-outline-secondary' }}"
+                title="{{ 'Showing legacy items - click to hide' if show_legacy else 'Click to show legacy/discontinued items' }}">
+                📦 {{ 'Legacy: ON' if show_legacy else 'Show Legacy' }}
+            </a>
+        </div>
     </div>
 
     <!-- Top Pagination Controls -->
@@ -542,93 +568,41 @@
         </div>
     </nav>
     {% endif %}
-
-    <!-- Dymo Label Libraries -->
-    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"></script>
-
+    {% include 'inventory/dymo_print.html' %}
     <script>
-        // Label Printing Logic
-        let currentLabelItem = {};
-
-        function openLabelModal(sku, name, price) {
-            currentLabelItem = { sku, name, price };
-            new bootstrap.Modal(document.getElementById('labelModal')).show();
+        async function printAndSubmitAdjust(e, sku, formElement) {
+            e.preventDefault();
+            const btn = e.currentTarget;
+            
+            // Get quantity from the modal's form
+            const qtyInput = formElement.querySelector('input[name="quantity_change"]');
+            const qty = parseInt(qtyInput.value) || 0;
+            
+            if (qty > 0) {
+                btn.disabled = true;
+                btn.innerHTML = 'Printing...';
+                document.body.style.cursor = 'wait';
+                await printDymoLabel(sku, qty);
+            } else {
+                alert("Cannot print labels for negative or zero quantities.");
+                return; // Stop form submission if they asked to print a negative value? Actually they shouldn't click "Save & Print" for negative. 
+            }
+            
+            // Submit form to save stock changes
+            formElement.submit();
         }
 
-        function printLabel() {
-            const size = document.getElementById('labelSize').value;
-            const type = document.getElementById('labelType').value; // barcode or qr
-
-            const item = currentLabelItem;
-            const width = size === 'square' ? '1in' : (size === 'multi' ? '2.25in' : '3.5in');
-            const height = size === 'square' ? '1in' : (size === 'multi' ? '1.25in' : '1.125in');
-
-            // Open popup
-            const win = window.open('', 'Print Label', `width=400,height=300`);
-
-            win.document.write(`
-                <html>
-                <head>
-                    <style>
-                        @page { size: ${width} ${height}; margin: 0; }
-                        body { 
-                            margin: 0; 
-                            text-align: center; 
-                            font-family: sans-serif; 
-                            width: ${width};
-                            height: ${height};
-                            overflow: hidden;
-                            display: flex;
-                            flex-direction: column;
-                            align-items: center;
-                            justify-content: center;
-                        }
-                        .name { font-size: 10px; font-weight: bold; white-space: nowrap; overflow: hidden; max-width: 95%; }
-                        .price { font-size: 12px; font-weight: bold; margin: 2px 0; }
-                        .sku { font-size: 8px; }
-                        img { max-width: 90%; max-height: 50%; }
-                        .square-container { transform: scale(0.8); }
-                    </style>
-                </head>
-                <body>
-                    <div class="${size === 'square' ? 'square-container' : ''}">
-                        <div class="name">${item.name}</div>
-                        <div class="price">$${parseFloat(item.price).toFixed(2)}</div>
-                        <div id="code-container"></div>
-                        <div class="sku">${item.sku}</div>
-                    </div>
-                    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"><\/script>
-                    <script src="https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js"><\/script>
-                    <script>
-                        setTimeout(() => {
-                            const container = document.getElementById('code-container');
-                            if ('${type}' === 'qr') {
-                                new QRCode(container, {
-                                    text: "${item.sku}",
-                                    width: 50,
-                                    height: 50,
-                                    correctLevel: QRCode.CorrectLevel.L
-                                });
-                            } else {
-                                const canvas = document.createElement('canvas');
-                                container.appendChild(canvas);
-                                JsBarcode(canvas, "${item.sku}", {
-                                    format: "CODE128",
-                                    height: 25,
-                                    width: 1.5,
-                                    displayValue: false,
-                                    margin: 0
-                                });
-                            }
-                            // Auto print after render
-                            setTimeout(() => window.print(), 500);
-                        }, 100);
-                    <\/script>
-                </body>
-                </html>
-            `);
-            win.document.close();
+        async function promptPrintLabel(sku) {
+            const qty = prompt(`How many labels would you like to print for SKU: ${sku}?`, "1");
+            // If user clicked cancel, qty is null
+            if (qty !== null) {
+                const parsedQty = parseInt(qty);
+                if (parsedQty > 0) {
+                    await printDymoLabel(sku, parsedQty);
+                } else {
+                    alert("Please enter a valid quantity greater than 0.");
+                }
+            }
         }
 
         // Live Update
@@ -856,7 +830,7 @@
                 });
         }
 
-        // Custom reason toggle
+        // Custom reason toggle + direction-based filtering
         document.querySelectorAll('[id^="reasonSelect"]').forEach(select => {
             select.addEventListener('change', function () {
                 const itemId = this.id.replace('reasonSelect', '');
@@ -873,10 +847,81 @@
             });
         });
 
+        // Filter reason options based on quantity direction
+        document.addEventListener('input', function (e) {
+            if (e.target.name !== 'quantity_change') return;
+            
+            const input = e.target;
+            const modal = input.closest('.modal');
+            if (!modal) return;
+            
+            const select = modal.querySelector('[id^="reasonSelect"]');
+            if (!select) return;
+            
+            const val = parseInt(input.value, 10);
+            let direction = 'all'; // default: show all
+            if (val > 0) direction = 'add';
+            else if (val < 0) direction = 'remove';
+            
+            const options = select.querySelectorAll('option');
+            let firstVisibleValue = null;
+            let currentVisible = false;
+            
+            options.forEach(opt => {
+                const optDir = opt.getAttribute('data-direction') || 'both';
+                const shouldShow = (direction === 'all') || (optDir === direction) || (optDir === 'both');
+                
+                opt.style.display = shouldShow ? '' : 'none';
+                opt.disabled = !shouldShow;
+                
+                if (shouldShow && !firstVisibleValue) {
+                    firstVisibleValue = opt.value;
+                }
+                if (shouldShow && opt.value === select.value) {
+                    currentVisible = true;
+                }
+            });
+            
+            // If current selection is now hidden, switch to first visible option
+            if (!currentVisible && firstVisibleValue) {
+                select.value = firstVisibleValue;
+                select.dispatchEvent(new Event('change'));
+            }
+        });
+
         // Dark mode
         if (localStorage.getItem('rscp_darkmode') === 'true') {
             document.body.classList.add('dark-mode');
         }
+
+        // Hide Cost toggle (sticky via localStorage)
+        (function() {
+            const toggle = document.getElementById('hideCostToggle');
+            const STORAGE_KEY = 'rscp_hide_cost';
+
+            function applyCostVisibility(hide) {
+                document.querySelectorAll('.col-cost').forEach(el => {
+                    el.style.display = hide ? 'none' : '';
+                });
+            }
+
+            // Restore saved state
+            const saved = localStorage.getItem(STORAGE_KEY) === 'true';
+            toggle.checked = saved;
+            if (saved) applyCostVisibility(true);
+
+            toggle.addEventListener('change', function() {
+                localStorage.setItem(STORAGE_KEY, this.checked);
+                applyCostVisibility(this.checked);
+            });
+
+            // Re-apply after live-update refreshes table body
+            const observer = new MutationObserver(() => {
+                if (toggle.checked) applyCostVisibility(true);
+            });
+            const tbody = document.getElementById('inventoryBody');
+            if (tbody) observer.observe(tbody, { childList: true });
+        })();
 
         // Image modal
         function showImage(url, title) {
@@ -985,38 +1030,6 @@
         </div>
     </div>
 
-    <!-- Label Settings Modal -->
-    <div class="modal fade" id="labelModal" tabindex="-1">
-        <div class="modal-dialog modal-sm">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Print Label</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body">
-                    <div class="mb-3">
-                        <label class="form-label">Size</label>
-                        <select id="labelSize" class="form-select">
-                            <option value="square">Square (1" x 1") [30332]</option>
-                            <option value="multi" selected>Multi-Purpose (2.25" x 1.25") [30334]</option>
-                            <option value="address">Address (3.5" x 1.1") [30252]</option>
-                        </select>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label">Type</label>
-                        <select id="labelType" class="form-select">
-                            <option value="barcode">Barcode (Code 128)</option>
-                            <option value="qr">QR Code</option>
-                        </select>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="button" class="btn btn-primary" onclick="printLabel()">🖨️ Print</button>
-                </div>
-            </div>
-        </div>
-    </div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>
     <script>

@@ -128,3 +128,76 @@ def api_cart():
         'tax_amount': round(tax_amount, 2),
         'total': round(total, 2)
     })
+
+
+@pos_bp.route('/api/shared-cart/<session_code>')
+@login_required
+def api_shared_cart(session_code):
+    """Get cart for a paired terminal session with computed totals."""
+    import json
+    from app.services.db import get_request_db
+    from app.routes.pos.core import get_tax_rate, get_pos_setting, calculate_tax, round_money
+    
+    conn = get_request_db()
+    row = conn.execute(
+        'SELECT cart_data FROM pos_terminal_sessions WHERE session_code = ?',
+        (session_code,)
+    ).fetchone()
+    
+    if not row:
+        return jsonify({'success': False, 'message': 'Session not found'}), 404
+    
+    try:
+        cart = json.loads(row['cart_data'])
+    except:
+        cart = {'items': []}
+    
+    items = cart.get('items', [])
+    subtotal = sum(item.get('line_total', 0) for item in items)
+    
+    # Order discount
+    order_discount = 0
+    if cart.get('discount_amount') and cart.get('discount_type'):
+        if cart['discount_type'] == 'percent':
+            order_discount = subtotal * (cart['discount_amount'] / 100)
+        else:
+            order_discount = cart['discount_amount']
+    
+    # Coupon discount
+    coupon_discount = (cart.get('applied_coupon') or {}).get('discount', 0) or 0
+    
+    discounted_subtotal = max(0, subtotal - order_discount - coupon_discount)
+    tax_rate = get_tax_rate()
+    tax_amount = calculate_tax(discounted_subtotal)
+    card_total = round(discounted_subtotal + tax_amount, 2)
+    
+    # Cash discount
+    cash_discount_enabled = get_pos_setting('CASH_DISCOUNT_ENABLED', 'false') == 'true'
+    cash_discount_value = 0
+    if cash_discount_enabled:
+        cd_amount = float(get_pos_setting('CASH_DISCOUNT_AMOUNT', '0') or 0)
+        cd_type = get_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
+        if cd_amount > 0:
+            if cd_type == 'percent':
+                cash_discount_value = round_money(discounted_subtotal * (cd_amount / 100))
+            else:
+                cash_discount_value = round_money(min(cd_amount, discounted_subtotal))
+    
+    cash_total = round(card_total - cash_discount_value, 2)
+    
+    return jsonify({
+        'success': True,
+        'cart': {
+            'items': items,
+            'subtotal': round(subtotal, 2),
+            'order_discount': round(order_discount, 2),
+            'coupon_discount': round(coupon_discount, 2),
+            'tax_rate_pct': round(tax_rate * 100, 2),
+            'tax_amount': tax_amount,
+            'card_total': card_total,
+            'cash_discount_enabled': cash_discount_enabled,
+            'cash_discount_value': cash_discount_value,
+            'cash_total': cash_total
+        }
+    })
+

@@ -183,12 +183,14 @@ def get_inventory_stats():
         conf = load_config()
         low_threshold = int(conf.get('LOW_STOCK_THRESHOLD', 5))
         
-        stats['total_items'] = conn.execute('SELECT COUNT(*) FROM inventory_items').fetchone()[0]
-        stats['total_quantity'] = conn.execute('SELECT COALESCE(SUM(quantity), 0) FROM inventory_items').fetchone()[0]
-        stats['out_of_stock'] = conn.execute('SELECT COUNT(*) FROM inventory_items WHERE quantity <= 0').fetchone()[0]
+        # Exclude legacy items from all counts
+        stats['total_items'] = conn.execute('SELECT COUNT(*) FROM inventory_items WHERE COALESCE(is_legacy, 0) = 0').fetchone()[0]
+        stats['total_quantity'] = conn.execute('SELECT COALESCE(SUM(quantity), 0) FROM inventory_items WHERE COALESCE(is_legacy, 0) = 0').fetchone()[0]
+        stats['out_of_stock'] = conn.execute('SELECT COUNT(*) FROM inventory_items WHERE quantity <= 0 AND COALESCE(is_legacy, 0) = 0').fetchone()[0]
         stats['low_stock'] = conn.execute('''
             SELECT COUNT(*) FROM inventory_items 
             WHERE quantity > 0 
+            AND COALESCE(is_legacy, 0) = 0
             AND (
                 (COALESCE(alert_threshold, 0) > 0 AND quantity <= alert_threshold)
                 OR 
@@ -294,12 +296,15 @@ def overview():
         attention_items = conn.execute('''
             SELECT id, name, quantity 
             FROM inventory_items 
-            WHERE quantity <= 0
-            OR (
-                quantity > 0 AND (
-                    (COALESCE(alert_threshold, 0) > 0 AND quantity <= alert_threshold)
-                    OR 
-                    (COALESCE(alert_threshold, 0) = 0 AND ? > 0 AND quantity <= ?)
+            WHERE COALESCE(is_legacy, 0) = 0
+            AND (
+                quantity <= 0
+                OR (
+                    quantity > 0 AND (
+                        (COALESCE(alert_threshold, 0) > 0 AND quantity <= alert_threshold)
+                        OR 
+                        (COALESCE(alert_threshold, 0) = 0 AND ? > 0 AND quantity <= ?)
+                    )
                 )
             )
             ORDER BY quantity ASC, name ASC

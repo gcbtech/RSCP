@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Pair Terminal</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            background: linear-gradient(135deg, #1e3a5f 0%, #2d5a87 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .pair-card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            padding: 2rem;
+            max-width: 400px;
+            width: 100%;
+        }
+
+        .pair-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+
+        .pair-header h1 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .code-input {
+            font-size: 2rem;
+            text-align: center;
+            letter-spacing: 0.5rem;
+            font-family: monospace;
+        }
+
+        .terminal-type-btn {
+            padding: 1.5rem;
+            border: 2px solid #e2e8f0;
+            border-radius: 12px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .terminal-type-btn:hover {
+            border-color: #7c3aed;
+            background: #f8f5ff;
+        }
+
+        .terminal-type-btn.selected {
+            border-color: #7c3aed;
+            background: #7c3aed;
+            color: white;
+        }
+
+        .terminal-type-btn .icon {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="pair-card">
+        <div class="pair-header">
+            <h1>🔗 Pair Terminal</h1>
+            <p class="text-muted">Connect to a POS station</p>
+        </div>
+
+        <form id="pairForm">
+            <div class="mb-4">
+                <label class="form-label">Enter Pairing Code</label>
+                <input type="text" id="sessionCode" class="form-control code-input" maxlength="6" pattern="\d{6}"
+                    placeholder="000000" required inputmode="numeric" autocomplete="off">
+            </div>
+
+            <div class="mb-4">
+                <label class="form-label">Terminal Type</label>
+                <div class="row g-3">
+                    <div class="col-6">
+                        <div class="terminal-type-btn selected" data-type="staff" onclick="selectType('staff')">
+                            <div class="icon">👤</div>
+                            <strong>Staff</strong>
+                            <div class="small text-muted">Scan items</div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="terminal-type-btn" data-type="customer" onclick="selectType('customer')">
+                            <div class="icon">📺</div>
+                            <strong>Customer</strong>
+                            <div class="small text-muted">View only</div>
+                        </div>
+                    </div>
+                </div>
+                <input type="hidden" id="terminalType" value="staff">
+            </div>
+
+            <button type="submit" class="btn btn-primary btn-lg w-100">Connect</button>
+        </form>
+
+        <div class="text-center mt-4">
+            <a href="{{ url_for('pos.sales') }}" class="text-muted">← Back to POS</a>
+        </div>
+
+        <div id="statusMessage" class="alert mt-3 d-none"></div>
+    </div>
+
+    <script>
+        const STORAGE_KEY = 'rscp_terminal_pairing';
+        const csrfToken = '{{ csrf_token() }}';
+
+        // Generate unique terminal ID per browser instance (not synced by Chrome)
+        function getTerminalId() {
+            let id = localStorage.getItem('rscp_terminal_id');
+            if (!id) {
+                id = 'term_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('rscp_terminal_id', id);
+            }
+            return id;
+        }
+
+        // Save/load/clear pairing info in localStorage for auto-reconnect
+        function savePairingInfo(sessionCode, terminalType) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({
+                session_code: sessionCode,
+                terminal_type: terminalType,
+                terminal_id: getTerminalId(),
+                timestamp: Date.now()
+            }));
+        }
+
+        function loadPairingInfo() {
+            try {
+                const raw = localStorage.getItem(STORAGE_KEY);
+                return raw ? JSON.parse(raw) : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function clearPairingInfo() {
+            localStorage.removeItem(STORAGE_KEY);
+        }
+
+        function selectType(type) {
+            document.querySelectorAll('.terminal-type-btn').forEach(btn => {
+                btn.classList.toggle('selected', btn.dataset.type === type);
+            });
+            document.getElementById('terminalType').value = type;
+        }
+
+        // Check URL parameter for pre-selected type
+        (function () {
+            const params = new URLSearchParams(window.location.search);
+            const typeParam = params.get('type');
+            if (typeParam === 'customer' || typeParam === 'staff') {
+                selectType(typeParam);
+            }
+        })();
+
+        // ===== AUTO-RECONNECT ON PAGE LOAD =====
+        (async function autoReconnect() {
+            const saved = loadPairingInfo();
+            if (!saved || !saved.session_code || !saved.terminal_type) return;
+
+            const statusDiv = document.getElementById('statusMessage');
+            statusDiv.className = 'alert alert-info mt-3';
+            statusDiv.textContent = '🔄 Reconnecting to session ' + saved.session_code + '...';
+            statusDiv.classList.remove('d-none');
+
+            // Pre-fill form with saved values in case auto-reconnect fails
+            document.getElementById('sessionCode').value = saved.session_code;
+            selectType(saved.terminal_type);
+
+            try {
+                const resp = await fetch('/pos/terminal/rejoin', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({
+                        session_code: saved.session_code,
+                        terminal_type: saved.terminal_type,
+                        terminal_id: getTerminalId()
+                    })
+                });
+
+                const data = await resp.json();
+
+                if (data.success) {
+                    statusDiv.className = 'alert alert-success mt-3';
+                    statusDiv.textContent = '✅ Reconnected to session ' + saved.session_code;
+                    // Redirect to appropriate display
+                    if (saved.terminal_type === 'customer') {
+                        window.location.href = '/pos/customer-display';
+                    } else {
+                        window.location.href = '/pos/';
+                    }
+                    return;
+                }
+
+                // Rejoin failed — discard saved info if session no longer exists
+                if (data.discard || resp.status === 404) {
+                    clearPairingInfo();
+                    statusDiv.className = 'alert alert-warning mt-3';
+                    statusDiv.textContent = 'Previous session expired. Please pair to a new session.';
+                    document.getElementById('sessionCode').value = '';
+                } else {
+                    // Other error (e.g. network, auth) — keep saved info for manual retry
+                    statusDiv.className = 'alert alert-danger mt-3';
+                    statusDiv.textContent = 'Auto-reconnect failed: ' + (data.message || 'Unknown error');
+                }
+            } catch (err) {
+                // Network error — keep saved info so user can manually retry
+                statusDiv.className = 'alert alert-danger mt-3';
+                statusDiv.textContent = 'Auto-reconnect failed: ' + err.message;
+            }
+        })();
+
+        // ===== MANUAL PAIRING =====
+        document.getElementById('pairForm').addEventListener('submit', function (e) {
+            e.preventDefault();
+
+            const code = document.getElementById('sessionCode').value;
+            const type = document.getElementById('terminalType').value;
+            const statusDiv = document.getElementById('statusMessage');
+
+            fetch('/pos/terminal/pair', {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({
+                    session_code: code,
+                    terminal_type: type,
+                    terminal_id: getTerminalId()
+                })
+            })
+                .then(response => {
+                    if (!response.ok && response.status === 401) {
+                        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+                        throw new Error('Please log in first');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.success) {
+                        // Save pairing info for auto-reconnect
+                        savePairingInfo(code, type);
+                        if (type === 'customer') {
+                            window.location.href = '/pos/customer-display';
+                        } else {
+                            window.location.href = '/pos/';
+                        }
+                    } else {
+                        statusDiv.className = 'alert alert-danger mt-3';
+                        statusDiv.textContent = data.message;
+                        statusDiv.classList.remove('d-none');
+                    }
+                })
+                .catch(err => {
+                    statusDiv.className = 'alert alert-danger mt-3';
+                    statusDiv.textContent = 'Connection error: ' + err;
+                    statusDiv.classList.remove('d-none');
+                });
+        });
+
+        // Auto-focus and format code input
+        const codeInput = document.getElementById('sessionCode');
+        codeInput.focus();
+        codeInput.addEventListener('input', function () {
+            this.value = this.value.replace(/\D/g, '').slice(0, 6);
+        });
+
+        // Submit on Enter key press in the code input
+        codeInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                document.getElementById('pairForm').dispatchEvent(new Event('submit', { cancelable: true }));
+            }
+        });
+    </script>
+</body>
+
+</html>

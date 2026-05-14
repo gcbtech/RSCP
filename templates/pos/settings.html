@@ -140,6 +140,69 @@
                 </div>
             </div>
 
+            <!-- Hardware Settings -->
+            <div class="settings-card">
+                <div class="card-header bg-white border-bottom">
+                    <strong>🖥️ Hardware Settings</strong>
+                </div>
+                <div class="card-body">
+                    <div class="row align-items-center mb-4">
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold mb-0">Enable Cash Drawer</label>
+                            <p class="text-muted small mb-0">Automatically open cash drawer on cash transactions</p>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <div class="form-check form-switch d-inline-block">
+                                <input class="form-check-input" type="checkbox" name="cash_drawer_enabled"
+                                    id="cashDrawerEnabled" {% if cash_drawer_enabled %}checked{% endif %}
+                                    style="transform: scale(1.5);">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row align-items-center mb-4">
+                        <div class="col-md-6">
+                            <label class="form-label">Cash Drawer Port</label>
+                            <p class="text-muted small mb-2">Serial port connected to cash drawer</p>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="input-group mb-2" style="max-width: 300px;">
+                                <select name="cash_drawer_port" class="form-select" id="cashDrawerPort">
+                                    <option value="">-- Select Port --</option>
+                                    {% for port in available_ports %}
+                                    <option value="{{ port.device }}" {% if cash_drawer_port==port.device %}selected{%
+                                        endif %}>
+                                        {{ port.device }} - {{ port.description }}
+                                    </option>
+                                    {% endfor %}
+                                    <option value="MANUAL_ENTRY">Manually Enter Port...</option>
+                                </select>
+                                <button type="button" class="btn btn-outline-secondary"
+                                    onclick="testDrawer()">Test</button>
+                            </div>
+                            <div class="collapse" id="manualPortCollapse">
+                                <label class="small text-muted mb-1">Manual Port Name (e.g. COM4)</label>
+                                <input type="text" id="manualPortInput" class="form-control form-control-sm"
+                                    placeholder="COM#" style="max-width: 150px;">
+                            </div>
+                        </div>
+                    </div>
+                    <hr>
+                    <div class="row align-items-center">
+                        <div class="col-md-8">
+                            <label class="form-label fw-bold mb-0">Auto-Print Receipt</label>
+                            <p class="text-muted small mb-0">Automatically open print dialog after completing a
+                                transaction</p>
+                        </div>
+                        <div class="col-md-4 text-end">
+                            <div class="form-check form-switch d-inline-block">
+                                <input class="form-check-input" type="checkbox" name="auto_print_receipt" {% if
+                                    auto_print_receipt %}checked{% endif %} style="transform: scale(1.5);">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Reporting Settings -->
             <div class="settings-card">
                 <div class="card-header bg-white border-bottom">
@@ -235,10 +298,238 @@
             </div>
 
             <button type="submit" class="btn btn-primary btn-lg">Save Settings</button>
-        </form>
+    </div>
+    </div>
+
+    <!-- Email Automation Settings -->
+    <div class="settings-card">
+        <div class="card-header bg-white border-bottom">
+            <strong>📧 Email Automation</strong>
+        </div>
+        <div class="card-body">
+            <!-- Note: Using a separate form for email settings to match backend route -->
+        </div>
+    </div>
+    <!-- End Main Form temporarily to insert Email form, or just use separate form? -->
+    <!-- The page wraps everything in one BIG form at line 45. I should probably add this fields to the main form 
+                 AND update the main route handler, OR close the main form and start a new one.
+                 
+                 Looking at core.py, the main route handler 'pos.settings' DOES NOT handle email fields.
+                 But I see I added 'save_email_settings' route.
+                 
+                 If I put a form inside a form, HTML breaks. I must not do that.
+                 
+                 Alternative: Add these fields to the main form, and update the main 'settings' route in core.py 
+                 to call 'save_email_settings' logic or merge it.
+                 
+                 Actually, looking at the previous file content of core.py, 'save_email_settings' IS A SEPARATE ROUTE.
+                 So I should probably close the main form before this, or place this card OUTSIDE the main form.
+                 
+                 The main form starts at line 45 and ends at line 300.
+                 I will place this NEW form AFTER the main form.
+            -->
+    </form>
+
+    <form action="{{ url_for('pos.save_email_settings') }}" method="POST">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="settings-card">
+            <div class="card-header bg-white border-bottom">
+                <strong>📧 Email Automation</strong>
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-md-9">
+                        <label class="form-label fw-bold">SMTP Host</label>
+                        <input type="text" name="host" class="form-control" value="{{ pos_email_host }}"
+                            placeholder="smtp.gmail.com">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label fw-bold">Port</label>
+                        <input type="text" name="port" class="form-control" value="{{ pos_email_port }}"
+                            placeholder="587">
+                    </div>
+                </div>
+                <div class="row mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Username / Email</label>
+                        <input type="text" name="user" class="form-control" value="{{ pos_email_user }}"
+                            placeholder="email@example.com">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Password</label>
+                        <input type="password" name="password" class="form-control"
+                            placeholder="Leave blank to keep unchanged">
+                    </div>
+                </div>
+
+                <hr>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Recipients</label>
+                    <input type="text" name="recipients" class="form-control" value="{{ pos_email_recipients }}"
+                        placeholder="owner@example.com, manager@example.com">
+                    <div class="form-text">Comma separated list of email addresses.</div>
+                </div>
+
+                <div class="form-check form-switch mb-2">
+                    <input class="form-check-input" type="checkbox" name="auto_email_enabled" id="autoEmailCheck" {% if
+                        pos_auto_email_enabled %}checked{% endif %}>
+                    <label class="form-check-label fw-bold" for="autoEmailCheck">Enable Automated End-of-Day
+                        Email</label>
+                </div>
+
+                <div class="row align-items-center g-2 ms-4 mb-3" id="autoEmailConfig"
+                    style="{% if not pos_auto_email_enabled %}display:none{% endif %}">
+                    <div class="col-auto">
+                        <label class="col-form-label">Send daily at:</label>
+                    </div>
+                    <div class="col-auto">
+                        <input type="time" name="auto_email_time" class="form-control"
+                            value="{{ pos_auto_email_time }}">
+                    </div>
+                    <div class="col-auto">
+                        <span class="form-text">Emails are sent once per day after this time.</span>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary">Save Email Settings</button>
+            </div>
+        </div>
+    </form>
+
+    <script>
+        document.getElementById('autoEmailCheck').addEventListener('change', function () {
+            document.getElementById('autoEmailConfig').style.display = this.checked ? 'flex' : 'none';
+        });
+    </script>
+
+    <!-- Re-open dummy form or just leave it closed? 
+             The original form closed at line 300.
+             If I replace lines 300, I am removing the closing tag.
+             So I should just append this AFTER the main form.
+        -->
+
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Local Hardware Settings Logic
+        document.addEventListener('DOMContentLoaded', async function () {
+            const select = document.getElementById('cashDrawerPort');
+            const savedPort = localStorage.getItem('pos_cash_drawer_port');
+
+            // --- ELECTRON MODE ---
+            if (window.rscp) {
+                console.log("Running in Desktop App Mode");
+
+                try {
+                    // Fetch local ports from the Desktop App
+                    const result = await window.rscp.listPorts();
+
+                    if (result.success && select) {
+                        // Clear server-side list options 
+                        select.innerHTML = '<option value="">-- Select Local Port --</option>';
+
+                        if (result.ports.length === 0) {
+                            const option = document.createElement('option');
+                            option.text = "(No ports found)";
+                            option.disabled = true;
+                            select.appendChild(option);
+                        }
+
+                        result.ports.forEach(port => {
+                            const option = document.createElement('option');
+                            // Electron SerialPort returns 'path' (e.g., COM1)
+                            option.value = port.path;
+                            option.text = `${port.path} - ${port.manufacturer || 'Unknown Device'}`;
+
+                            // Auto-select if it looks like our target
+                            if (port.path.includes('HPCDPORT') && !savedPort) {
+                                option.selected = true;
+                            }
+                            select.appendChild(option);
+                        });
+
+                        // Add Badge helper
+                        const label = select.closest('.row').querySelector('label');
+                        if (label) {
+                            label.insertAdjacentHTML('beforeend', ' <span class="badge bg-primary ms-2" title="Scanning local computer">Desktop App Mode</span>');
+                        }
+                    }
+                } catch (e) {
+                    console.error("Failed to list Electron ports:", e);
+                    if (select) {
+                        const option = document.createElement('option');
+                        option.text = "Error scanning ports: " + e.message;
+                        select.appendChild(option);
+                    }
+                }
+            }
+
+            // Restore saved selection
+            if (savedPort && select) {
+                select.value = savedPort;
+            }
+        });
+
+        // Intercept form submission to save to LocalStorage
+        const forms = document.querySelectorAll('form');
+        forms.forEach(form => {
+            form.addEventListener('submit', function () {
+                const portSelect = document.getElementById('cashDrawerPort');
+                if (portSelect) {
+                    localStorage.setItem('pos_cash_drawer_port', portSelect.value);
+                }
+            });
+        });
+
+        function testDrawer() {
+            let port = document.getElementById('cashDrawerPort').value;
+            if (port === 'MANUAL_ENTRY') {
+                port = document.getElementById('manualPortInput').value.trim();
+            }
+
+            if (!port) {
+                alert('Please select or enter a port first');
+                return;
+            }
+
+            // Save for convenience while testing
+            localStorage.setItem('pos_cash_drawer_port', port);
+
+            // Desktop App Mode
+            if (window.rscp) {
+                window.rscp.openDrawer(port).then(result => {
+                    if (result.success) {
+                        alert('✓ Cash drawer opened (via Desktop App)!');
+                    } else {
+                        alert('✗ Failed: ' + result.error);
+                    }
+                });
+                return;
+            }
+
+            // Web Mode
+            fetch('/pos/hardware/test_drawer', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: 'port=' + encodeURIComponent(port)
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('✓ Cash drawer opened successfully!');
+                    } else {
+                        alert('✗ Failed: ' + data.message);
+                    }
+                })
+                .catch(error => {
+                    alert('Error: ' + error);
+                });
+        }
+    </script>
 </body>
 
 </html>

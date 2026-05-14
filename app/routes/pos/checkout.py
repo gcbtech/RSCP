@@ -12,7 +12,7 @@ from flask_login import current_user, login_required
 from app.routes.pos import pos_bp, PAYMENT_METHODS
 from app.routes.pos.core import (
     get_cart, clear_cart, get_tax_rate, calculate_tax,
-    generate_order_number
+    generate_order_number, round_money
 )
 from app.services.db import get_db_connection, get_request_db
 
@@ -66,9 +66,9 @@ def checkout():
     cash_discount_value = 0
     if cash_discount_enabled and cash_discount_amount > 0:
         if cash_discount_type == 'percent':
-            cash_discount_value = round(discounted_subtotal * (cash_discount_amount / 100), 2)
+            cash_discount_value = round_money(discounted_subtotal * (cash_discount_amount / 100))
         else:
-            cash_discount_value = round(min(cash_discount_amount, discounted_subtotal), 2)
+            cash_discount_value = round_money(min(cash_discount_amount, discounted_subtotal))
     
     return render_template('pos/checkout.html',
                            cart=cart,
@@ -132,9 +132,9 @@ def checkout_process():
             
             if cash_discount_amount > 0:
                 if cash_discount_type == 'percent':
-                    cash_discount_applied = round(discounted_subtotal * (cash_discount_amount / 100), 2)
+                    cash_discount_applied = round_money(discounted_subtotal * (cash_discount_amount / 100))
                 else:
-                    cash_discount_applied = round(min(cash_discount_amount, discounted_subtotal), 2)
+                    cash_discount_applied = round_money(min(cash_discount_amount, discounted_subtotal))
                 
                 total = round(total - cash_discount_applied, 2)
     
@@ -165,11 +165,11 @@ def checkout_process():
             if cash_discount_amount > 0:
                 if cash_discount_type == 'percent':
                     # Apply percentage discount to cash portion only
-                    split_cash_discount = round(cash_amount * (cash_discount_amount / 100), 2)
+                    split_cash_discount = round_money(cash_amount * (cash_discount_amount / 100))
                 else:
                     # Apply fixed discount proportionally to cash portion
                     cash_proportion = cash_amount / total if total > 0 else 0
-                    split_cash_discount = round(min(cash_discount_amount * cash_proportion, cash_amount), 2)
+                    split_cash_discount = round_money(min(cash_discount_amount * cash_proportion, cash_amount))
                 
                 total = round(total - split_cash_discount, 2)
         
@@ -249,7 +249,22 @@ def checkout_process():
         logger.info(f"Order {order_number} completed by {current_user.username}, total: ${total}")
         flash(f'Order {order_number} completed! Total: ${total:.2f}')
         
-        return redirect(url_for('pos.receipt', order_number=order_number))
+        # Build redirect URL with optional params for auto-print and cash drawer
+        redirect_params = {}
+        
+        # Check if auto-print is enabled
+        if get_pos_setting('AUTO_PRINT_RECEIPT', 'false') == 'true':
+            redirect_params['auto_print'] = '1'
+        
+        # Check if cash drawer should open (only for cash or split with cash)
+        if get_pos_setting('CASH_DRAWER_ENABLED', 'false') == 'true':
+            has_cash = payment_method == 'cash' or (
+                payment_method == 'split' and payment_details.get('cash', 0) > 0
+            )
+            if has_cash:
+                redirect_params['open_drawer'] = '1'
+        
+        return redirect(url_for('pos.receipt', order_number=order_number, **redirect_params))
         
     except Exception as e:
         conn.rollback()

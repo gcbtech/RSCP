@@ -101,13 +101,23 @@
                             <td>{{ item.alert_threshold }}</td>
                             <td>{{ item.supplier or '-' }}</td>
                             <td class="text-end">
-                                {% if item.source_url and item.source_url != 'None' %}
-                                <a href="{{ item.source_url }}" target="_blank" class="btn btn-sm btn-primary">
-                                    🛒 Purchase
-                                </a>
-                                {% else %}
-                                <span class="text-muted small">No Link</span>
-                                {% endif %}
+                                <div class="btn-group" role="group">
+                                    {% if item.source_url and item.source_url != 'None' %}
+                                    <a href="{{ item.source_url }}" target="_blank" class="btn btn-sm btn-primary"
+                                        title="Purchase from supplier">
+                                        🛒 Purchase
+                                    </a>
+                                    {% endif %}
+                                    <form action="{{ url_for('inventory.toggle_legacy', item_id=item.id) }}"
+                                        method="POST" class="d-inline">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary"
+                                            title="Mark as legacy/discontinued"
+                                            onclick="return confirm('Mark this item as Legacy? It will be hidden from inventory lists.');">
+                                            📦 Legacy
+                                        </button>
+                                    </form>
+                                </div>
                             </td>
                         </tr>
                         {% else %}

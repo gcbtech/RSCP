@@ -198,6 +198,60 @@ def email_ingest_job():
                 scheduler.pause_job('email_ingest')
 
 
+def eod_email_job():
+    """Background job to check and send automated POS EOD emails."""
+    try:
+        from app.routes.pos.core import get_pos_setting, set_pos_setting
+        from app.services.pos_email import send_eod_email
+        
+        # 1. Check if enabled
+        enabled = get_pos_setting('POS_AUTO_EMAIL_ENABLED', 'false') == 'true'
+        if not enabled:
+            return
+
+        # 2. Check time
+        target_time_str = get_pos_setting('POS_AUTO_EMAIL_TIME', '')
+        if not target_time_str:
+            return
+            
+        now = datetime.datetime.now()
+        current_time_str = now.strftime('%H:%M')
+        
+        # Compare time (simple string compare for HH:MM)
+        # We want to run if current time >= target time
+        # BUT we only want to run ONCE per day.
+        
+        # Check last run date
+        last_run_date = get_pos_setting('POS_LAST_AUTO_EMAIL_DATE', '')
+        today_str = now.strftime('%Y-%m-%d')
+        
+        if last_run_date == today_str:
+            # Already ran today
+            return
+        
+        # Parse target time to compare properly
+        try:
+            target_h, target_m = map(int, target_time_str.split(':'))
+            target_dt = now.replace(hour=target_h, minute=target_m, second=0, microsecond=0)
+            
+            if now >= target_dt:
+                # Time to send!
+                logger.info(f"[Auto-Email] Sending EOD report for {today_str}...")
+                success = send_eod_email(now.date())
+                
+                if success:
+                    set_pos_setting('POS_LAST_AUTO_EMAIL_DATE', today_str)
+                    logger.info("[Auto-Email] ✓ Sent successfully.")
+                else:
+                    logger.error("[Auto-Email] Failed to send.")
+                    
+        except ValueError:
+            logger.error(f"[Auto-Email] Invalid time format: {target_time_str}")
+            
+    except Exception as e:
+        logger.error(f"[Auto-Email] Job error: {e}")
+
+
 def start_scheduler():
     """Start the APScheduler with all background jobs.
     
@@ -269,6 +323,14 @@ def start_scheduler():
             minutes=EMAIL_CHECK_INTERVAL_MINUTES,
             id='email_ingest',
             name='Email Ingestion'
+        )
+
+        scheduler.add_job(
+            eod_email_job,
+            'interval',
+            minutes=1,
+            id='eod_email',
+            name='POS EOD Email'
         )
         
         # Start scheduler

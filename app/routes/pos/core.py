@@ -4,6 +4,7 @@ Helper functions, before_request hooks, settings management, and overview routes
 """
 import logging
 import json
+from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime, date
 from flask import request, redirect, url_for, flash, render_template, session
 from flask_login import login_required, current_user
@@ -66,10 +67,21 @@ def get_tax_rate():
         return 0.0
 
 
+def round_money(value):
+    """Round a monetary value to 2 decimal places using ROUND_HALF_UP.
+    
+    Python's built-in round() uses banker's rounding (round half to even),
+    which can cause penny discrepancies. This function uses traditional
+    rounding where .5 always rounds up.
+    """
+    return float(Decimal(str(value)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+
+
 def calculate_tax(subtotal):
     """Calculate tax amount for a given subtotal."""
     rate = get_tax_rate()
-    return round(subtotal * rate, 2)
+    result = Decimal(str(subtotal)) * Decimal(str(rate))
+    return float(result.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
 
 
 def calculate_line_total(unit_price, quantity, discount_amount=0, discount_type=None):
@@ -116,8 +128,41 @@ def generate_order_number(terminal_id='POS-1'):
 
 
 def get_cart():
-    """Get the current cart from session."""
+    """
+    Get the current cart.
+    If terminal is paired, loads from shared database storage.
+    Otherwise, uses session storage.
+    """
+    import json
+    
     try:
+        # Check if terminal is paired
+        pairing = session.get('pos_pairing')
+        
+        if pairing and pairing.get('session_code'):
+            # Load from shared storage
+            session_code = pairing['session_code']
+            try:
+                from app.services.db import get_request_db
+                conn = get_request_db()
+                row = conn.execute(
+                    'SELECT cart_data FROM pos_terminal_sessions WHERE session_code = ?',
+                    (session_code,)
+                ).fetchone()
+                
+                if row and row['cart_data']:
+                    cart = json.loads(row['cart_data'])
+                    # Ensure required keys
+                    cart.setdefault('items', [])
+                    cart.setdefault('discount_amount', 0)
+                    cart.setdefault('discount_type', None)
+                    cart.setdefault('discount_reason', '')
+                    return cart
+            except Exception as e:
+                logger.error(f"Error loading shared cart: {e}")
+                # Fall through to session cart
+        
+        # Not paired or error - use session cart
         cart = session.get('pos_cart')
         
         # Initialize if missing or invalid type
@@ -157,13 +202,76 @@ def get_cart():
 
 
 def save_cart(cart):
-    """Save cart to session."""
+    """
+    Save the cart.
+    If terminal is paired, saves to shared storage and broadcasts via WebSocket.
+    Otherwise, uses session storage.
+    """
+    import json
+    
+    pairing = session.get('pos_pairing')
+    
+    if pairing and pairing.get('session_code'):
+        # Save to shared storage
+        session_code = pairing['session_code']
+        try:
+            from app.services.db import get_db_connection
+            conn = get_db_connection()
+            conn.execute(
+                'UPDATE pos_terminal_sessions SET cart_data = ?, last_activity = CURRENT_TIMESTAMP WHERE session_code = ?',
+                (json.dumps(cart), session_code)
+            )
+            conn.commit()
+            conn.close()
+            
+            # Broadcast update to all paired terminals
+            try:
+                from app.services.websocket import broadcast_cart_update
+                broadcast_cart_update(session_code, cart)
+            except Exception as e:
+                logger.warning(f"Could not broadcast cart update: {e}")
+                
+        except Exception as e:
+            logger.error(f"Error saving shared cart: {e}")
+    
+    # Always also save to session (for fallback/unpair scenarios)
     session['pos_cart'] = cart
     session.modified = True
 
 
 def clear_cart():
-    """Clear the current cart."""
+    """
+    Clear the current cart.
+    If paired, clears shared storage and broadcasts.
+    """
+    import json
+    
+    pairing = session.get('pos_pairing')
+    
+    if pairing and pairing.get('session_code'):
+        session_code = pairing['session_code']
+        empty_cart = {'items': [], 'discount_amount': 0, 'discount_type': None, 'discount_reason': ''}
+        
+        try:
+            from app.services.db import get_db_connection
+            conn = get_db_connection()
+            conn.execute(
+                'UPDATE pos_terminal_sessions SET cart_data = ?, last_activity = CURRENT_TIMESTAMP WHERE session_code = ?',
+                (json.dumps(empty_cart), session_code)
+            )
+            conn.commit()
+            conn.close()
+            
+            # Broadcast clear to all paired terminals
+            try:
+                from app.services.websocket import broadcast_cart_update
+                broadcast_cart_update(session_code, empty_cart)
+            except Exception as e:
+                logger.warning(f"Could not broadcast cart clear: {e}")
+                
+        except Exception as e:
+            logger.error(f"Error clearing shared cart: {e}")
+    
     session.pop('pos_cart', None)
     session.modified = True
 
@@ -193,7 +301,7 @@ def search_inventory(query, limit=10):
         sql = f'''
             SELECT id, sku, name, quantity, sell_price, image_url
             FROM inventory_items 
-            WHERE {where_clause}
+            WHERE COALESCE(is_legacy, 0) = 0 AND {where_clause}
             ORDER BY name ASC
             LIMIT ?
         '''
@@ -239,6 +347,21 @@ def check_pos_enabled():
         if not current_user.has_role('pos'):
             flash("You don't have access to the POS module.")
             return redirect(url_for('main.index'))
+    
+    # Guard: customer terminals can only access customer-safe endpoints
+    pairing = session.get('pos_pairing')
+    if pairing and pairing.get('terminal_type') == 'customer':
+        # Endpoints that customer terminals are allowed to access
+        allowed_endpoints = {
+            'pos.customer_display',
+            'pos.pairing_page',
+            'pos.pair_terminal',
+            'pos.unpair_terminal',
+            'pos.terminal_status',
+            'pos.api_shared_cart',
+        }
+        if request.endpoint and request.endpoint not in allowed_endpoints:
+            return redirect(url_for('pos.customer_display'))
 
 
 @pos_bp.route('/debug')
@@ -358,10 +481,16 @@ def save_email_settings():
     password = request.form.get('password', '').strip()
     recipients = request.form.get('recipients', '').strip()
     
+    # Auto-Email Settings
+    auto_enabled = 'true' if request.form.get('auto_email_enabled') == 'on' else 'false'
+    auto_time = request.form.get('auto_email_time', '').strip()
+    
     set_pos_setting('POS_EMAIL_HOST', host)
     set_pos_setting('POS_EMAIL_PORT', port)
     set_pos_setting('POS_EMAIL_USER', user)
     set_pos_setting('POS_EMAIL_RECIPIENTS', recipients)
+    set_pos_setting('POS_AUTO_EMAIL_ENABLED', auto_enabled)
+    set_pos_setting('POS_AUTO_EMAIL_TIME', auto_time)
     
     # Only update password if provided
     if password:
@@ -370,3 +499,59 @@ def save_email_settings():
     
     flash("Email settings saved.")
     return redirect(url_for('admin.admin_panel') + '?tab=pos')
+
+
+# =============================================================================
+# Hardware API Routes
+# =============================================================================
+
+@pos_bp.route('/hardware/open_drawer', methods=['POST'])
+@login_required
+def open_drawer():
+    """Open the cash drawer via serial port."""
+    from flask import jsonify
+    from app.services.hardware import open_cash_drawer
+    
+    # Check if cash drawer is enabled
+    enabled = get_pos_setting('CASH_DRAWER_ENABLED', 'false') == 'true'
+    if not enabled:
+        return jsonify({'success': False, 'message': 'Cash drawer is not enabled'}), 400
+    
+    # 1. Try to get port from request (Client-side override)
+    port = request.form.get('port') or (request.json.get('port') if request.is_json else None)
+    
+    # 2. Fallback to global setting (Legacy support)
+    if not port:
+        port = get_pos_setting('CASH_DRAWER_PORT', '')
+        
+    if not port:
+        return jsonify({'success': False, 'message': 'Cash drawer port not configured'}), 400
+    
+    result = open_cash_drawer(port)
+    return jsonify(result)
+
+
+@pos_bp.route('/hardware/list_ports', methods=['GET'])
+@login_required
+def list_ports():
+    """List available serial ports for cash drawer configuration."""
+    from flask import jsonify
+    from app.services.hardware import list_serial_ports
+    
+    ports = list_serial_ports()
+    return jsonify({'ports': ports})
+
+
+@pos_bp.route('/hardware/test_drawer', methods=['POST'])
+@login_required
+def test_drawer():
+    """Test the cash drawer by opening it on specified port."""
+    from flask import jsonify
+    from app.services.hardware import open_cash_drawer
+    
+    port = request.form.get('port') or request.json.get('port') if request.is_json else request.form.get('port')
+    if not port:
+        return jsonify({'success': False, 'message': 'No port specified'}), 400
+    
+    result = open_cash_drawer(port)
+    return jsonify(result)

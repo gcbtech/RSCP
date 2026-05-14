@@ -122,6 +122,19 @@ def audit_submit_count():
     record = conn.execute("SELECT * FROM audit_records WHERE session_id = ? AND item_id = ?", 
                           (session_id, item_id)).fetchone()
                           
+    diff = count - item['quantity']
+    
+    if diff != 0:
+        # Update live inventory immediately
+        conn.execute("UPDATE inventory_items SET quantity = ? WHERE id = ?", (count, item_id))
+        
+        # Log the transaction
+        user = session.get('user', 'Unknown')
+        conn.execute('''
+            INSERT INTO inventory_transactions (inventory_item_id, quantity_change, reason, user_id) 
+            VALUES (?, ?, 'Live Audit Correction', ?)
+        ''', (item_id, diff, user))
+
     if record:
         conn.execute("UPDATE audit_records SET counted_qty = ?, timestamp = CURRENT_TIMESTAMP WHERE id = ?", 
                      (count, record['id']))
@@ -150,13 +163,10 @@ def audit_history():
 @inventory_bp.route('/audit/finalize/<int:session_id>', methods=['POST'])
 @login_required
 def audit_finalize(session_id):
-    """Finalize an audit session and apply counts."""
+    """Finalize an audit session (counts are already applied live)."""
     conn = get_db_connection()
     
-    records = conn.execute("SELECT * FROM audit_records WHERE session_id = ?", (session_id,)).fetchall()
-    for rec in records:
-        conn.execute("UPDATE inventory_items SET quantity = ? WHERE id = ?", (rec['counted_qty'], rec['item_id']))
-        
+    # We no longer apply counts here because they are applied immediately upon submission.
     conn.execute("UPDATE audit_sessions SET status = 'completed', end_time = CURRENT_TIMESTAMP WHERE id = ?", (session_id,))
     conn.commit()
     conn.close()

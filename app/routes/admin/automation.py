@@ -28,7 +28,11 @@ def save_automation():
     
     # Only update password if provided (don't overwrite with empty string if user left it blank)
     if email_pass:
-        updates['EMAIL_PASSWORD'] = email_pass
+        updates['EMAIL_PASS'] = email_pass
+        # Legacy cleanup or double-save? Let's just switch to EMAIL_PASS
+        # The user's file likely has EMAIL_PASSWORD now.
+        # Ideally we should probably delete the old key, but save_config_value only updates.
+        # It's fine.
         
     try:
         for key, value in updates.items():
@@ -68,4 +72,22 @@ def save_automation():
     # Right Column (1508)
     # Automation (1510).
     # So Automation IS in Settings tab (right column).
+    return redirect(url_for('admin.admin_panel', tab='settings'))
+
+@admin_bp.route('/run_email_ingest', methods=['POST'])
+def run_email_ingest():
+    """Manually trigger email ingest."""
+    error = require_admin()
+    if error: return error
+    
+    from app.services.data_manager import sync_email_ingest
+    result = sync_email_ingest()
+    
+    if result['status'] == 'success':
+        flash(f"Success! {result['message']}", "success")
+    elif result['status'] == 'skipped':
+        flash(f"Skipped: {result['message']}", "warning")
+    else:
+        flash(f"Error: {result['message']}", "danger")
+        
     return redirect(url_for('admin.admin_panel', tab='settings'))

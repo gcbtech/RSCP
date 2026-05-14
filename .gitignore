@@ -17,6 +17,7 @@ received_log.csv
 # Logs
 # ----------------------------------
 *.log
+*.LOG
 app.log
 logs/
 error_logs*.csv
@@ -100,11 +101,22 @@ backups/
 *.temp
 .cache/
 temp/
+ignore/
 
 # ----------------------------------
 # Git (don't track this test file)
 # ----------------------------------
 .TESTgitignore
+
+# ----------------------------------
+# Stray / Debris Files
+# ----------------------------------
+=*
+CMH1FR~O.LOG
+routes_dump.txt
+*_dump.txt
+debug_*.py
+reproduce_bug.py
 
 # ----------------------------------
 # User Uploads (instance-specific)

@@ -4,6 +4,7 @@ import logging
 import datetime
 import time
 import csv # Replaced pandas with csv
+import re
 import threading
 from typing import Dict, Any, List, Optional, Set
 import sqlite3
@@ -153,24 +154,44 @@ def sync_manifest():
         try:
             # Robust CSV Reading
             with open(MANIFEST_FILE, mode='r', encoding='utf-8-sig', errors='replace') as f:
-                # Read header line first to clean it
-                # Use csv.reader to safely parse headers (handles quotes/commas)
+                # ... check for binary/xlsx signature? 
+                # Basic check: read first char. If it's PK (zip), it's likely xlsx.
+                first_char = f.read(1)
+                f.seek(0)
+                if first_char == 'P': 
+                    # loose check for 'PK' header of zip/xlsx
+                    start = f.read(2)
+                    f.seek(0)
+                    if start == 'PK':
+                         logger.error("Manifest appears to be binary/XLSX. Please convert to CSV.")
+                         return
+                
+                # Check for null bytes (binary)
+                sample = f.read(1024)
+                if '\0' in sample:
+                     logger.error("Manifest appears to be binary. Please save as standard CSV.")
+                     return
+                f.seek(0)
+                
                 csv_reader = csv.reader(f)
                 try:
                     raw_headers = next(csv_reader)
                 except StopIteration:
                     return # Empty file
                 
-                # Clean headers
-                headers = [h.strip() for h in raw_headers]
+                # Clean headers and Deduplicate
+                clean_headers = []
+                seen_headers = {}
+                for h in raw_headers:
+                    h_clean = h.strip()
+                    if h_clean in seen_headers:
+                         seen_headers[h_clean] += 1
+                         h_clean = f"{h_clean}_{seen_headers[h_clean]}"
+                    else:
+                         seen_headers[h_clean] = 0
+                    clean_headers.append(h_clean)
                 
-                # Use these cleaned headers with DictReader
-                reader = csv.DictReader(f, fieldnames=headers)
-                
-                # Note: f pointer is now past header, but DictReader might expect to consume header?
-                # If we pass fieldnames, DictReader assumes first read is DATA.
-                # So this is correct. readline() consumed proper header line.
-                
+                reader = csv.DictReader(f, fieldnames=clean_headers)
                 rows = list(reader)
             
             conn = get_db_connection()
@@ -182,59 +203,97 @@ def sync_manifest():
             
             skipped_count = 0
             
-            # Detect Header Format
-            has_duplicate_headers = 'TrackingNumber.1' in headers
+            # Helper to get value from aliases
+            def get_val(row_dict, aliases):
+                for a in aliases:
+                    if a in row_dict:
+                        return str(row_dict[a]).strip()
+                return ""
+
+            # Check for eBay duplicate headers
+            has_duplicate_headers = 'TrackingNumber.1' in clean_headers
             
             ids_to_clean = set()
             
             for row in rows:
                 tracking = ""
-                # Strict Header Logic
+                is_placeholder_manifest = False
+                
+                # Custom Header Logic
                 if has_duplicate_headers:
-                    # eBay format: TrackingNumber (Col 0) is Order ID, TrackingNumber.1 (Col 12) is Real Tracking
-                    real_tracking = str(row.get('TrackingNumber.1', '')).strip().replace('="', '').replace('"', '')
+                    # eBay format: 
+                    # TrackingNumber (Col 0) is Order ID
+                    # TrackingNumber_1 (Col 10, duplicated) is Real Tracking
+                    # TrackingNumber.1 (Col X) might be literal
+                    
+                    real_tracking = ""
+                    # Check the deduced duplicate names first
+                    for key in ['TrackingNumber_1', 'TrackingNumber_2', 'TrackingNumber.1', 'TrackingNumber.2', 'TrackingNumber.3']:
+                        val = str(row.get(key, '')).strip().replace('="', '').replace('"', '')
+                        if val:
+                            real_tracking = val
+                            break
+                            
                     order_id = str(row.get('TrackingNumber', '')).strip().replace('="', '').replace('"', '')
                     
                     if real_tracking:
                         tracking = real_tracking
+                    elif order_id:
+                         tracking = order_id
+                         is_placeholder_manifest = True 
                     
-                    # Always mark the Order ID for cleanup if it looks like an ID
-                    if order_id and len(order_id) > 5 and order_id != tracking:
-                        ids_to_clean.add(order_id)
+                    if order_id and len(order_id) > 5 and not is_placeholder_manifest:
+                         ids_to_clean.add(order_id)
                 else:
-                    # Standard Format
-                    raw_tracking = str(row.get('TrackingNumber', '')).strip()
+                    # Generic Format (Amazon, etc)
+                    # Try known tracking aliases
+                    raw_tracking = get_val(row, ['TrackingNumber', 'Carrier Tracking #', 'Tracking Number', 'Tracking'])
                     tracking = raw_tracking.replace('="', '').replace('"', '').strip()
-                
+
+                # Fallback: Use Order ID as tracking if tracking is missing?
+                if not tracking:
+                     # Check Order ID
+                     oid = get_val(row, ['Order ID', 'Order Number', 'Order #', 'Reference Number'])
+                     if oid:
+                         tracking = oid.replace('="', '').replace('"', '').strip()
+                         if tracking: is_placeholder_manifest = True
+
                 if not tracking: 
                     skipped_count += 1
                     continue
                 
                 # Clean other fields
-                item_name = str(row.get('ItemName', 'Unknown')).strip().replace('="', '').replace('"', '')
+                # Item Name Support
+                item_name = get_val(row, ['ItemName', 'Title', 'Product Name', 'Item Description']).replace('="', '').replace('"', '')
+                if not item_name: item_name = 'Unknown'
                 
-                # ... existing date/qty logic ...
-                date_str = parse_date(str(row.get('Date', '')))
+                # Date Support
+                date_val = get_val(row, ['Date', 'Order Date', 'Purchase Date', 'Time'])
+                date_str = parse_date(date_val)
                 
+                # Quantity Support
+                qty_val = get_val(row, ['Quantity', 'Item Quantity', 'Qty', 'Order Quantity'])
                 try:
-                    qty = int(float(row.get('Quantity', '1') or 1)) 
+                    qty = int(float(qty_val or 1))
                 except ValueError:
                     qty = 1
                 
-                img = str(row.get('Image', '')).strip()
+                # Image Support
+                img = get_val(row, ['Image', 'ImageUrl', 'Photo', 'Image URL'])
                 if img.lower() == 'nan': img = ""
                 
-                # ASIN/URL Cleaning
-                asin = str(row.get('ASIN', '')).strip().replace('="', '').replace('"', '')
+                # ASIN Support
+                asin = get_val(row, ['ASIN', 'Item ID', 'ItemID']).replace('="', '').replace('"', '')
                 if asin.lower() == 'nan': asin = ""
                 
-                # Fix Source URL: Check all possible variants
+                # Source URL Support
                 source_url = ""
                 for key in ['SourceURL', 'URL', 'PurchaseURL', 'Link', 'ProductLink', 'Product URL', 'View Order Detail']:
-                    val = str(row.get(key, '')).strip()
-                    if val and val.lower() != 'nan':
-                        source_url = val
-                        break
+                    if key in row:
+                        val = str(row[key]).strip()
+                        if val and val.lower() != 'nan':
+                            source_url = val
+                            break
 
                 # Composite Key Match: Strict sync to avoid merging different items
                 # We match on Tracking + Item Name to allows multiple items per tracking number
@@ -302,6 +361,77 @@ def sync_manifest():
                     if mapping:
                         sku = mapping['inventory_sku']
 
+                    # --- ORDER ID MERGE LOGIC ---
+                    current_order_id = None
+                    
+                    # 1. Explicit Column Lookup (The User Asked for This!)
+                    # Check for generic "Order ID" keys
+                    for key in ['Order ID', 'Order Number', 'Order #', 'Reference Number', 'Reference #', 'Ref Number', 'Order']:
+                        val = str(row.get(key, '')).strip()
+                        if val and val.lower() != 'nan' and len(val) > 4:
+                            # Clean it up slightly?
+                            current_order_id = val.replace('="', '').replace('"', '').strip()
+                            break
+                            
+                    # 2. Fallbacks (eBay / Amazon Tracking)
+                    if not current_order_id:
+                        if has_duplicate_headers and order_id and len(order_id) > 5 and order_id != tracking:
+                            current_order_id = order_id
+                        elif re.match(r'^\d{3}-\d{7}-\d{7}$', tracking):
+                             current_order_id = tracking
+
+                    if current_order_id:
+                        placeholder = f"ORDER-{current_order_id}%" # Use wildcard
+                        # Find all email records for this order (suffix 01, 02, etc)
+                        email_recs = conn.execute("SELECT * FROM packages WHERE tracking_number LIKE ?", (placeholder,)).fetchall()
+                        
+                        if email_recs:
+                            best_match = None
+                            if len(email_recs) == 1:
+                                best_match = email_recs[0]
+                            else:
+                                # Fuzzy match name
+                                try:
+                                    from Levenshtein import ratio
+                                    best_score = 0
+                                    for rec in email_recs:
+                                        score = ratio(item_name.lower(), rec['item_name'].lower())
+                                        if score > best_score:
+                                            best_score = score
+                                            best_match = rec
+                                    # Relax threshold to 0.2 because email names vs manifest names can differ wildly
+                                    if best_score < 0.2: best_match = None
+                                except ImportError:
+                                    # Substring fallback
+                                    for rec in email_recs:
+                                        # Use both-ways substring
+                                        if item_name.lower() in rec['item_name'].lower() or rec['item_name'].lower() in item_name.lower():
+                                            best_match = rec
+                                            break
+                                    if not best_match: best_match = email_recs[0] # Fallback: Best Guess
+
+                            if best_match:
+                                if not img and best_match['image_url']:
+                                    img = best_match['image_url']
+                                
+                                # Trust Email Quantity
+                                email_qty = best_match.get('quantity', 1)
+                                if email_qty and email_qty > 0:
+                                    qty = email_qty
+
+                                # CLEANUP: Delete the temp email record since we merged it!
+                                # Prevents duplicate "ORDER-" items staying in the list
+                                # BUT, skip cleanup if we are using the Order ID as the tracking number (is_placeholder_manifest)
+                                # Reason: If we delete 'ORDER-123', and our current tracking is '123' (fallback),
+                                # we have effectively merged. But if we later get '1Z999', we delete '123'. 
+                                # If 'ORDER-123' is gone, '1Z999' can't find the image.
+                                # So, if is_placeholder_manifest, we KEEP the 'ORDER-123' record so it can serve the REAL tracking later.
+                                if not is_placeholder_manifest:
+                                    try:
+                                        cur.execute("DELETE FROM packages WHERE id = ?", (best_match['id'],))
+                                    except Exception as c_e:
+                                        logger.error(f"Failed to cleanup placeholder {best_match['tracking_number']}: {c_e}")
+
                     cur.execute('''
                         INSERT INTO packages (tracking_number, item_name, date_expected, quantity, image_url, status, asin, source_url, sku)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -351,16 +481,19 @@ def get_dashboard_stats() -> Dict[str, Any]:
     # Expected
     # Expected Today
     # Total = count of items where date_expected == today
-    # Scanned = count of those items that have date_scanned not null
+    #   BUT exclude packages already scanned on a PRIOR day (they arrived early)
+    # Scanned = count of those items that have date_scanned today
     
-    expected_rows = conn.execute("SELECT date_scanned, status FROM packages WHERE date_expected = ?", (today_str,)).fetchall()
+    expected_rows = conn.execute("""
+        SELECT date_scanned, status FROM packages 
+        WHERE date_expected = ?
+          AND (date_scanned IS NULL OR date(date_scanned, 'localtime') = ?)
+    """, (today_str, today_str)).fetchall()
     
     total_expected = len(expected_rows)
     scanned_count = 0
     
     for r in expected_rows:
-        # Check if scanned (date_scanned is not None or status is 'received'/'refunded'/'archived', etc?)
-        # Simplest: if date_scanned is set.
         if r['date_scanned']:
             scanned_count += 1
             
@@ -568,3 +701,72 @@ def check_history(tracking: str) -> bool:
     found = res['c'] > 0
     conn.close()
     return found
+
+# --- EMAIL INGEST INTEGRATION ---
+from email_ingest import check_amazon_emails
+
+def sync_email_ingest():
+    """Run the email ingest process."""
+    try:
+        config = load_config()
+        if not config.get('EMAIL_INGEST_ENABLED', False):
+            logger.info("Email Ingest Disabled in Config.")
+            return {"status": "skipped", "message": "Email Ingest Disabled"}
+            
+        imap_server = config.get('IMAP_SERVER')
+        user = config.get('EMAIL_USER')
+        password = config.get('EMAIL_PASS') or config.get('EMAIL_PASSWORD') # Support both keys (legacy fix)
+        
+        if not imap_server or not user or not password:
+            logger.warning("Email Ingest Missing Credentials.")
+            return {"status": "error", "message": "Missing Credentials"}
+            
+        logger.info(f"Starting Email Ingest for {user}...")
+        
+        # 1. Fetch Emails
+        # We use check_amazon_emails which handles both Amazon and eBay logic now
+        results = check_amazon_emails(imap_server, user, password)
+        
+        if not results:
+            logger.info("No new email orders found.")
+            return {"status": "success", "count": 0, "message": "No new emails found"}
+            
+        # 2. Save to DB
+        conn = get_db_connection()
+        count = 0
+        
+        for item in results:
+            try:
+                # Check for duplicate tracking (ORDER-ID or regular)
+                exists = conn.execute("SELECT id FROM packages WHERE tracking_number = ?", (item['tracking'],)).fetchone()
+                
+                if not exists:
+                    # Insert
+                    conn.execute('''
+                        INSERT INTO packages (tracking_number, item_name, date_expected, quantity, status, image_url, source)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (
+                        item['tracking'], 
+                        item['name'], 
+                        item['date'], 
+                        item.get('quantity', 1),
+                        'incoming', # Status
+                        item['image_url'], 
+                        'auto_email'
+                    ))
+                    count += 1
+                else:
+                    # Optional: Update existing if needed? Usually we don't overwrite manual changes.
+                    pass
+            except Exception as e:
+                logger.error(f"Error saving email item {item['tracking']}: {e}")
+                
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Email Ingest Complete. Imported {count} new items.")
+        return {"status": "success", "count": count, "message": f"Imported {count} items"}
+        
+    except Exception as e:
+        logger.error(f"Email Ingest Failed: {e}")
+        return {"status": "error", "message": str(e)}

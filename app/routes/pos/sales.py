@@ -4,6 +4,7 @@ Main sales interface routes and cart management.
 """
 import logging
 import json
+from datetime import datetime
 from flask import request, redirect, url_for, flash, render_template, jsonify, session
 from flask_login import current_user, login_required
 
@@ -105,6 +106,10 @@ def cart_add():
     elif total_qty > item['quantity']:
         flash(f'⚠️ STOCK WARNING: Selling {total_qty} but only {item["quantity"]} in inventory!', 'warning')
     
+    # Check for legacy item (warning only, allow sale)
+    if item.get('is_legacy'):
+        flash(f'📦 LEGACY ITEM: "{item["name"]}" is marked as discontinued. Proceed with sale if appropriate.', 'warning')
+    
     # Calculate line total
     unit_price = item.get('current_price') or item.get('sell_price') or 0
     line_total = calculate_line_total(unit_price, quantity)
@@ -159,8 +164,9 @@ def cart_add_custom():
     
     cart = get_cart()
     
-    # Generate a unique custom SKU
-    custom_sku = f"CUSTOM-{len(cart['items']) + 1}"
+    # Generate a unique custom SKU with timestamp to avoid collisions
+    timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+    custom_sku = f"CUSTOM-{timestamp}-{len(cart['items']) + 1}"
     line_total = calculate_line_total(unit_price, quantity)
     
     cart['items'].append({

@@ -1,7 +1,0 @@
-Collecting APScheduler
-  Downloading apscheduler-3.11.2-py3-none-any.whl (64 kB)
-     ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 64.4/64.4 kB 1.1 MB/s eta 0:00:00
-Collecting tzlocal>=3.0
-  Downloading tzlocal-5.3.1-py3-none-any.whl (18 kB)
-Installing collected packages: tzlocal, APScheduler
-Successfully installed APScheduler-3.11.2 tzlocal-5.3.1

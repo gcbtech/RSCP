@@ -236,6 +236,7 @@ def _create_inventory_tables(conn):
             ('sale_end', 'ALTER TABLE inventory_items ADD COLUMN sale_end TEXT'),
             ('sale_enabled', 'ALTER TABLE inventory_items ADD COLUMN sale_enabled BOOLEAN DEFAULT 0'),
             ('sale_end_on_stock', 'ALTER TABLE inventory_items ADD COLUMN sale_end_on_stock BOOLEAN DEFAULT 0'),
+            ('is_legacy', 'ALTER TABLE inventory_items ADD COLUMN is_legacy BOOLEAN DEFAULT 0'),
         ]
         for col_name, sql in migrations:
             try:
@@ -435,6 +436,34 @@ def _create_pos_tables(conn):
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+        
+        # POS Terminal Sessions Table (for paired terminals sharing a cart)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_terminal_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_code TEXT UNIQUE NOT NULL,
+                cart_data TEXT DEFAULT '{"items": []}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_term_sess_code ON pos_terminal_sessions(session_code)')
+        
+        # POS Paired Terminals Table (terminals connected to a session)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_paired_terminals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_code TEXT NOT NULL,
+                terminal_type TEXT NOT NULL,
+                flask_session_id TEXT,
+                user_id INTEGER,
+                connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_code) REFERENCES pos_terminal_sessions(session_code) ON DELETE CASCADE,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_paired_term_code ON pos_paired_terminals(session_code)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_paired_term_session ON pos_paired_terminals(flask_session_id)')
         
         conn.commit()
         logger.info("POS tables initialized.")

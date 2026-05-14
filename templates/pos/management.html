@@ -125,25 +125,31 @@
     <div class="container-fluid p-4">
         <div class="row">
             <!-- Stats Row -->
-            <div class="col-md-3">
+            <div class="col">
                 <div class="stat-card">
                     <div class="stat-value text-primary">${{ "%.2f"|format(stats.total_revenue or 0) }}</div>
                     <div class="stat-label">Total Revenue</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
+                <div class="stat-card">
+                    <div class="stat-value text-success">${{ "%.2f"|format(profit_stats.estimated_profit or 0) }}</div>
+                    <div class="stat-label">Est. Profit</div>
+                </div>
+            </div>
+            <div class="col">
                 <div class="stat-card">
                     <div class="stat-value">{{ stats.total_orders or 0 }}</div>
                     <div class="stat-label">Orders</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="stat-card">
                     <div class="stat-value">${{ "%.2f"|format(stats.avg_order or 0) }}</div>
                     <div class="stat-label">Avg Order</div>
                 </div>
             </div>
-            <div class="col-md-3">
+            <div class="col">
                 <div class="stat-card">
                     <div class="stat-value text-danger">${{ "%.2f"|format(refund_stats.refund_total or 0) }}</div>
                     <div class="stat-label">Refunds ({{ refund_stats.refund_count or 0 }})</div>
@@ -165,14 +171,17 @@
                 <div class="chart-card">
                     <h5 class="mb-3">📋 Reports</h5>
                     <a href="{{ url_for('pos.daily_report') }}" class="quick-link">📊 End of Day Report</a>
+                    <a href="{{ url_for('pos.custom_report') }}" class="quick-link">📊 Custom Report</a>
                     <a href="{{ url_for('pos.daily_items_report') }}" class="quick-link">📦 Daily Items Sold</a>
                     <a href="{{ url_for('pos.valuation_report') }}" class="quick-link">💰 Inventory Valuation</a>
                     <a href="{{ url_for('pos.reorder_report') }}" class="quick-link">📉 Smart Reorder List</a>
+                    <a href="{{ url_for('pos.stale_inventory') }}" class="quick-link">🐌 Stale Inventory</a>
                     <a href="{{ url_for('pos.sales_history') }}" class="quick-link">📜 Sales History</a>
                     <a href="{{ url_for('pos.top_sellers') }}" class="quick-link">🏆 Top Sellers</a>
                     <a href="{{ url_for('pos.margins') }}" class="quick-link">💰 Margin Analysis</a>
                     <a href="{{ url_for('pos.hourly_analysis') }}" class="quick-link">🕐 Hourly Analysis</a>
                     <a href="{{ url_for('pos.operator_performance') }}" class="quick-link">👤 Operator Performance</a>
+                    <a href="{{ url_for('pos.refunds') }}" class="quick-link">🔄 Process Refund</a>
                     <a href="{{ url_for('pos.refunds_report') }}" class="quick-link">↩️ Refunds Report</a>
                     <a href="{{ url_for('pos.settings') }}" class="quick-link">⚙️ POS Settings</a>
                 </div>

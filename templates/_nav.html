@@ -251,21 +251,17 @@
         <span class="nav-icon"></span> Checkout
     </a>
     {% if is_admin %}
-    <a href="/pos/refunds" class="nav-link {% if '/refunds' in request.path %}active{% endif %}">
-        <span class="nav-icon"></span> Refunds
+    <a href="{{ url_for('pos.sales_history') }}"
+        class="nav-link {% if '/management/sales' in request.path %}active{% endif %}">
+        <span class="nav-icon"></span> Sales History
+    </a>
+    <a href="/pos/coupons"
+        class="nav-link {% if '/coupons' in request.path or '/sales-manager' in request.path %}active{% endif %}">
+        <span class="nav-icon"></span> Coupons/Sales
     </a>
     <a href="/pos/management"
-        class="nav-link {% if '/management' in request.path and '/settings' not in request.path %}active{% endif %}">
+        class="nav-link {% if request.path == '/pos/management' or request.path == '/pos/management/' or ('/management' in request.path and '/settings' not in request.path and '/sales' not in request.path) %}active{% endif %}">
         <span class="nav-icon"></span> Reports
-    </a>
-    <a href="/pos/coupons" class="nav-link {% if '/coupons' in request.path %}active{% endif %}">
-        <span class="nav-icon"></span> Coupons
-    </a>
-    <a href="/pos/sales-manager" class="nav-link {% if '/sales-manager' in request.path %}active{% endif %}">
-        <span class="nav-icon"></span> Sale(s)
-    </a>
-    <a href="/pos/management/settings" class="nav-link {% if '/settings' in request.path %}active{% endif %}">
-        <span class="nav-icon"></span> Settings
     </a>
     {% endif %}
     {% elif is_inventory %}
@@ -276,6 +272,9 @@
     <a href="/inventory/items"
         class="nav-link {% if '/items' in request.path or '/edit' in request.path %}active{% endif %}">
         <span class="nav-icon"></span> Inventory
+    </a>
+    <a href="/inventory/lookup" class="nav-link {% if '/lookup' in request.path %}active{% endif %}">
+        <span class="nav-icon"></span> Lookup
     </a>
     <a href="/inventory/audit/history" class="nav-link {% if '/audit' in request.path %}active{% endif %}">
         <span class="nav-icon"></span> Audit History

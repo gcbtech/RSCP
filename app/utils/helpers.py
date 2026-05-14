@@ -146,3 +146,27 @@ def local_date_to_utc_range(local_date_str: str):
     except Exception:
         # Fallback: assume the input is already in the right format
         return (f"{local_date_str} 00:00:00", f"{local_date_str} 23:59:59")
+
+def guess_shipper(tracking: str) -> str:
+    """Guess the shipper based on tracking number format."""
+    if not tracking:
+        return "Other"
+    
+    t = str(tracking).upper().replace(" ", "")
+    
+    if t.startswith("1Z"):
+        return "UPS"
+    elif t.startswith(("TBA", "TBC", "TBD")):
+        return "Amazon"
+    elif t.endswith("US") and len(t) == 13:
+        return "USPS"
+    elif t.startswith("9") and len(t) in [20, 22, 26, 34]:
+        return "USPS"
+    elif t.startswith("420") and len(t) in [30, 34]:
+        return "USPS"
+    elif len(t) in [12, 15, 20] and t.isdigit():
+        return "FedEx"
+    elif t.startswith("C") and t.endswith("CA") and len(t) == 13:
+         return "Canada Post"
+    else:
+        return "Other"

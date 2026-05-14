@@ -35,33 +35,15 @@ def detect_column_mapping(df):
 
     # Tracking detection (Enhanced for eBay)
     tracking_hints = [
-        'tracking number', 'tracking_number', 'trackingnumber', 
+        'trackingnumber', 'tracking number', 'tracking_number', 
         'tracking', 'carrier tracking', 'tracking #', 
         'carrier tracking #', 'carrier tracking number'
     ]
     
-    found_tracking_col = None
     for hint in tracking_hints:
         if hint in lower_cols:
-            found_tracking_col = lower_cols[hint]
+            mapping['tracking'] = lower_cols[hint]
             break
-            
-    order_hints = ['order number', 'ordernumber', 'order #', 'order_id', 'orderid']
-    found_order_col = None
-    for hint in order_hints:
-        if hint in lower_cols:
-            found_order_col = lower_cols[hint]
-            break
-            
-    # Decide best column: Use whichever has MORE data
-    # This prevents selecting a partially-filled "Tracking" column over a full "Order Number" column
-    tracking_valid = count_valid(found_tracking_col)
-    order_valid = count_valid(found_order_col)
-    
-    if order_valid > tracking_valid:
-        mapping['tracking'] = found_order_col
-    else:
-        mapping['tracking'] = found_tracking_col
 
     # Name detection
     name_hints = ['item name', 'itemname', 'title', 'item title', 'product name', 'description', 'item description']
@@ -79,7 +61,7 @@ def detect_column_mapping(df):
             break
     
     # Quantity detection
-    qty_hints = ['order quantity', 'quantity', 'qty', 'units', 'count', 'amount', 'ordered']
+    qty_hints = ['item quantity', 'order quantity', 'quantity', 'qty', 'units', 'count', 'amount', 'ordered']
     for hint in qty_hints:
         if hint in lower_cols:
             mapping['quantity'] = lower_cols[hint]
@@ -119,9 +101,9 @@ def generate_warnings(df, mapping):
         # Check for empty tracking numbers
         track_col = mapping['tracking']
         if track_col in df.columns:
-            # Convert to string first to handle numeric columns
-            col_as_str = df[track_col].astype(str)
-            empty_count = df[track_col].isna().sum() + (col_as_str.isin(['', 'nan', 'None'])).sum()
+            # Convert to string and normalize, then count empty values (only count once!)
+            col_as_str = df[track_col].astype(str).str.strip().str.lower()
+            empty_count = col_as_str.isin(['', 'nan', 'none']).sum()
             if empty_count > 0:
                 warnings.append(f"{empty_count} rows have empty tracking numbers, these items will NOT be imported!")
     
@@ -333,6 +315,22 @@ def upload_confirm():
         if col_product_url:
             rename_map[col_product_url] = 'ProductURL'
         # Note: ASIN doesn't need renaming, we use it directly for image generation
+        
+        # IMPORTANT: Before renaming, drop any OTHER columns that would have the same target name
+        # This prevents duplicate "TrackingNumber" columns when eBay has Order ID and Real Tracking both called TrackingNumber
+        columns_to_drop = []
+        for target_name in rename_map.values():
+            for col in df.columns:
+                # If this column would conflict with a renamed column AND it's not the one being renamed
+                if col == target_name and col not in rename_map:
+                    columns_to_drop.append(col)
+                # Also drop columns like "TrackingNumber.1" if we're renaming something to "TrackingNumber"
+                elif target_name == 'TrackingNumber' and 'tracking' in col.lower() and col not in rename_map:
+                    columns_to_drop.append(col)
+        
+        if columns_to_drop:
+            logger.info(f"Dropping conflicting columns: {columns_to_drop}")
+            df.drop(columns=columns_to_drop, inplace=True, errors='ignore')
         
         df.rename(columns=rename_map, inplace=True)
         

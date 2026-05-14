@@ -153,7 +153,7 @@
 
     <!-- Summary Cards -->
     <div class="row mb-4">
-        <!-- 1. Inventory Summary -->
+        <!-- 1. Inventory Items -->
         <div class="col-md-3">
             <a href="{{ url_for('inventory.list_items') }}" class="text-decoration-none">
                 <div class="stat-card card-blue h-100 hover-bg-light">
@@ -168,12 +168,24 @@
                             <div class="stat-label small">Units</div>
                         </div>
                     </div>
-                    <div class="mt-2 text-white-50 small">View All Inventory</div>
+                    <div class="mt-2 text-white-50 small">Inventory Items</div>
                 </div>
             </a>
         </div>
 
-        <!-- 2. Audit Status -->
+        <!-- 2. Lookup -->
+        <div class="col-md-3">
+            <a href="{{ url_for('inventory.lookup_page') }}" class="text-decoration-none">
+                <div class="stat-card h-100 hover-bg-light"
+                    style="background: linear-gradient(135deg, #0dcaf0, #0aa2c0); color: white;">
+                    <div class="stat-number" style="font-size: 2rem;">Lookup</div>
+                    <div class="stat-label" style="color: rgba(255,255,255,0.9);">Item Lookup</div>
+                    <div class="mt-2 text-white-50 small">Search by SKU, UPC, or Name</div>
+                </div>
+            </a>
+        </div>
+
+        <!-- 3. Audit Status -->
         <div class="col-md-3">
             <a href="{{ url_for('inventory.audit_history') }}" class="text-decoration-none">
                 <div class="stat-card h-100 hover-bg-light"
@@ -185,7 +197,7 @@
             </a>
         </div>
 
-        <!-- 3. Stock Alerts -->
+        <!-- 4. OOS/Low Stock -->
         <div class="col-md-3">
             <a href="{{ url_for('inventory.low_stock_report') }}" class="text-decoration-none">
                 <div class="stat-card h-100 hover-bg-light"
@@ -204,16 +216,6 @@
                     <div class="mt-2 text-white-50 small">View Report</div>
                 </div>
             </a>
-        </div>
-
-        <!-- 4. Margin (Profit) -->
-        <div class="col-md-3">
-            <div
-                class="stat-card bg-info text-white h-100 d-flex flex-column justify-content-center align-items-center">
-                <div class="stat-number" id="stat_margin_percent">{{ stats.margin_percent }}%</div>
-                <div class="stat-label" style="color: rgba(255,255,255,0.9);">Margin <span id="stat_potential_profit"
-                        style="opacity:0.7; font-size:0.9em">(${{ "%.0f"|format(stats.potential_profit) }})</span></div>
-            </div>
         </div>
     </div>
 
@@ -334,8 +336,6 @@
                     if (data.last_audit !== undefined) document.getElementById('stat_last_audit').innerText = data.last_audit;
                     if (data.low_stock !== undefined) document.getElementById('stat_low_stock').innerText = data.low_stock;
                     if (data.out_of_stock !== undefined) document.getElementById('stat_out_of_stock').innerText = data.out_of_stock;
-                    if (data.margin_percent !== undefined) document.getElementById('stat_margin_percent').innerText = data.margin_percent + '%';
-                    if (data.potential_profit !== undefined) document.getElementById('stat_potential_profit').innerText = '($' + Math.round(data.potential_profit) + ')';
                 })
                 .catch(e => console.error("Stats refresh failed", e));
         }, 5000);

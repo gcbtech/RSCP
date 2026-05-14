@@ -165,7 +165,7 @@ def create_coupon():
     # GET - show form
     items = conn.execute('''
         SELECT id, sku, name FROM inventory_items 
-        WHERE quantity > 0 OR 1=1
+        WHERE COALESCE(is_legacy, 0) = 0
         ORDER BY name
     ''').fetchall()
     
@@ -254,7 +254,9 @@ def edit_coupon(coupon_id):
     
     # GET - show form
     items = conn.execute('''
-        SELECT id, sku, name FROM inventory_items ORDER BY name
+        SELECT id, sku, name FROM inventory_items 
+        WHERE COALESCE(is_legacy, 0) = 0
+        ORDER BY name
     ''').fetchall()
     
     # Get currently linked items

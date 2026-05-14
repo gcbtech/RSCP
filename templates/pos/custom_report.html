@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Custom Report | RSCP</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            background: #f1f5f9;
+        }
+
+        .report-header {
+            background: white;
+            padding: 1.5rem 2rem;
+            border-bottom: 1px solid #e2e8f0;
+            margin-bottom: 2rem;
+        }
+
+        .card {
+            border: none;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .activity-table-wrapper {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        @media print {
+            body {
+                background: white;
+            }
+
+            .report-header {
+                border-bottom: none;
+                margin-bottom: 1rem;
+                padding: 0.5rem 0;
+            }
+
+            .btn,
+            .form-control {
+                display: none !important;
+            }
+
+            .report-header h2 {
+                font-size: 24px;
+            }
+
+            .card {
+                border: 1px solid #ddd !important;
+                break-inside: avoid;
+                box-shadow: none;
+            }
+
+            .col-md-3 {
+                width: 25% !important;
+                float: left;
+            }
+
+            .col-md-6 {
+                width: 50% !important;
+                float: left;
+            }
+
+            .text-bg-light {
+                background-color: #f8f9fa !important;
+                -webkit-print-color-adjust: exact;
+            }
+
+            .bg-opacity-10 {
+                background-opacity: 0.1 !important;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="report-header">
+        <div class="container-fluid">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+                <div>
+                    <h2 class="mb-1">📊 Custom Report</h2>
+                    <p class="text-muted mb-0">
+                        {{ start_date.strftime('%B %d, %Y') }} – {{ end_date.strftime('%B %d, %Y') }}
+                        <span class="badge bg-secondary ms-2">{{ range_days }} day{{ 's' if range_days != 1 else ''
+                            }}</span>
+                    </p>
+                </div>
+                <div class="d-flex gap-2 align-items-center flex-wrap">
+                    <form action="{{ url_for('pos.custom_report') }}" method="GET"
+                        class="d-flex gap-2 align-items-center flex-wrap">
+                        <div class="d-flex align-items-center gap-1">
+                            <label class="form-label mb-0 small fw-bold text-nowrap">From:</label>
+                            <input type="date" name="start" class="form-control form-control-sm"
+                                value="{{ start_date.strftime('%Y-%m-%d') }}" style="width:155px;">
+                        </div>
+                        <div class="d-flex align-items-center gap-1">
+                            <label class="form-label mb-0 small fw-bold text-nowrap">To:</label>
+                            <input type="date" name="end" class="form-control form-control-sm"
+                                value="{{ end_date.strftime('%Y-%m-%d') }}" style="width:155px;">
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-sm">Generate</button>
+                    </form>
+                    <button onclick="window.print()" class="btn btn-secondary btn-sm">🖨️ Print</button>
+                    <a href="{{ url_for('pos.management') }}" class="btn btn-outline-secondary btn-sm">Back to
+                        Dashboard</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container-fluid pb-5">
+        <!-- Financial Summary Cards -->
+        <div class="row g-3 mb-4">
+            <div class="col-md-3 col-6">
+                <div class="card h-100 border-info border-start border-3">
+                    <div class="card-body">
+                        <h6 class="text-muted text-uppercase small">Total Card</h6>
+                        <h3 class="fw-bold text-info">${{ "%.2f"|format(total_card or 0) }}</h3>
+                        <small class="text-muted d-block">Gross (collected)</small>
+                        <small class="text-dark fw-bold border-top pt-1 mt-1 d-block" style="font-size: 0.85em;">
+                            ${{ "%.2f"|format(total_card_net or 0) }} <span class="text-muted fw-normal">(ex.
+                                tax)</span>
+                        </small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card h-100 border-success border-start border-3">
+                    <div class="card-body">
+                        <h6 class="text-muted text-uppercase small">Total Cash</h6>
+                        <h3 class="fw-bold text-success">${{ "%.2f"|format(total_cash or 0) }}</h3>
+                        <small class="text-muted d-block">Gross (collected)</small>
+                        <small class="text-dark fw-bold border-top pt-1 mt-1 d-block" style="font-size: 0.85em;">
+                            ${{ "%.2f"|format(total_cash_net or 0) }} <span class="text-muted fw-normal">(ex.
+                                tax)</span>
+                        </small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card h-100 border-secondary border-start border-3">
+                    <div class="card-body">
+                        <h6 class="text-muted text-uppercase small">Total Tax</h6>
+                        <h3 class="fw-bold">${{ "%.2f"|format(summary.total_tax or 0) }}</h3>
+                        <small class="text-muted">Sales Tax Collected</small>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-3 col-6">
+                <div class="card h-100 border-primary border-start border-3 bg-primary bg-opacity-10">
+                    <div class="card-body">
+                        <h6 class="text-primary text-uppercase small fw-bold">Overall Total</h6>
+                        <h3 class="fw-bold text-primary">${{ "%.2f"|format(summary.gross_sales or 0) }}</h3>
+                        <small class="text-primary">All Payments</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Secondary Stats Strip -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card bg-light">
+                    <div class="card-body py-2 d-flex justify-content-between align-items-center flex-wrap gap-3">
+                        <div>
+                            <strong>Refunds:</strong> <span class="text-danger">-${{ "%.2f"|format(refunds.total or 0)
+                                }}</span>
+                            <small class="text-muted">({{ refunds.count or 0 }} txns)</small>
+                        </div>
+                        <div>
+                            <strong>Net Revenue:</strong> <span class="text-success fw-bold">${{
+                                "%.2f"|format(net_revenue or 0) }}</span>
+                        </div>
+                        <div>
+                            <strong>Total Orders:</strong> {{ summary.total_orders or 0 }}
+                        </div>
+                        <div>
+                            <strong>Avg/Order:</strong> ${{ "%.2f"|format((summary.gross_sales / summary.total_orders)
+                            if summary.total_orders else 0) }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <!-- Payment Breakdown Table -->
+            <div class="col-md-7">
+                <div class="card h-100">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0">💳 Payment Methods Breakdown</h5>
+                    </div>
+                    <div class="card-body">
+                        {% if payments %}
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Method</th>
+                                        <th class="text-center">Count</th>
+                                        <th class="text-end">Sales <small class="text-muted">(ex. tax)</small></th>
+                                        <th class="text-end">Tax</th>
+                                        <th class="text-end fw-bold">Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for p in payments %}
+                                    {% set sales_excl_tax = (p.total_amount or 0) - (p.tax_amount or 0) %}
+                                    <tr>
+                                        <td class="text-uppercase fw-bold">{{ p.payment_method }}</td>
+                                        <td class="text-center">{{ p.count }}</td>
+                                        <td class="text-end">${{ "%.2f"|format(sales_excl_tax) }}</td>
+                                        <td class="text-end text-muted">${{ "%.2f"|format(p.tax_amount or 0) }}</td>
+                                        <td class="text-end fw-bold">${{ "%.2f"|format(p.total_amount or 0) }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <p class="text-muted text-center py-4">No payments recorded in this period.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Activity Chart -->
+            <div class="col-md-5">
+                <div class="card h-100">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0">
+                            📅 {{ activity_grouping | capitalize }} Activity
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        {% if activity_data %}
+                        <div style="height: 200px; display: flex; align-items: flex-end; gap: 3px;">
+                            {% for a in activity_data %}
+                            {% set height_pct = (a.amount / max_activity_revenue * 100) if max_activity_revenue > 0 else
+                            0 %}
+                            <div class="flex-fill bg-primary bg-opacity-75 rounded-top"
+                                style="height: {{ height_pct }}%; min-height: 4px;"
+                                title="{{ a.label }} — ${{ '%.2f'|format(a.amount) }} ({{ a.count }} orders)">
+                            </div>
+                            {% endfor %}
+                        </div>
+                        <div class="d-flex justify-content-between mt-2 text-muted small border-top pt-2">
+                            <span>{{ activity_data[0].label }}</span>
+                            {% if activity_data|length > 2 %}
+                            <span>{{ activity_data[activity_data|length // 2].label }}</span>
+                            {% endif %}
+                            <span>{{ activity_data[-1].label }}</span>
+                        </div>
+
+                        <!-- Activity detail table -->
+                        <div class="activity-table-wrapper mt-3 border-top pt-2">
+                            <table class="table table-sm table-hover mb-0 small">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Period</th>
+                                        <th class="text-center">Orders</th>
+                                        <th class="text-end">Revenue</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for a in activity_data %}
+                                    <tr>
+                                        <td>{{ a.label }}</td>
+                                        <td class="text-center">{{ a.count }}</td>
+                                        <td class="text-end">${{ "%.2f"|format(a.amount) }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <p class="text-muted text-center py-4">No activity recorded in this period.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Top Sellers -->
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-white">
+                        <h5 class="mb-0">🏆 Top Selling Items</h5>
+                    </div>
+                    <div class="card-body p-0">
+                        {% if top_items %}
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0 align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th class="ps-3">SKU</th>
+                                        <th>Item Name</th>
+                                        <th class="text-center">Qty Sold</th>
+                                        <th class="text-end pe-3">Total Revenue</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for item in top_items %}
+                                    <tr>
+                                        <td class="ps-3"><small class="font-monospace text-muted">{{ item.sku }}</small>
+                                        </td>
+                                        <td>{{ item.name }}</td>
+                                        <td class="text-center">{{ item.qty }}</td>
+                                        <td class="text-end pe-3">${{ "%.2f"|format(item.total) }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <div class="p-4 text-center text-muted">No items sold in this period.</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

@@ -601,13 +601,23 @@ def past_due_view():
 @main_bp.route('/expected')
 @login_required
 def expected_view():
+    from app.utils.helpers import guess_shipper
     conn = get_db_connection()
     today = datetime.date.today().strftime('%Y-%m-%d')
     # Filter for TODAY only, matching dashboard
     rows = conn.execute("SELECT * FROM packages WHERE status IN ('expected','on_time') AND date_scanned IS NULL AND date_expected = ?", (today,)).fetchall()
-    items = [{"name": r['item_name'], "tracking": r['tracking_number']} for r in rows]
+    items = [{"name": r['item_name'], "tracking": r['tracking_number'], "shipper": guess_shipper(r['tracking_number'])} for r in rows]
     conn.close()
-    return render_template('expected.html', items=items)
+    
+    # Group items by shipper
+    grouped_items = {}
+    for item in items:
+        sh = item['shipper']
+        if sh not in grouped_items:
+            grouped_items[sh] = []
+        grouped_items[sh].append(item)
+        
+    return render_template('expected.html', items=items, grouped_items=grouped_items)
 
 @main_bp.route('/search')
 @main_bp.route('/receiving/link_item', methods=['POST'])

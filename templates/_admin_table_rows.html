@@ -46,7 +46,6 @@
         <span class="fw-bold" title="{{ data.name }}">{{ data.name[:80] }}{% if
             data.name|length > 80 %}...{% endif %}</span>
     </td>
-    </td>
     <td>
         <div class="qty-display" id="qtyDisplay_{{ data.id }}">
             <span onclick="toggleQtyEdit({{ data.id }})" style="cursor: pointer;" title="Click to edit Qty">
@@ -81,9 +80,38 @@
         </div>
     </td>
     <td>
-        <div style="font-family: monospace; font-size: 0.85rem;">{{ tracking }}
+        <div class="tracking-display" id="trackingDisplay_{{ data.id }}">
+            <div class="d-flex align-items-center gap-1">
+                {% set shipper = guess_shipper(tracking) %}
+                {% if shipper == 'UPS' %}
+                    <a href="https://www.ups.com/track?track=yes&trackNums={{ tracking }}" target="_blank" title="Track on UPS" style="font-family: monospace; font-size: 0.85rem;" class="text-decoration-none">{{ tracking }}</a>
+                {% elif shipper == 'FedEx' %}
+                    <a href="https://www.fedex.com/fedextrack/?trknbr={{ tracking }}" target="_blank" title="Track on FedEx" style="font-family: monospace; font-size: 0.85rem;" class="text-decoration-none">{{ tracking }}</a>
+                {% elif shipper == 'USPS' %}
+                    <a href="https://tools.usps.com/go/TrackConfirmAction?tLabels={{ tracking }}" target="_blank" title="Track on USPS" style="font-family: monospace; font-size: 0.85rem;" class="text-decoration-none">{{ tracking }}</a>
+                {% elif shipper == 'Canada Post' %}
+                    <a href="https://canadapost-postescanada.ca/track-reperage/en#/search?searchFor={{ tracking }}" target="_blank" title="Track on Canada Post" style="font-family: monospace; font-size: 0.85rem;" class="text-decoration-none">{{ tracking }}</a>
+                {% else %}
+                    <div style="font-family: monospace; font-size: 0.85rem;">{{ tracking }}</div>
+                {% endif %}
+                <span onclick="toggleTrackingEdit({{ data.id }})" style="cursor: pointer;" title="Edit Tracking Number">
+                    <small class="text-muted ms-1">✏️</small>
+                </span>
+            </div>
+            <small class="text-muted">{{ data.source|upper }}</small>
         </div>
-        <small class="text-muted">{{ data.source|upper }}</small>
+        <div class="tracking-editor d-none" id="trackingEditor_{{ data.id }}">
+            <div class="d-flex flex-column gap-1">
+                <input type="text" id="trackingInput_{{ data.id }}" class="form-control form-control-sm"
+                    value="{{ tracking }}" style="font-family: monospace; font-size: 0.8rem;">
+                <div class="d-flex gap-1">
+                    <button type="button" class="btn btn-sm btn-success py-0 flex-grow-1"
+                        onclick="submitTracking({{ data.id }})">Save</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary py-0"
+                        onclick="toggleTrackingEdit({{ data.id }})">✕</button>
+                </div>
+            </div>
+        </div>
     </td>
     <td>
         {% if data.status == 'refunded' %}

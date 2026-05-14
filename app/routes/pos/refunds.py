@@ -46,18 +46,34 @@ def refunds():
     """Refund search and management interface."""
     conn = get_request_db()
     
-    # Get recent orders for quick access
-    recent_orders = conn.execute('''
+    # Date filtering
+    date_from = request.args.get('date_from', '')
+    date_to = request.args.get('date_to', '')
+    
+    sql = '''
         SELECT o.*, u.username as operator_name,
                (SELECT COUNT(*) FROM pos_refunds r WHERE r.order_id = o.id) as refund_count
         FROM pos_orders o
         LEFT JOIN users u ON o.operator_id = u.id
-        ORDER BY o.created_at DESC
-        LIMIT 20
-    ''').fetchall()
+        WHERE 1=1
+    '''
+    params = []
+    
+    if date_from:
+        sql += " AND date(o.created_at, 'localtime') >= ?"
+        params.append(date_from)
+    if date_to:
+        sql += " AND date(o.created_at, 'localtime') <= ?"
+        params.append(date_to)
+    
+    sql += ' ORDER BY o.created_at DESC LIMIT 50'
+    
+    recent_orders = conn.execute(sql, params).fetchall()
     
     return render_template('pos/refunds.html',
                            orders=recent_orders,
+                           date_from=date_from,
+                           date_to=date_to,
                            refund_reasons=REFUND_REASONS)
 
 
