@@ -12,7 +12,7 @@ from flask_login import current_user, login_required
 from app.routes.pos import pos_bp, PAYMENT_METHODS
 from app.routes.pos.core import (
     get_cart, clear_cart, get_tax_rate, calculate_tax,
-    generate_order_number, round_money
+    generate_order_number, round_money, calculate_percentage
 )
 from app.services.db import get_db_connection, get_request_db
 
@@ -33,11 +33,10 @@ def checkout():
     subtotal = sum(item.get('line_total', 0) for item in cart['items'])
     
     # Apply order-level discount
-    # Apply order-level discount
     order_discount = 0
     if cart.get('discount_amount') and cart.get('discount_type'):
         if cart['discount_type'] == 'percent':
-            order_discount = subtotal * (cart['discount_amount'] / 100)
+            order_discount = calculate_percentage(subtotal, cart['discount_amount'])
         else:
             order_discount = cart['discount_amount']
     
@@ -66,7 +65,7 @@ def checkout():
     cash_discount_value = 0
     if cash_discount_enabled and cash_discount_amount > 0:
         if cash_discount_type == 'percent':
-            cash_discount_value = round_money(discounted_subtotal * (cash_discount_amount / 100))
+            cash_discount_value = calculate_percentage(discounted_subtotal, cash_discount_amount)
         else:
             cash_discount_value = round_money(min(cash_discount_amount, discounted_subtotal))
     
@@ -104,7 +103,7 @@ def checkout_process():
     order_discount = 0
     if cart.get('discount_amount') and cart.get('discount_type'):
         if cart['discount_type'] == 'percent':
-            order_discount = subtotal * (cart['discount_amount'] / 100)
+            order_discount = calculate_percentage(subtotal, cart['discount_amount'])
         else:
             order_discount = cart['discount_amount']
     
@@ -132,7 +131,7 @@ def checkout_process():
             
             if cash_discount_amount > 0:
                 if cash_discount_type == 'percent':
-                    cash_discount_applied = round_money(discounted_subtotal * (cash_discount_amount / 100))
+                    cash_discount_applied = calculate_percentage(discounted_subtotal, cash_discount_amount)
                 else:
                     cash_discount_applied = round_money(min(cash_discount_amount, discounted_subtotal))
                 
@@ -165,7 +164,7 @@ def checkout_process():
             if cash_discount_amount > 0:
                 if cash_discount_type == 'percent':
                     # Apply percentage discount to cash portion only
-                    split_cash_discount = round_money(cash_amount * (cash_discount_amount / 100))
+                    split_cash_discount = calculate_percentage(cash_amount, cash_discount_amount)
                 else:
                     # Apply fixed discount proportionally to cash portion
                     cash_proportion = cash_amount / total if total > 0 else 0

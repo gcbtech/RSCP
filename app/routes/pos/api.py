@@ -100,7 +100,7 @@ def api_validate_manager():
 @login_required
 def api_cart():
     """Get current cart state."""
-    from app.routes.pos.core import get_cart, get_tax_rate, calculate_tax
+    from app.routes.pos.core import get_cart, get_tax_rate, calculate_tax, calculate_percentage
     
     cart = get_cart()
     tax_rate = get_tax_rate()
@@ -111,7 +111,7 @@ def api_cart():
     order_discount = 0
     if cart.get('discount_amount') and cart.get('discount_type'):
         if cart['discount_type'] == 'percent':
-            order_discount = subtotal * (cart['discount_amount'] / 100)
+            order_discount = calculate_percentage(subtotal, cart['discount_amount'])
         else:
             order_discount = cart['discount_amount']
     
@@ -136,7 +136,7 @@ def api_shared_cart(session_code):
     """Get cart for a paired terminal session with computed totals."""
     import json
     from app.services.db import get_request_db
-    from app.routes.pos.core import get_tax_rate, get_pos_setting, calculate_tax, round_money
+    from app.routes.pos.core import get_tax_rate, get_pos_setting, calculate_tax, round_money, calculate_percentage
     
     conn = get_request_db()
     row = conn.execute(
@@ -159,7 +159,7 @@ def api_shared_cart(session_code):
     order_discount = 0
     if cart.get('discount_amount') and cart.get('discount_type'):
         if cart['discount_type'] == 'percent':
-            order_discount = subtotal * (cart['discount_amount'] / 100)
+            order_discount = calculate_percentage(subtotal, cart['discount_amount'])
         else:
             order_discount = cart['discount_amount']
     
@@ -179,7 +179,7 @@ def api_shared_cart(session_code):
         cd_type = get_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
         if cd_amount > 0:
             if cd_type == 'percent':
-                cash_discount_value = round_money(discounted_subtotal * (cd_amount / 100))
+                cash_discount_value = calculate_percentage(discounted_subtotal, cd_amount)
             else:
                 cash_discount_value = round_money(min(cd_amount, discounted_subtotal))
     

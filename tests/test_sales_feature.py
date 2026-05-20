@@ -16,14 +16,20 @@ from app.services.db import get_db_connection
 
 class TestSalesFeature(unittest.TestCase):
     def setUp(self):
-        self.app = create_app(test_config={'TESTING': True, 'DATABASE': ':memory:'})
+        self.db_path = os.path.join(os.path.dirname(__file__), 'test_sales_feature.db')
+        if os.path.exists(self.db_path):
+            try:
+                os.remove(self.db_path)
+            except Exception:
+                pass
+        self.app = create_app(test_config={'TESTING': True, 'DATABASE': self.db_path})
         self.client = self.app.test_client()
         self.ctx = self.app.app_context()
         self.ctx.push()
         
         # Init DB
-        from app.services.migration import run_migrations
-        run_migrations()
+        from app.services.migration import ensure_db_ready
+        ensure_db_ready()
         
         # Create test item
         conn = get_db_connection()
@@ -36,6 +42,11 @@ class TestSalesFeature(unittest.TestCase):
 
     def tearDown(self):
         self.ctx.pop()
+        if os.path.exists(self.db_path):
+            try:
+                os.remove(self.db_path)
+            except Exception:
+                pass
 
     def test_get_inventory_item_regular(self):
         """Test item price when sale is disabled."""

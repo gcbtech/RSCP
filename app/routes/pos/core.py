@@ -84,18 +84,29 @@ def calculate_tax(subtotal):
     return float(result.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
 
 
+def calculate_percentage(amount, percent):
+    """Calculate percentage using Decimal to avoid floating point precision loss and round with ROUND_HALF_UP."""
+    try:
+        if not amount or not percent:
+            return 0.0
+        result = Decimal(str(amount)) * Decimal(str(percent)) / Decimal('100')
+        return float(result.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+    except Exception:
+        return 0.0
+
+
 def calculate_line_total(unit_price, quantity, discount_amount=0, discount_type=None):
     """Calculate line total with optional discount."""
     base = unit_price * quantity
     
     if discount_amount and discount_type:
         if discount_type == 'percent':
-            discount = base * (discount_amount / 100)
+            discount = calculate_percentage(base, discount_amount)
         else:  # fixed
             discount = discount_amount
         base = max(0, base - discount)
     
-    return round(base, 2)
+    return round_money(base)
 
 
 def generate_order_number(terminal_id='POS-1'):

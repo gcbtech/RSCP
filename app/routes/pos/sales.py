@@ -11,7 +11,8 @@ from flask_login import current_user, login_required
 from app.routes.pos import pos_bp
 from app.routes.pos.core import (
     get_cart, save_cart, clear_cart, get_inventory_item, get_tax_rate,
-    calculate_tax, calculate_line_total, require_manager_for_void, allow_hold_orders
+    calculate_tax, calculate_line_total, require_manager_for_void, allow_hold_orders,
+    calculate_percentage
 )
 from app.services.db import get_db_connection, get_request_db
 
@@ -36,7 +37,7 @@ def sales():
     order_discount = 0
     if cart.get('discount_amount') and cart.get('discount_type'):
         if cart['discount_type'] == 'percent':
-            order_discount = subtotal * (cart['discount_amount'] / 100)
+            order_discount = calculate_percentage(subtotal, cart['discount_amount'])
         else:
             order_discount = cart['discount_amount']
     

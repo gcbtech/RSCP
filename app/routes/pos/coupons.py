@@ -408,7 +408,8 @@ def calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn):
         return min(discount_value, cart_subtotal)
     
     elif discount_type == 'order_percent':
-        return round(cart_subtotal * (discount_value / 100), 2)
+        from app.routes.pos.core import calculate_percentage
+        return calculate_percentage(cart_subtotal, discount_value)
     
     elif discount_type in ('item_dollar', 'item_percent'):
         # Get target items
@@ -425,7 +426,8 @@ def calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn):
                     # Apply once per item type, not per quantity
                     total_discount += min(discount_value, item_total)
                 else:
-                    total_discount += round(item_total * (discount_value / 100), 2)
+                    from app.routes.pos.core import calculate_percentage
+                    total_discount += calculate_percentage(item_total, discount_value)
         
         return total_discount
     
@@ -463,7 +465,9 @@ def calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn):
                 unit_price = float(item.get('unit_price', 0))
                 # For every buy_qty + 1, one gets discount
                 discounted_items = qty // (buy_qty + 1)
-                total_discount += discounted_items * unit_price * (discount_value / 100)
+                base_amount = discounted_items * unit_price
+                from app.routes.pos.core import calculate_percentage
+                total_discount += calculate_percentage(base_amount, discount_value)
         
         return round(total_discount, 2)
     
