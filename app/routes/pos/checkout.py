@@ -252,7 +252,8 @@ def checkout_process():
         redirect_params = {}
         
         # Check if auto-print is enabled
-        if get_pos_setting('AUTO_PRINT_RECEIPT', 'false') == 'true':
+        auto_print_enabled = get_pos_setting('AUTO_PRINT_RECEIPT', 'false') == 'true'
+        if auto_print_enabled:
             redirect_params['auto_print'] = '1'
         
         # Check if cash drawer should open (only for cash or split with cash)
@@ -263,7 +264,10 @@ def checkout_process():
             if has_cash:
                 redirect_params['open_drawer'] = '1'
         
-        return redirect(url_for('pos.receipt', order_number=order_number, **redirect_params))
+        if auto_print_enabled:
+            return redirect(url_for('pos.sales', auto_print_order=order_number, **redirect_params))
+        else:
+            return redirect(url_for('pos.receipt', order_number=order_number, **redirect_params))
         
     except Exception as e:
         conn.rollback()

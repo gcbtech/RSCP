@@ -753,8 +753,11 @@
     <div class="pos-container">
         <!-- Left: Search and Item Entry -->
         <div class="pos-card pos-search-card">
-            <div class="pos-card-header">
+            <div class="pos-card-header d-flex justify-content-between align-items-center">
                 <span>🔍 Scan or Search Item</span>
+                <button type="button" id="reprintBtn" class="btn btn-sm btn-outline-secondary" style="display: none; padding: 0.2rem 0.5rem; font-size: 0.8rem;" onclick="reprintLastOrder()">
+                    🖨️ Reprint Last (<span id="reprintOrderNum"></span>)
+                </button>
             </div>
             <div class="pos-card-body">
                 <div class="search-box">
@@ -1590,6 +1593,57 @@
             connectPairingSocket('{{ session["pos_pairing"]["session_code"] }}');
         });
         {% endif %}
+
+        // --- AUTO-PRINT & REPRINT FUNCTIONALITY ---
+        function printOrder(orderNumber) {
+            if (!orderNumber) return;
+            const printUrl = `/pos/receipt/${orderNumber}/print`;
+            const iframe = document.createElement('iframe');
+            iframe.style.position = 'fixed';
+            iframe.style.width = '0';
+            iframe.style.height = '0';
+            iframe.style.border = '0';
+            iframe.src = printUrl;
+            document.body.appendChild(iframe);
+            iframe.onload = function() {
+                setTimeout(() => {
+                    document.body.removeChild(iframe);
+                }, 60000); // 1-minute safety window
+            };
+        }
+
+        function reprintLastOrder() {
+            const lastOrder = localStorage.getItem('rscp_last_order');
+            if (lastOrder) {
+                printOrder(lastOrder);
+            }
+        }
+
+        function initAutoPrintAndReprint() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const autoPrintOrder = urlParams.get('auto_print_order');
+            
+            // 1. Save and clean URL instantly to prevent duplicate printing on F5/refresh
+            if (autoPrintOrder) {
+                localStorage.setItem('rscp_last_order', autoPrintOrder);
+                const cleanUrl = window.location.pathname;
+                window.history.replaceState({}, document.title, cleanUrl);
+                
+                // 2. Trigger auto print
+                printOrder(autoPrintOrder);
+            }
+            
+            // 3. Initialize reprint button visibility
+            const lastOrder = localStorage.getItem('rscp_last_order');
+            const reprintBtn = document.getElementById('reprintBtn');
+            const reprintOrderNum = document.getElementById('reprintOrderNum');
+            if (lastOrder && reprintBtn && reprintOrderNum) {
+                reprintOrderNum.textContent = lastOrder;
+                reprintBtn.style.display = 'inline-block';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', initAutoPrintAndReprint);
     </script>
 </body>
 
