@@ -1104,7 +1104,8 @@
                     body: formData,
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded',
-                        'X-Requested-With': 'XMLHttpRequest'
+                        'X-Requested-With': 'XMLHttpRequest',
+                        'X-Terminal-Id': getTerminalId()
                     }
                 });
                 
@@ -1138,6 +1139,42 @@
                 // Process the next item in line seamlessly
                 processScanQueue();
             }
+        }
+
+        // Zero-Reload Dynamic DOM Synchronization
+        function syncCartDOM() {
+            console.log('Synchronizing cart DOM via AJAX...');
+            fetch(window.location.href, {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+            .then(response => {
+                if (!response.ok) throw new Error('DOM sync failed');
+                return response.text();
+            })
+            .then(html => {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const newCart = doc.getElementById('posCartContainer');
+                const newFlashes = doc.getElementById('flashMessagesContainer');
+                
+                if (newCart) {
+                    document.getElementById('posCartContainer').innerHTML = newCart.innerHTML;
+                }
+                if (newFlashes) {
+                    document.getElementById('flashMessagesContainer').innerHTML = newFlashes.innerHTML;
+                }
+                
+                // Update CSRF tokens in case they rotated
+                const newCsrf = doc.querySelector('input[name="csrf_token"]');
+                if (newCsrf) {
+                    document.querySelectorAll('input[name="csrf_token"]').forEach(el => el.value = newCsrf.value);
+                }
+                console.log('Cart DOM successfully synchronized');
+            })
+            .catch(err => {
+                console.error('DOM sync error, falling back to reload:', err);
+                location.reload();
+            });
         }
 
         // Auto-queue on barcode scan (ultra-fast input without reload)
@@ -1488,8 +1525,11 @@
 
             pairingSocket.on('cart_update', (data) => {
                 console.log('Cart update received from paired terminal');
-                // Reload page to show updated cart
-                location.reload();
+                if (data && data.sender === getTerminalId()) {
+                    console.log('Ignoring self-broadcast');
+                    return;
+                }
+                syncCartDOM();
             });
 
             pairingSocket.on('session_closed', (data) => {
@@ -1529,9 +1569,9 @@
                         if (data.success) {
                             const cartHash = JSON.stringify(data.cart);
                             if (lastSalesCartHash && cartHash !== lastSalesCartHash) {
-                                // Cart changed - reload page
-                                console.log('Cart changed from another terminal, reloading');
-                                location.reload();
+                                // Cart changed - sync DOM
+                                console.log('Cart changed from another terminal, syncing DOM');
+                                syncCartDOM();
                             }
                             lastSalesCartHash = cartHash;
                         }

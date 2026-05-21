@@ -235,10 +235,19 @@ def save_cart(cart):
             conn.commit()
             conn.close()
             
+            # Extract sender terminal ID from request headers if available
+            sender_terminal_id = None
+            try:
+                from flask import request
+                if request:
+                    sender_terminal_id = request.headers.get('X-Terminal-Id')
+            except Exception:
+                pass
+            
             # Broadcast update to all paired terminals
             try:
                 from app.services.websocket import broadcast_cart_update
-                broadcast_cart_update(session_code, cart)
+                broadcast_cart_update(session_code, cart, sender_terminal_id)
             except Exception as e:
                 logger.warning(f"Could not broadcast cart update: {e}")
                 
@@ -273,10 +282,19 @@ def clear_cart():
             conn.commit()
             conn.close()
             
+            # Extract sender terminal ID from request headers if available
+            sender_terminal_id = None
+            try:
+                from flask import request
+                if request:
+                    sender_terminal_id = request.headers.get('X-Terminal-Id')
+            except Exception:
+                pass
+            
             # Broadcast clear to all paired terminals
             try:
                 from app.services.websocket import broadcast_cart_update
-                broadcast_cart_update(session_code, empty_cart)
+                broadcast_cart_update(session_code, empty_cart, sender_terminal_id)
             except Exception as e:
                 logger.warning(f"Could not broadcast cart clear: {e}")
                 

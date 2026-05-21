@@ -92,15 +92,15 @@ def init_socketio(app):
     return socketio
 
 
-def broadcast_cart_update(session_code: str, cart: dict):
+def broadcast_cart_update(session_code: str, cart: dict, sender_terminal_id: str = None):
     """
     Broadcast a cart update to all terminals in a session.
     Called from regular HTTP routes when cart changes.
     """
     global socketio
     if socketio:
-        socketio.emit('cart_update', {'cart': cart}, room=session_code)
-        logger.debug(f"Cart broadcast to {session_code}")
+        socketio.emit('cart_update', {'cart': cart, 'sender': sender_terminal_id}, room=session_code)
+        logger.debug(f"Cart broadcast to {session_code} (sender: {sender_terminal_id})")
 
 
 def get_socketio():
