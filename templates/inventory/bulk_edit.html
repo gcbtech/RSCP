@@ -161,6 +161,21 @@
             </div>
         </div>
 
+        <!-- Keywords -->
+        <div class="card mb-3">
+            <div class="card-header">🏷️ Update Keywords</div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-12">
+                        <label class="form-label">Keywords / Tags</label>
+                        <input type="text" name="keywords" class="form-control"
+                            placeholder="(Unchanged)">
+                        <small class="text-muted d-block mt-1" style="font-size: 0.75rem;">Comma separated keywords for search (e.g., 'adapter, fast cable, backup')</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Addons -->
         {% if config and (config.get('ITEM_ADDON_1_ENABLED') or config.get('ITEM_ADDON_2_ENABLED')) %}
         <div class="card mb-3">

@@ -605,6 +605,16 @@
             }
         }
 
+        // Auto-select/focus quantity input when adjust modal is shown
+        document.addEventListener('shown.bs.modal', function (event) {
+            const modal = event.target;
+            const qtyInput = modal.querySelector('input[name="quantity_change"]');
+            if (qtyInput) {
+                qtyInput.focus();
+                qtyInput.select();
+            }
+        });
+
         // Live Update
         setInterval(function () {
             // Don't refresh if a modal is open (prevent disruption)

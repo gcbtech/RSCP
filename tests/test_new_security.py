@@ -22,6 +22,7 @@ def client(app):
 @pytest.fixture
 def authenticated_client(app, client):
     with client.session_transaction() as sess:
+        sess['_user_id'] = '1'  # Flask-Login session key
         sess['user'] = 'TestAdmin'
         sess['is_admin'] = True
     return client

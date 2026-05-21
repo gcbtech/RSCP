@@ -31,7 +31,10 @@ def get_db_connection():
     # Enable WAL mode for better concurrency (only needs to be set once per DB)
     # WAL mode doesn't work with :memory: databases
     if path != ':memory:':
-        conn.execute('PRAGMA journal_mode=WAL')
+        try:
+            conn.execute('PRAGMA journal_mode=WAL')
+        except sqlite3.OperationalError as e:
+            logger.warning(f"Failed to enable WAL mode: {e}. Falling back to default journal mode.")
     return conn
 
 

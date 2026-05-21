@@ -1,6 +1,7 @@
 import unittest
 import sys
 import os
+from unittest.mock import patch
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -21,7 +22,8 @@ class TestRoundingFix(unittest.TestCase):
         # (50.00 * 0.0725 = 3.625, which should round up to 3.63)
         self.assertEqual(calculate_percentage(50.00, 7.25), 3.63)
 
-    def test_tax_and_discount_parity(self):
+    @patch('app.routes.pos.core.get_tax_rate', return_value=0.0725)
+    def test_tax_and_discount_parity(self, mock_get_tax_rate):
         """Verify that tax and cash discount calculations match exactly, eliminating the extra penny."""
         rate = 7.25  # 7.25% tax and cash discount
         
@@ -41,7 +43,8 @@ class TestRoundingFix(unittest.TestCase):
             # With equal tax and cash discount, the cash total must equal the subtotal
             self.assertEqual(cash_total, subtotal, f"Discrepancy found! Subtotal: {subtotal}, Cash Total: {cash_total}")
 
-    def test_all_subtotals_up_to_100(self):
+    @patch('app.routes.pos.core.get_tax_rate', return_value=0.0725)
+    def test_all_subtotals_up_to_100(self, mock_get_tax_rate):
         """Exhaustively verify all subtotals from $0.01 to $100.00 have zero penny discrepancy."""
         rate = 7.25
         for i in range(1, 10001):

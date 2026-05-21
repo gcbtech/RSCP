@@ -186,6 +186,7 @@ def bulk_edit():
             
             add_if_present('buy_price', 'buy_price', float)
             add_if_present('sell_price', 'sell_price', float)
+            add_if_present('keywords', 'keywords')
             
             # Special logic for Threshold to handle 0 properly
             threshold_val = request.form.get('alert_threshold', '').strip()
