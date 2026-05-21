@@ -374,6 +374,9 @@
     <div class="mb-3">
         <form action="{{ url_for('inventory.list_items') }}" method="GET" class="d-flex">
             <div class="input-group">
+                <input type="hidden" id="searchShowLegacy" name="show_legacy" value="{{ '1' if show_legacy else '0' }}">
+                <input type="hidden" id="searchSort" name="sort" value="{{ sort_by or 'name' }}">
+                <input type="hidden" id="searchOrder" name="order" value="{{ order or 'asc' }}">
                 <input type="text" id="searchInput" name="q" class="form-control"
                     placeholder="Search all inventory (name, SKU, location, category)..."
                     value="{{ search_query or '' }}">
@@ -702,39 +705,156 @@
         const crossSearchToggle = document.getElementById('crossSearchToggle');
         let searchTimeout;
 
+        // Unified SPA AJAX page loader
+        function loadInventoryPage(url, pushState = true) {
+            // Show a subtle progress indicator (e.g. dim the table body)
+            const tbody = document.getElementById('inventoryBody');
+            if (tbody) tbody.style.opacity = '0.5';
+
+            fetch(url)
+                .then(response => response.text())
+                .then(html => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+
+                    // Swap table body rows
+                    const newTbody = doc.getElementById('inventoryBody');
+                    if (newTbody && tbody) {
+                        tbody.innerHTML = newTbody.innerHTML;
+                        tbody.style.opacity = '1';
+                    }
+
+                    // Swap sort controls
+                    const oldSort = document.querySelector('.sort-controls');
+                    const newSort = doc.querySelector('.sort-controls');
+                    if (oldSort && newSort) {
+                        oldSort.innerHTML = newSort.innerHTML;
+                    }
+
+                    // Swap pagination controls (top & bottom)
+                    ['Inventory pagination top', 'Inventory pagination'].forEach(label => {
+                        const oldNav = document.querySelector(`nav[aria-label="${label}"]`);
+                        const newNav = doc.querySelector(`nav[aria-label="${label}"]`);
+                        if (oldNav && newNav) {
+                            oldNav.innerHTML = newNav.innerHTML;
+                            oldNav.style.display = '';
+                        } else if (oldNav && !newNav) {
+                            oldNav.style.display = 'none';
+                        }
+                    });
+
+                    // Update values of hidden parameters in the form to reflect the new state
+                    const parsedUrl = new URL(url, window.location.origin);
+                    const qVal = parsedUrl.searchParams.get('q') || '';
+                    const showLegacyVal = parsedUrl.searchParams.get('show_legacy') || '0';
+                    const sortVal = parsedUrl.searchParams.get('sort') || 'name';
+                    const orderVal = parsedUrl.searchParams.get('order') || (sortVal === 'created_at' ? 'desc' : 'asc');
+
+                    const inputShowLegacy = document.getElementById('searchShowLegacy');
+                    if (inputShowLegacy) inputShowLegacy.value = showLegacyVal;
+                    const inputSort = document.getElementById('searchSort');
+                    if (inputSort) inputSort.value = sortVal;
+                    const inputOrder = document.getElementById('searchOrder');
+                    if (inputOrder) inputOrder.value = orderVal;
+
+                    // Ensure search input value is also in sync with URL
+                    const sInput = document.getElementById('searchInput');
+                    if (sInput && sInput.value !== qVal) {
+                        sInput.value = qVal;
+                    }
+
+                    // Update browser address bar
+                    if (pushState) {
+                        window.history.pushState(null, '', url);
+                    } else {
+                        window.history.replaceState(null, '', url);
+                    }
+
+                    // Federated Search trigger if checked
+                    const crossSearchToggle = document.getElementById('crossSearchToggle');
+                    if (crossSearchToggle && crossSearchToggle.checked && qVal.length >= 2) {
+                        performFederatedSearch(qVal);
+                    } else {
+                        const fedResults = document.getElementById('federatedResults');
+                        if (fedResults) fedResults.style.display = 'none';
+                    }
+                })
+                .catch(err => {
+                    console.error('Error loading page:', err);
+                    if (tbody) tbody.style.opacity = '1';
+                });
+        }
+
+        // Intercept all sorting, pagination, clear search, and legacy toggle clicks for SPA experience
+        document.addEventListener('click', function (e) {
+            // Find closest link
+            const link = e.target.closest('a');
+            if (!link) return;
+
+            // Check if it's a sort button, a pagination button, or clear search button
+            const isSortLink = link.closest('.sort-controls');
+            const isPaginationLink = link.closest('nav[aria-label="Inventory pagination top"]') || 
+                                     link.closest('nav[aria-label="Inventory pagination"]');
+            const isClearLink = link.getAttribute('href') && link.getAttribute('href').includes('/inventory/items') && link.textContent.includes('✕');
+
+            if (isSortLink || isPaginationLink || isClearLink) {
+                // Skip if it's an edit link
+                if (link.href.includes('/inventory/edit/')) {
+                    return;
+                }
+                
+                // Prevent browser page reload
+                e.preventDefault();
+
+                // Load target page dynamically
+                loadInventoryPage(link.href, true);
+            }
+        });
+
+        // Intercept Search Form Submissions (pressing Enter or clicking Search button)
+        document.querySelector('form[action*="/inventory/items"]').addEventListener('submit', function (e) {
+            e.preventDefault();
+            
+            const form = this;
+            const url = new URL(form.action, window.location.origin);
+            const formData = new FormData(form);
+            
+            for (const [key, value] of formData.entries()) {
+                if (value) {
+                    url.searchParams.set(key, value);
+                } else {
+                    url.searchParams.delete(key);
+                }
+            }
+            
+            // Always start at page 1 for a new search/form submission
+            url.searchParams.set('page', '1');
+
+            loadInventoryPage(url.toString(), true);
+        });
+
+        // Handle browser Back/Forward navigation smoothly
+        window.addEventListener('popstate', function () {
+            loadInventoryPage(window.location.href, false);
+        });
+
+        // Typing event listener with debounce for live search
         searchInput.addEventListener('input', function () {
             const query = this.value.trim();
 
             clearTimeout(searchTimeout);
 
             searchTimeout = setTimeout(() => {
-                // Update results via AJAX
                 const url = new URL(window.location.href);
                 if (query) {
                     url.searchParams.set('q', query);
                 } else {
                     url.searchParams.delete('q');
                 }
-                url.searchParams.set('partial', '1');
                 url.searchParams.set('page', '1'); // Reset to page 1 on new search
 
-                fetch(url)
-                    .then(r => r.text())
-                    .then(html => {
-                        document.getElementById('inventoryBody').innerHTML = html;
-
-                        // Update URL bar (clean up params)
-                        url.searchParams.delete('partial');
-                        window.history.replaceState({}, '', url);
-
-                        // Federated Search
-                        if (crossSearchToggle && crossSearchToggle.checked && query.length >= 2) {
-                            performFederatedSearch(query);
-                        } else {
-                            document.getElementById('federatedResults').style.display = 'none';
-                        }
-                    })
-                    .catch(e => console.error("Search failed", e));
+                // Use replaceState to keep browser back/forward clean during active typing
+                loadInventoryPage(url.toString(), false);
             }, 300);
         });
 
@@ -942,14 +1062,13 @@
 
         // Go to specific page
         function goToPage(pageNum) {
-            const totalPages = {{ total_pages|default (1)
-        }};
-        pageNum = parseInt(pageNum, 10);
-        if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
-        if (pageNum > totalPages) pageNum = totalPages;
-        const url = new URL(window.location.href);
-        url.searchParams.set('page', pageNum);
-        window.location.href = url.toString();
+            const totalPages = {{ total_pages|default(1) }};
+            pageNum = parseInt(pageNum, 10);
+            if (isNaN(pageNum) || pageNum < 1) pageNum = 1;
+            if (pageNum > totalPages) pageNum = totalPages;
+            const url = new URL(window.location.href);
+            url.searchParams.set('page', pageNum);
+            loadInventoryPage(url.toString(), true);
         }
 
         function copyToClipboard(text, element) {
