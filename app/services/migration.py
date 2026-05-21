@@ -4,6 +4,50 @@ from app.services.db import get_db_connection, init_db, DB_PATH
 
 logger = logging.getLogger(__name__)
 
+def _safe_add_column(conn, table, column, column_def):
+    """
+    Safely adds a column to an existing table if it does not already exist.
+    Checks column existence first via table_info to prevent redundant and slow ALTER TABLE statements.
+    Retries automatically with randomized exponential backoff and jitter if the database is locked.
+    """
+    import time
+    import random
+    
+    # 1. Read table columns with lock retries
+    cursor = conn.cursor()
+    cols = []
+    for attempt in range(10):
+        try:
+            cursor.execute(f"PRAGMA table_info({table})")
+            cols = [c[1] for c in cursor.fetchall()]
+            break
+        except sqlite3.OperationalError as e:
+            if "locked" in str(e).lower() and attempt < 9:
+                time.sleep(0.05 + random.random() * 0.15)
+                continue
+            raise
+            
+    if column in cols:
+        return
+        
+    # 2. Alter table with lock retries
+    sql = f"ALTER TABLE {table} ADD COLUMN {column} {column_def}"
+    for attempt in range(10):
+        try:
+            conn.execute(sql)
+            conn.commit()
+            logger.info(f"Successfully added column '{column}' to table '{table}'.")
+            return
+        except sqlite3.OperationalError as e:
+            err_msg = str(e).lower()
+            if "duplicate column name" in err_msg or "already exists" in err_msg:
+                return
+            if "locked" in err_msg and attempt < 9:
+                time.sleep(0.05 + random.random() * 0.15)
+                continue
+            logger.error(f"Error adding column '{column}' to table '{table}' (attempt {attempt}): {e}")
+            raise
+
 def ensure_db_ready():
     """Initializes the database and applies any pending schema updates."""
     init_db()
@@ -11,28 +55,13 @@ def ensure_db_ready():
     conn = get_db_connection()
     try:
         # Schema Update Check (Phase 9 - PIN Support)
-        try:
-            conn.execute("ALTER TABLE users ADD COLUMN pin_hash TEXT")
-            conn.commit()
-            logger.info("Added pin_hash column to users.")
-        except Exception: 
-            pass # Column likely already exists
+        _safe_add_column(conn, 'users', 'pin_hash', 'TEXT')
         
         # Add source_tracking column to inventory_transactions (for POS order references)
-        try:
-            conn.execute("ALTER TABLE inventory_transactions ADD COLUMN source_tracking TEXT")
-            conn.commit()
-            logger.info("Added source_tracking column to inventory_transactions.")
-        except Exception:
-            pass  # Column already exists
+        _safe_add_column(conn, 'inventory_transactions', 'source_tracking', 'TEXT')
         
         # Add roles column to users table (for module access control)
-        try:
-            conn.execute("ALTER TABLE users ADD COLUMN roles TEXT DEFAULT '[]'")
-            conn.commit()
-            logger.info("Added roles column to users.")
-        except Exception:
-            pass  # Column already exists
+        _safe_add_column(conn, 'users', 'roles', "TEXT DEFAULT '[]'")
         
         # Migrate existing users to have proper roles based on is_admin flag
         try:
@@ -54,25 +83,11 @@ def ensure_db_ready():
             logger.warning(f"Role migration note: {e}")
         
         # Add secondary_ids column to inventory_items (for UPC, part number, etc.)
-        try:
-            conn.execute("ALTER TABLE inventory_items ADD COLUMN secondary_ids TEXT DEFAULT '{}'")
-            conn.commit()
-            logger.info("Added secondary_ids column to inventory_items.")
-        except Exception:
-            pass  # Column already exists
+        _safe_add_column(conn, 'inventory_items', 'secondary_ids', "TEXT DEFAULT '{}'")
         
         # V1.16.1: Add asin and source_url to packages table
-        package_migrations = [
-            ('asin', 'ALTER TABLE packages ADD COLUMN asin TEXT'),
-            ('source_url', 'ALTER TABLE packages ADD COLUMN source_url TEXT'),
-        ]
-        for col_name, sql in package_migrations:
-            try:
-                conn.execute(sql)
-                conn.commit()
-                logger.info(f"Added {col_name} column to packages.")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
+        _safe_add_column(conn, 'packages', 'asin', 'TEXT')
+        _safe_add_column(conn, 'packages', 'source_url', 'TEXT')
         
         # Inventory Module Tables (V1.16)
         _create_inventory_tables(conn)
@@ -111,20 +126,15 @@ def ensure_db_ready():
         conn.commit()
         
         # V1.18: Add badge_id to users table for POS badge scanning
+        _safe_add_column(conn, 'users', 'badge_id', 'TEXT')
         try:
-            conn.execute("ALTER TABLE users ADD COLUMN badge_id TEXT UNIQUE")
+            conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_badge_id ON users(badge_id)')
             conn.commit()
-            logger.info("Added badge_id column to users.")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        except Exception as e:
+            logger.warning(f"Error creating unique index on users(badge_id): {e}")
         
         # V1.21: Add remote_api_key to federation_peers for bidirectional linking
-        try:
-            conn.execute("ALTER TABLE federation_peers ADD COLUMN remote_api_key TEXT")
-            conn.commit()
-            logger.info("Added remote_api_key column to federation_peers.")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        _safe_add_column(conn, 'federation_peers', 'remote_api_key', 'TEXT')
         
         # POS Module Tables (V1.18)
         _create_pos_tables(conn)
@@ -136,22 +146,16 @@ def ensure_db_ready():
         _create_recurring_rules_table(conn)
 
         # V2.4.2: Add SSO fields to users table
+        _safe_add_column(conn, 'users', 'email', 'TEXT')
         try:
-            conn.execute("ALTER TABLE users ADD COLUMN email TEXT UNIQUE")
-            conn.execute("ALTER TABLE users ADD COLUMN auth_provider TEXT")
+            conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email)')
             conn.commit()
-            logger.info("Added SSO columns (email, auth_provider) to users.")
-        except sqlite3.OperationalError:
-            pass  # Columns likely already exist
-            
+        except Exception as e:
+            logger.warning(f"Error creating unique index on users(email): {e}")
+        _safe_add_column(conn, 'users', 'auth_provider', 'TEXT')
             
         # V2.5.0: SKU Matching Support
-        try:
-            conn.execute("ALTER TABLE packages ADD COLUMN sku TEXT")
-            conn.commit()
-            logger.info("Added sku column to packages.")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        _safe_add_column(conn, 'packages', 'sku', 'TEXT')
 
         # Product Mappings Table (for recurring order matching)
         conn.execute('''
@@ -217,34 +221,25 @@ def _create_inventory_tables(conn):
         ''')
         
         # Migrations: Add columns if they don't exist (for existing installs)
-        migrations = [
-            ('image_url', 'ALTER TABLE inventory_items ADD COLUMN image_url TEXT'),
-            ('source_url', 'ALTER TABLE inventory_items ADD COLUMN source_url TEXT'),
-            ('alert_enabled', 'ALTER TABLE inventory_items ADD COLUMN alert_enabled BOOLEAN DEFAULT 0'),
-            ('alert_threshold', 'ALTER TABLE inventory_items ADD COLUMN alert_threshold INTEGER DEFAULT 0'),
-            ('buy_price', 'ALTER TABLE inventory_items ADD COLUMN buy_price REAL DEFAULT 0.0'),
-            ('sell_price', 'ALTER TABLE inventory_items ADD COLUMN sell_price REAL DEFAULT 0.0'),
-            ('keywords', 'ALTER TABLE inventory_items ADD COLUMN keywords TEXT'),
-            ('secondary_ids', 'ALTER TABLE inventory_items ADD COLUMN secondary_ids TEXT'),
-            ('description', 'ALTER TABLE inventory_items ADD COLUMN description TEXT'),
-            ('first_stock_date', 'ALTER TABLE inventory_items ADD COLUMN first_stock_date TEXT'),
-            ('addon_1', 'ALTER TABLE inventory_items ADD COLUMN addon_1 BOOLEAN DEFAULT 0'),
-            ('addon_2', 'ALTER TABLE inventory_items ADD COLUMN addon_2 BOOLEAN DEFAULT 0'),
-            ('notes', 'ALTER TABLE inventory_items ADD COLUMN notes TEXT'),
-            ('sale_price', 'ALTER TABLE inventory_items ADD COLUMN sale_price REAL DEFAULT 0.0'),
-            ('sale_start', 'ALTER TABLE inventory_items ADD COLUMN sale_start TEXT'),
-            ('sale_end', 'ALTER TABLE inventory_items ADD COLUMN sale_end TEXT'),
-            ('sale_enabled', 'ALTER TABLE inventory_items ADD COLUMN sale_enabled BOOLEAN DEFAULT 0'),
-            ('sale_end_on_stock', 'ALTER TABLE inventory_items ADD COLUMN sale_end_on_stock BOOLEAN DEFAULT 0'),
-            ('is_legacy', 'ALTER TABLE inventory_items ADD COLUMN is_legacy BOOLEAN DEFAULT 0'),
-        ]
-        for col_name, sql in migrations:
-            try:
-                conn.execute(sql)
-                conn.commit()
-                logger.info(f"Added {col_name} column to inventory_items.")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
+        _safe_add_column(conn, 'inventory_items', 'image_url', 'TEXT')
+        _safe_add_column(conn, 'inventory_items', 'source_url', 'TEXT')
+        _safe_add_column(conn, 'inventory_items', 'alert_enabled', 'BOOLEAN DEFAULT 0')
+        _safe_add_column(conn, 'inventory_items', 'alert_threshold', 'INTEGER DEFAULT 0')
+        _safe_add_column(conn, 'inventory_items', 'buy_price', 'REAL DEFAULT 0.0')
+        _safe_add_column(conn, 'inventory_items', 'sell_price', 'REAL DEFAULT 0.0')
+        _safe_add_column(conn, 'inventory_items', 'keywords', 'TEXT')
+        _safe_add_column(conn, 'inventory_items', 'secondary_ids', 'TEXT')
+        _safe_add_column(conn, 'inventory_items', 'description', 'TEXT')
+        _safe_add_column(conn, 'inventory_items', 'first_stock_date', 'TEXT')
+        _safe_add_column(conn, 'inventory_items', 'addon_1', 'BOOLEAN DEFAULT 0')
+        _safe_add_column(conn, 'inventory_items', 'addon_2', 'BOOLEAN DEFAULT 0')
+        _safe_add_column(conn, 'inventory_items', 'notes', 'TEXT')
+        _safe_add_column(conn, 'inventory_items', 'sale_price', 'REAL DEFAULT 0.0')
+        _safe_add_column(conn, 'inventory_items', 'sale_start', 'TEXT')
+        _safe_add_column(conn, 'inventory_items', 'sale_end', 'TEXT')
+        _safe_add_column(conn, 'inventory_items', 'sale_enabled', 'BOOLEAN DEFAULT 0')
+        _safe_add_column(conn, 'inventory_items', 'sale_end_on_stock', 'BOOLEAN DEFAULT 0')
+        _safe_add_column(conn, 'inventory_items', 'is_legacy', 'BOOLEAN DEFAULT 0')
         
         # Indexes for inventory_items
         conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_sku ON inventory_items(sku)')
@@ -479,12 +474,7 @@ def _create_pos_tables(conn):
         ''')
         
         # Migration: add staff_friendly_name column to pos_customer_display_pairings if it doesn't exist
-        try:
-            conn.execute("ALTER TABLE pos_customer_display_pairings ADD COLUMN staff_friendly_name TEXT")
-            conn.commit()
-            logger.info("Added staff_friendly_name column to pos_customer_display_pairings.")
-        except sqlite3.OperationalError:
-            pass  # Column already exists
+        _safe_add_column(conn, 'pos_customer_display_pairings', 'staff_friendly_name', 'TEXT')
             
         conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_cust_disp_cust_id ON pos_customer_display_pairings(customer_terminal_id)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_cust_disp_token ON pos_customer_display_pairings(customer_terminal_token)')
@@ -495,9 +485,13 @@ def _create_pos_tables(conn):
             CREATE TABLE IF NOT EXISTS pos_active_terminals (
                 terminal_id TEXT PRIMARY KEY,
                 friendly_name TEXT NOT NULL,
+                cart_data TEXT,
                 last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
+
+        # Migration: add cart_data column to pos_active_terminals if it doesn't exist
+        _safe_add_column(conn, 'pos_active_terminals', 'cart_data', 'TEXT')
 
         # POS Display Pairing Codes (temporary pairing codes for customer displays)
         conn.execute('''

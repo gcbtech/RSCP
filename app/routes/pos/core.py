@@ -219,12 +219,44 @@ def save_cart(cart):
     Otherwise, uses session storage.
     """
     import json
+    from flask import request, session
     
+    # 1. Try to get terminal_id (local storage ID)
+    terminal_id = None
+    try:
+        if request:
+            terminal_id = request.headers.get('X-Terminal-Id')
+    except Exception:
+        pass
+    if not terminal_id:
+        terminal_id = session.get('terminal_id')
+        
+    # 2. Always save to session (for fallback/unpair scenarios)
+    session['pos_cart'] = cart
+    session.modified = True
+    
+    # 3. If we have a terminal_id, persist cart to pos_active_terminals
+    if terminal_id:
+        try:
+            from app.services.db import get_db_connection
+            conn = get_db_connection()
+            # Insert or update cart_data for this terminal
+            conn.execute(
+                """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
+                   VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
+                   ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
+                (terminal_id, json.dumps(cart))
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Error saving terminal cart to db: {e}")
+            
+    # 4. Handle legacy session sharing if active
     pairing = session.get('pos_pairing')
+    session_code = pairing.get('session_code') if pairing else None
     
-    if pairing and pairing.get('session_code'):
-        # Save to shared storage
-        session_code = pairing['session_code']
+    if session_code:
         try:
             from app.services.db import get_db_connection
             conn = get_db_connection()
@@ -234,29 +266,17 @@ def save_cart(cart):
             )
             conn.commit()
             conn.close()
-            
-            # Extract sender terminal ID from request headers if available
-            sender_terminal_id = None
-            try:
-                from flask import request
-                if request:
-                    sender_terminal_id = request.headers.get('X-Terminal-Id')
-            except Exception:
-                pass
-            
-            # Broadcast update to all paired terminals
-            try:
-                from app.services.websocket import broadcast_cart_update
-                broadcast_cart_update(session_code, cart, sender_terminal_id)
-            except Exception as e:
-                logger.warning(f"Could not broadcast cart update: {e}")
-                
         except Exception as e:
-            logger.error(f"Error saving shared cart: {e}")
-    
-    # Always also save to session (for fallback/unpair scenarios)
-    session['pos_cart'] = cart
-    session.modified = True
+            logger.error(f"Error saving shared legacy cart: {e}")
+            
+    # 5. Broadcast to WebSockets
+    try:
+        from app.services.websocket import broadcast_cart_update
+        # Always broadcast to the persistent customer display room if terminal_id is present
+        # And to the legacy session room if session_code is present
+        broadcast_cart_update(session_code, cart, terminal_id)
+    except Exception as e:
+        logger.warning(f"Could not broadcast cart update: {e}")
 
 
 def clear_cart():
@@ -265,13 +285,45 @@ def clear_cart():
     If paired, clears shared storage and broadcasts.
     """
     import json
+    from flask import request, session
     
-    pairing = session.get('pos_pairing')
+    empty_cart = {'items': [], 'discount_amount': 0, 'discount_type': None, 'discount_reason': ''}
     
-    if pairing and pairing.get('session_code'):
-        session_code = pairing['session_code']
-        empty_cart = {'items': [], 'discount_amount': 0, 'discount_type': None, 'discount_reason': ''}
+    # 1. Try to get terminal_id (local storage ID)
+    terminal_id = None
+    try:
+        if request:
+            terminal_id = request.headers.get('X-Terminal-Id')
+    except Exception:
+        pass
+    if not terminal_id:
+        terminal_id = session.get('terminal_id')
         
+    # 2. Always clear session cart
+    session.pop('pos_cart', None)
+    session.modified = True
+    
+    # 3. If we have a terminal_id, clear database cart
+    if terminal_id:
+        try:
+            from app.services.db import get_db_connection
+            conn = get_db_connection()
+            conn.execute(
+                """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
+                   VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
+                   ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
+                (terminal_id, json.dumps(empty_cart))
+            )
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Error clearing terminal cart in db: {e}")
+            
+    # 4. Handle legacy session sharing if active
+    pairing = session.get('pos_pairing')
+    session_code = pairing.get('session_code') if pairing else None
+    
+    if session_code:
         try:
             from app.services.db import get_db_connection
             conn = get_db_connection()
@@ -281,28 +333,15 @@ def clear_cart():
             )
             conn.commit()
             conn.close()
-            
-            # Extract sender terminal ID from request headers if available
-            sender_terminal_id = None
-            try:
-                from flask import request
-                if request:
-                    sender_terminal_id = request.headers.get('X-Terminal-Id')
-            except Exception:
-                pass
-            
-            # Broadcast clear to all paired terminals
-            try:
-                from app.services.websocket import broadcast_cart_update
-                broadcast_cart_update(session_code, empty_cart, sender_terminal_id)
-            except Exception as e:
-                logger.warning(f"Could not broadcast cart clear: {e}")
-                
         except Exception as e:
-            logger.error(f"Error clearing shared cart: {e}")
-    
-    session.pop('pos_cart', None)
-    session.modified = True
+            logger.error(f"Error clearing shared legacy cart: {e}")
+            
+    # 5. Broadcast clear to WebSockets
+    try:
+        from app.services.websocket import broadcast_cart_update
+        broadcast_cart_update(session_code, empty_cart, terminal_id)
+    except Exception as e:
+        logger.warning(f"Could not broadcast cart clear: {e}")
 
 
 from app.routes.inventory import get_inventory_item

@@ -382,6 +382,21 @@ def customer_display():
     Customer-facing display page (read-only cart view).
     Public access; pairing is validated in the client using the browser's persistent terminal ID and token.
     """
+    try:
+        from app.services.db import get_db_connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(pos_active_terminals)")
+        cols = [c[1] for c in cursor.fetchall()]
+        if 'cart_data' not in cols:
+            logger.info("MIGRATION: Adding cart_data column to pos_active_terminals.")
+            conn.execute("ALTER TABLE pos_active_terminals ADD COLUMN cart_data TEXT")
+            conn.commit()
+            logger.info("MIGRATION: Added cart_data column successfully.")
+        conn.close()
+    except Exception as migration_err:
+        logger.error(f"MIGRATION ERROR in route: {migration_err}")
+
     return render_template('pos/customer_display.html')
 
 
@@ -539,10 +554,15 @@ def terminal_heartbeat():
     if not terminal_id:
         return jsonify({'success': False, 'message': 'terminal_id required'}), 400
         
+    session['terminal_id'] = terminal_id
+    session.modified = True
+    
     conn = get_db_connection()
     try:
         conn.execute(
-            "INSERT OR REPLACE INTO pos_active_terminals (terminal_id, friendly_name, last_seen) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            """INSERT INTO pos_active_terminals (terminal_id, friendly_name, last_seen) 
+               VALUES (?, ?, CURRENT_TIMESTAMP) 
+               ON CONFLICT(terminal_id) DO UPDATE SET friendly_name = excluded.friendly_name, last_seen = excluded.last_seen""",
             (terminal_id, friendly_name)
         )
         # Also update friendly name in pairings if exists
@@ -606,32 +626,59 @@ def customer_display_cart():
         staff_terminal_id = pairing_row['staff_terminal_id']
         staff_friendly_name = pairing_row['staff_friendly_name']
         
-        # Look up active session code for this register terminal
-        session_row = conn.execute(
-            """SELECT pt.session_code, s.cart_data 
-               FROM pos_paired_terminals pt
-               JOIN pos_terminal_sessions s ON pt.session_code = s.session_code
-               WHERE pt.flask_session_id = ? AND pt.terminal_type = 'main'""",
+        # 1. Try to load from the persistent active terminal cart data first
+        active_term_row = conn.execute(
+            "SELECT cart_data FROM pos_active_terminals WHERE terminal_id = ?",
             (staff_terminal_id,)
         ).fetchone()
         
-        # If no active session found, return empty cart with paired status
-        if not session_row:
+        cart_data = None
+        session_code = None
+        
+        if active_term_row and active_term_row['cart_data']:
+            cart_data = active_term_row['cart_data']
+            
+        # 2. Fallback to legacy paired session if not found or empty in active terminals
+        if not cart_data:
+            session_row = conn.execute(
+                """SELECT pt.session_code, s.cart_data 
+                   FROM pos_paired_terminals pt
+                   JOIN pos_terminal_sessions s ON pt.session_code = s.session_code
+                   WHERE pt.flask_session_id = ? AND pt.terminal_type = 'main'""",
+                (staff_terminal_id,)
+            ).fetchone()
+            if session_row:
+                cart_data = session_row['cart_data']
+                session_code = session_row['session_code']
+                
+        # If no cart found, return empty cart with paired status
+        if not cart_data:
             return jsonify({
                 'success': True,
                 'paired': True,
                 'staff_terminal_id': staff_terminal_id,
                 'staff_friendly_name': staff_friendly_name,
-                'cart': {'items': []}
+                'session_code': None,
+                'cart': {
+                    'items': [],
+                    'subtotal': 0.0,
+                    'order_discount': 0.0,
+                    'coupon_discount': 0.0,
+                    'tax_rate_pct': 0.0,
+                    'tax_amount': 0.0,
+                    'card_total': 0.0,
+                    'cash_discount_enabled': False,
+                    'cash_discount_value': 0.0,
+                    'cash_total': 0.0
+                }
             })
             
-        # We have active session, load cart and compute totals
+        # We have active session/cart data, load cart and compute totals
         import json
         from app.routes.pos.core import get_tax_rate, get_pos_setting, calculate_tax, round_money, calculate_percentage
         
-        session_code = session_row['session_code']
         try:
-            cart = json.loads(session_row['cart_data'])
+            cart = json.loads(cart_data)
         except:
             cart = {'items': []}
             
