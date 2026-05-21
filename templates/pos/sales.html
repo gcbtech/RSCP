@@ -1236,46 +1236,49 @@
                 return;
             }
 
-            // Get cart items for validation
-            const cartItems = {{ cart['items'] | tojson | safe
-        }};
-        const subtotal = {{ subtotal }};
+            // Fetch live cart items first to avoid stale data from zero-reload scanning
+            fetch('/pos/api/cart')
+                .then(r => r.json())
+                .then(cartData => {
+                    const cartItems = cartData.items || [];
+                    const subtotal = cartData.subtotal || 0;
 
-        fetch('/pos/api/coupon/validate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': '{{ csrf_token() }}'
-            },
-            body: JSON.stringify({
-                code: code,
-                cart_items: cartItems,
-                cart_subtotal: subtotal
-            })
-        })
-            .then(r => r.json())
-            .then(data => {
-                if (data.valid) {
-                    // Store coupon in session and reload
-                    fetch('/pos/api/coupon/apply', {
+                    return fetch('/pos/api/coupon/validate', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                             'X-CSRFToken': '{{ csrf_token() }}'
                         },
                         body: JSON.stringify({
-                            coupon_id: data.coupon.id,
-                            code: data.coupon.code,
-                            name: data.coupon.name,
-                            discount: data.discount_amount
+                            code: code,
+                            cart_items: cartItems,
+                            cart_subtotal: subtotal
                         })
-                    })
-                        .then(() => location.reload());
-                } else {
-                    showCouponError(data.error);
-                }
-            })
-            .catch(err => showCouponError('Error validating coupon.'));
+                    });
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.valid) {
+                        // Store coupon in session and reload
+                        fetch('/pos/api/coupon/apply', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': '{{ csrf_token() }}'
+                            },
+                            body: JSON.stringify({
+                                coupon_id: data.coupon.id,
+                                code: data.coupon.code,
+                                name: data.coupon.name,
+                                discount: data.discount_amount
+                            })
+                        })
+                            .then(() => location.reload());
+                    } else {
+                        showCouponError(data.error);
+                    }
+                })
+                .catch(err => showCouponError('Error validating coupon.'));
         }
 
         function removeCoupon() {
@@ -1323,50 +1326,54 @@
                 return;
             }
 
-            const cartItems = {{ cart['items'] | tojson | safe
-        }};
-        const subtotal = {{ subtotal }};
+            // Fetch live cart items first to avoid stale data from zero-reload scanning
+            fetch('/pos/api/cart')
+                .then(r => r.json())
+                .then(cartData => {
+                    const cartItems = cartData.items || [];
+                    const subtotal = cartData.subtotal || 0;
 
-        fetch('/pos/api/coupon/validate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': '{{ csrf_token() }}'
-            },
-            body: JSON.stringify({
-                code: code,
-                cart_items: cartItems,
-                cart_subtotal: subtotal
-            })
-        })
-            .then(r => r.json())
-            .then(data => {
-                if (data.valid) {
-                    fetch('/pos/api/coupon/apply', {
+                    return fetch('/pos/api/coupon/validate', {
                         method: 'POST',
                         headers: {
                             'Content-Type': 'application/json',
                             'X-CSRFToken': '{{ csrf_token() }}'
                         },
                         body: JSON.stringify({
-                            coupon_id: data.coupon.id,
-                            code: data.coupon.code,
-                            name: data.coupon.name,
-                            discount: data.discount_amount
+                            code: code,
+                            cart_items: cartItems,
+                            cart_subtotal: subtotal
                         })
-                    })
-                        .then(() => location.reload());
-                } else {
-                    errorDiv.textContent = data.error;
+                    });
+                })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.valid) {
+                        fetch('/pos/api/coupon/apply', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': '{{ csrf_token() }}'
+                            },
+                            body: JSON.stringify({
+                                coupon_id: data.coupon.id,
+                                code: data.coupon.code,
+                                name: data.coupon.name,
+                                discount: data.discount_amount
+                            })
+                        })
+                            .then(() => location.reload());
+                    } else {
+                        errorDiv.textContent = data.error;
+                        errorDiv.style.display = 'block';
+                        setTimeout(() => errorDiv.style.display = 'none', 4000);
+                    }
+                })
+                .catch(err => {
+                    errorDiv.textContent = 'Error validating coupon.';
                     errorDiv.style.display = 'block';
                     setTimeout(() => errorDiv.style.display = 'none', 4000);
-                }
-            })
-            .catch(err => {
-                errorDiv.textContent = 'Error validating coupon.';
-                errorDiv.style.display = 'block';
-                setTimeout(() => errorDiv.style.display = 'none', 4000);
-            });
+                });
         }
     </script>
 

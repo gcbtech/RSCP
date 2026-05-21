@@ -327,6 +327,20 @@ def validate_coupon():
     cart_items = data.get('cart_items', [])
     cart_subtotal = float(data.get('cart_subtotal', 0))
     
+    # Trace log the incoming validation request
+    logger.info(f"[Coupon Validate] Validating coupon: {code}. Received cart items count: {len(cart_items)}, subtotal: {cart_subtotal}")
+    
+    # Fallback to get_cart() from session/db if cart_items is empty/None
+    from app.routes.pos.core import get_cart
+    live_cart = get_cart()
+    live_cart_items = live_cart.get('items', [])
+    
+    # Always merge or use the live cart if the passed cart is empty
+    if not cart_items:
+        logger.info(f"[Coupon Validate] Passed cart items was empty. Falling back to live cart with {len(live_cart_items)} items.")
+        cart_items = live_cart_items
+        cart_subtotal = sum(item.get('line_total', 0) for item in cart_items)
+    
     conn = get_db_connection()
     
     # Find coupon
@@ -335,20 +349,28 @@ def validate_coupon():
     ''', (code,)).fetchone()
     
     if not coupon:
+        logger.warning(f"[Coupon Validate] Coupon not found or inactive: {code}")
         return jsonify({'valid': False, 'error': 'Invalid coupon code.'})
     
     now = datetime.now().strftime('%Y-%m-%d')
     
     # Check dates
     if coupon['start_date'] and coupon['start_date'] > now:
+        logger.warning(f"[Coupon Validate] Coupon {code} is not yet active (start_date: {coupon['start_date']}, now: {now})")
         return jsonify({'valid': False, 'error': 'Coupon is not yet active.'})
     
     if coupon['end_date'] and coupon['end_date'] < now:
+        logger.warning(f"[Coupon Validate] Coupon {code} has expired (end_date: {coupon['end_date']}, now: {now})")
         return jsonify({'valid': False, 'error': 'Coupon has expired.'})
     
-    # Check usage limits
-    if coupon['max_uses'] and coupon['current_uses'] >= coupon['max_uses']:
-        return jsonify({'valid': False, 'error': 'Coupon has reached maximum uses.'})
+    # Check usage limits (None, empty string, or 0/None indicates unlimited uses)
+    max_uses = coupon['max_uses']
+    current_uses = int(coupon['current_uses'] or 0)
+    
+    if max_uses is not None and str(max_uses).strip() != "" and int(max_uses) > 0:
+        if current_uses >= int(max_uses):
+            logger.warning(f"[Coupon Validate] Coupon {code} reached max uses: {current_uses}/{max_uses}")
+            return jsonify({'valid': False, 'error': 'Coupon has reached maximum uses.'})
     
     # For serialized coupons, check if already redeemed
     if coupon['coupon_type'] == 'serialized':
@@ -356,11 +378,13 @@ def validate_coupon():
             SELECT id FROM pos_coupon_redemptions WHERE coupon_id = ? AND serial_used = ?
         ''', (coupon['id'], code)).fetchone()
         if redemption:
+            logger.warning(f"[Coupon Validate] Serialized coupon {code} already redeemed")
             return jsonify({'valid': False, 'error': 'This coupon has already been redeemed.'})
     
     # Check minimum purchase for order-level coupons
     if coupon['discount_type'] in ('order_dollar', 'order_percent') and coupon['min_purchase']:
         if cart_subtotal < coupon['min_purchase']:
+            logger.warning(f"[Coupon Validate] Subtotal {cart_subtotal} < min purchase {coupon['min_purchase']} for coupon {code}")
             return jsonify({
                 'valid': False, 
                 'error': f'Minimum purchase of ${coupon["min_purchase"]:.2f} required.'
@@ -373,6 +397,8 @@ def validate_coupon():
         ''', (coupon['id'],)).fetchall()
         target_ids = [r['item_id'] for r in target_items]
         
+        logger.info(f"[Coupon Validate] Item-specific validation for coupon ID {coupon['id']}. Target item IDs: {target_ids}")
+        
         if target_ids:
             cart_item_ids = []
             for item in cart_items:
@@ -382,15 +408,21 @@ def validate_coupon():
                         cart_item_ids.append(int(iid))
                     except (ValueError, TypeError):
                         pass
+            
+            logger.info(f"[Coupon Validate] Cart item IDs: {cart_item_ids}")
             matching = set(target_ids) & set(cart_item_ids)
             if not matching:
+                logger.warning(f"[Coupon Validate] Required item for coupon {code} not in cart. Targets: {target_ids}, Cart: {cart_item_ids}")
                 return jsonify({
                     'valid': False, 
                     'error': 'Required item for this coupon is not in cart.'
                 })
+            else:
+                logger.info(f"[Coupon Validate] Matching target items found in cart: {matching}")
     
     # Calculate discount
     discount = calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn)
+    logger.info(f"[Coupon Validate] Coupon {code} validated successfully. Discount amount: {discount}")
     
     return jsonify({
         'valid': True,
