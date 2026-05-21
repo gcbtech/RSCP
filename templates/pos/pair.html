@@ -150,6 +150,10 @@
         }
 
         function selectType(type) {
+            if (type === 'customer') {
+                window.location.href = '/pos/customer-display';
+                return;
+            }
             document.querySelectorAll('.terminal-type-btn').forEach(btn => {
                 btn.classList.toggle('selected', btn.dataset.type === type);
             });
@@ -160,8 +164,11 @@
         (function () {
             const params = new URLSearchParams(window.location.search);
             const typeParam = params.get('type');
-            if (typeParam === 'customer' || typeParam === 'staff') {
-                selectType(typeParam);
+            if (typeParam === 'customer') {
+                window.location.href = '/pos/customer-display';
+                return;
+            } else if (typeParam === 'staff') {
+                selectType('staff');
             }
         })();
 

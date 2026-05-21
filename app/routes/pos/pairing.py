@@ -302,19 +302,51 @@ def unpair_terminal():
 @login_required
 def terminal_status():
     """
-    Get current terminal pairing status.
+    Get current terminal pairing status and paired customer displays.
     """
     pairing = session.get('pos_pairing')
+    staff_terminal_id = request.args.get('terminal_id')
+    
+    # Check database for paired customer displays for this staff terminal
+    customer_displays = []
+    if staff_terminal_id:
+        conn = get_request_db()
+        try:
+            rows = conn.execute(
+                """SELECT customer_terminal_id, customer_last_seen 
+                   FROM pos_customer_display_pairings 
+                   WHERE staff_terminal_id = ?""",
+                (staff_terminal_id,)
+            ).fetchall()
+            
+            from datetime import datetime
+            for r in rows:
+                connected = False
+                if r['customer_last_seen']:
+                    try:
+                        # SQLite CURRENT_TIMESTAMP is UTC, customer_last_seen is UTC
+                        last_seen_dt = datetime.strptime(r['customer_last_seen'], '%Y-%m-%d %H:%M:%S')
+                        utcnow = datetime.utcnow()
+                        delta = (utcnow - last_seen_dt).total_seconds()
+                        connected = delta < 8 # Active in the last 8 seconds
+                    except Exception as ts_err:
+                        logger.warning(f"Error parsing last_seen timestamp: {ts_err}")
+                customer_displays.append({
+                    'id': r['customer_terminal_id'],
+                    'connected': connected
+                })
+        except Exception as db_err:
+            logger.error(f"Error loading paired displays for status: {db_err}")
     
     if not pairing:
         return jsonify({
-            'paired': False
+            'paired': False,
+            'customer_displays': customer_displays
         })
     
     session_code = pairing.get('session_code')
     terminal_type = pairing.get('terminal_type')
     
-    # Get list of connected terminals
     conn = get_request_db()
     terminals = conn.execute(
         '''SELECT terminal_type, user_id, connected_at 
@@ -330,7 +362,8 @@ def terminal_status():
         'connected_terminals': [
             {'type': t['terminal_type'], 'user_id': t['user_id']}
             for t in terminals
-        ]
+        ],
+        'customer_displays': customer_displays
     })
 
 
@@ -344,17 +377,315 @@ def pairing_page():
 
 
 @pos_bp.route('/customer-display')
-@login_required
 def customer_display():
     """
     Customer-facing display page (read-only cart view).
-    Must be paired first.
+    Public access; pairing is validated in the client using the browser's persistent terminal ID and token.
     """
-    pairing = session.get('pos_pairing')
+    return render_template('pos/customer_display.html')
+
+
+@pos_bp.route('/api/display/request-code', methods=['POST'])
+def request_display_code():
+    """Called by an unpaired customer display to generate a unique 6-digit display code."""
+    data = request.get_json() or {}
+    customer_terminal_id = data.get('customer_terminal_id')
+    if not customer_terminal_id:
+        return jsonify({'success': False, 'message': 'customer_terminal_id required'}), 400
     
-    if not pairing or pairing.get('terminal_type') != 'customer':
-        flash('Please pair as a customer display first.')
-        return redirect(url_for('pos.pairing_page'))
+    import random
+    import string
+    conn = get_db_connection()
+    try:
+        # Clean up stale codes older than 10 minutes
+        conn.execute("DELETE FROM pos_display_pairing_codes WHERE datetime(created_at) < datetime('now', '-10 minutes')")
+        
+        # Generate unique code
+        for _ in range(10):
+            code = ''.join(random.choices(string.digits, k=6))
+            exists = conn.execute("SELECT 1 FROM pos_display_pairing_codes WHERE pairing_code = ?", (code,)).fetchone()
+            if not exists:
+                break
+        else:
+            return jsonify({'success': False, 'message': 'Failed to generate unique code'}), 500
+        
+        # Insert pairing code
+        conn.execute(
+            "INSERT OR REPLACE INTO pos_display_pairing_codes (pairing_code, customer_terminal_id) VALUES (?, ?)",
+            (code, customer_terminal_id)
+        )
+        conn.commit()
+        return jsonify({'success': True, 'pairing_code': code})
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error requesting display code: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@pos_bp.route('/api/register/pair-display', methods=['POST'])
+@login_required
+def pair_display_from_register():
+    """Called by the staff register to pair a customer display by typing its 6-digit code."""
+    data = request.get_json() or {}
+    pairing_code = data.get('pairing_code', '').strip().replace(' ', '')
+    staff_terminal_id = data.get('staff_terminal_id')
+    staff_friendly_name = data.get('staff_friendly_name', 'Register')
     
-    return render_template('pos/customer_display.html',
-                           session_code=pairing.get('session_code'))
+    if not pairing_code or not staff_terminal_id:
+        return jsonify({'success': False, 'message': 'pairing_code and staff_terminal_id required'}), 400
+        
+    conn = get_db_connection()
+    try:
+        # Find customer display for this pairing code
+        code_row = conn.execute(
+            "SELECT customer_terminal_id FROM pos_display_pairing_codes WHERE pairing_code = ?",
+            (pairing_code,)
+        ).fetchone()
+        
+        if not code_row:
+            return jsonify({'success': False, 'message': 'Invalid or expired pairing code'}), 404
+            
+        customer_terminal_id = code_row['customer_terminal_id']
+        
+        # Generate a secure 64-character token
+        import secrets
+        customer_terminal_token = secrets.token_hex(32)
+        
+        # Save pairing relationship persistently
+        conn.execute(
+            """INSERT OR REPLACE INTO pos_customer_display_pairings 
+               (customer_terminal_id, customer_terminal_token, staff_terminal_id, staff_friendly_name) 
+               VALUES (?, ?, ?, ?)""",
+            (customer_terminal_id, customer_terminal_token, staff_terminal_id, staff_friendly_name)
+        )
+        
+        # Remove temporary code
+        conn.execute("DELETE FROM pos_display_pairing_codes WHERE pairing_code = ?", (pairing_code,))
+        
+        # Register active staff register friendly name
+        conn.execute(
+            "INSERT OR REPLACE INTO pos_active_terminals (terminal_id, friendly_name) VALUES (?, ?)",
+            (staff_terminal_id, staff_friendly_name)
+        )
+        
+        conn.commit()
+        
+        # Broadcast pairing event via WebSocket to notify the customer display instantly!
+        try:
+            from app.services.websocket import get_socketio
+            socketio = get_socketio()
+            if socketio:
+                # Emit to the customer display's own terminal room
+                socketio.emit('display_paired', {
+                    'customer_terminal_token': customer_terminal_token,
+                    'staff_terminal_id': staff_terminal_id,
+                    'staff_friendly_name': staff_friendly_name
+                }, room=customer_terminal_id)
+        except Exception as ws_err:
+            logger.warning(f"Could not broadcast pairing success: {ws_err}")
+            
+        return jsonify({
+            'success': True,
+            'message': 'Successfully paired customer display!',
+            'customer_terminal_id': customer_terminal_id
+        })
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error pairing display from register: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@pos_bp.route('/api/display/check-paired')
+def check_display_paired():
+    """Allows customer display to check if it has been paired (polling fallback)."""
+    customer_terminal_id = request.args.get('customer_terminal_id')
+    if not customer_terminal_id:
+        return jsonify({'success': False, 'message': 'customer_terminal_id required'}), 400
+        
+    conn = get_db_connection()
+    try:
+        row = conn.execute(
+            "SELECT customer_terminal_token, staff_terminal_id, staff_friendly_name FROM pos_customer_display_pairings WHERE customer_terminal_id = ?",
+            (customer_terminal_id,)
+        ).fetchone()
+        
+        if row:
+            return jsonify({
+                'success': True,
+                'paired': True,
+                'customer_terminal_token': row['customer_terminal_token'],
+                'staff_terminal_id': row['staff_terminal_id'],
+                'staff_friendly_name': row['staff_friendly_name']
+            })
+        return jsonify({'success': True, 'paired': False})
+    except Exception as e:
+        logger.error(f"Error checking display pairing: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@pos_bp.route('/api/terminal/heartbeat', methods=['POST'])
+def terminal_heartbeat():
+    """Updates friendly name and active timestamp for staff register."""
+    data = request.get_json() or {}
+    terminal_id = data.get('terminal_id')
+    friendly_name = data.get('friendly_name', 'Register')
+    
+    if not terminal_id:
+        return jsonify({'success': False, 'message': 'terminal_id required'}), 400
+        
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO pos_active_terminals (terminal_id, friendly_name, last_seen) VALUES (?, ?, CURRENT_TIMESTAMP)",
+            (terminal_id, friendly_name)
+        )
+        # Also update friendly name in pairings if exists
+        conn.execute(
+            "UPDATE pos_customer_display_pairings SET staff_friendly_name = ? WHERE staff_terminal_id = ?",
+            (friendly_name, terminal_id)
+        )
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error saving terminal heartbeat: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@pos_bp.route('/api/customer-display/heartbeat', methods=['POST'])
+def customer_display_heartbeat():
+    """Updates customer display last active timestamp."""
+    data = request.get_json() or {}
+    customer_terminal_token = data.get('customer_terminal_token')
+    
+    if not customer_terminal_token:
+        return jsonify({'success': False, 'message': 'customer_terminal_token required'}), 400
+        
+    conn = get_db_connection()
+    try:
+        conn.execute(
+            "UPDATE pos_customer_display_pairings SET customer_last_seen = CURRENT_TIMESTAMP WHERE customer_terminal_token = ?",
+            (customer_terminal_token,)
+        )
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Error updating customer display heartbeat: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+    finally:
+        conn.close()
+
+
+@pos_bp.route('/api/customer-display/cart')
+def customer_display_cart():
+    """Secure, token-authenticated public cart endpoint for customer displays."""
+    customer_terminal_token = request.args.get('customer_terminal_token')
+    if not customer_terminal_token:
+        return jsonify({'success': False, 'message': 'customer_terminal_token required'}), 400
+        
+    conn = get_db_connection()
+    try:
+        # Find paired register terminal ID
+        pairing_row = conn.execute(
+            "SELECT staff_terminal_id, staff_friendly_name FROM pos_customer_display_pairings WHERE customer_terminal_token = ?",
+            (customer_terminal_token,)
+        ).fetchone()
+        
+        if not pairing_row:
+            return jsonify({'success': False, 'message': 'Invalid pairing or display not linked', 'unpaired': True}), 403
+            
+        staff_terminal_id = pairing_row['staff_terminal_id']
+        staff_friendly_name = pairing_row['staff_friendly_name']
+        
+        # Look up active session code for this register terminal
+        session_row = conn.execute(
+            """SELECT pt.session_code, s.cart_data 
+               FROM pos_paired_terminals pt
+               JOIN pos_terminal_sessions s ON pt.session_code = s.session_code
+               WHERE pt.flask_session_id = ? AND pt.terminal_type = 'main'""",
+            (staff_terminal_id,)
+        ).fetchone()
+        
+        # If no active session found, return empty cart with paired status
+        if not session_row:
+            return jsonify({
+                'success': True,
+                'paired': True,
+                'staff_terminal_id': staff_terminal_id,
+                'staff_friendly_name': staff_friendly_name,
+                'cart': {'items': []}
+            })
+            
+        # We have active session, load cart and compute totals
+        import json
+        from app.routes.pos.core import get_tax_rate, get_pos_setting, calculate_tax, round_money, calculate_percentage
+        
+        session_code = session_row['session_code']
+        try:
+            cart = json.loads(session_row['cart_data'])
+        except:
+            cart = {'items': []}
+            
+        items = cart.get('items', [])
+        subtotal = sum(item.get('line_total', 0) for item in items)
+        
+        order_discount = 0
+        if cart.get('discount_amount') and cart.get('discount_type'):
+            if cart['discount_type'] == 'percent':
+                order_discount = calculate_percentage(subtotal, cart['discount_amount'])
+            else:
+                order_discount = cart['discount_amount']
+                
+        coupon_discount = (cart.get('applied_coupon') or {}).get('discount', 0) or 0
+        discounted_subtotal = max(0, subtotal - order_discount - coupon_discount)
+        
+        tax_rate = get_tax_rate()
+        tax_amount = calculate_tax(discounted_subtotal)
+        card_total = round(discounted_subtotal + tax_amount, 2)
+        
+        cash_discount_enabled = get_pos_setting('CASH_DISCOUNT_ENABLED', 'false') == 'true'
+        cash_discount_value = 0
+        if cash_discount_enabled:
+            cd_amount = float(get_pos_setting('CASH_DISCOUNT_AMOUNT', '0') or 0)
+            cd_type = get_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
+            if cd_amount > 0:
+                if cd_type == 'percent':
+                    cash_discount_value = calculate_percentage(discounted_subtotal, cd_amount)
+                else:
+                    cash_discount_value = round_money(min(cd_amount, discounted_subtotal))
+                    
+        cash_total = round(card_total - cash_discount_value, 2)
+        
+        return jsonify({
+            'success': True,
+            'paired': True,
+            'staff_terminal_id': staff_terminal_id,
+            'staff_friendly_name': staff_friendly_name,
+            'session_code': session_code,
+            'cart': {
+                'items': items,
+                'subtotal': round(subtotal, 2),
+                'order_discount': round(order_discount, 2),
+                'coupon_discount': round(coupon_discount, 2),
+                'tax_rate_pct': round(tax_rate * 100, 2),
+                'tax_amount': tax_amount,
+                'card_total': card_total,
+                'cash_discount_enabled': cash_discount_enabled,
+                'cash_discount_value': cash_discount_value,
+                'cash_total': cash_total
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error getting customer display cart: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
+    finally:
+        conn.close()

@@ -226,13 +226,132 @@
             color: rgba(255, 255, 255, 0.4);
             font-size: 0.8rem;
         }
+
+        /* Pairing Screen Styling */
+        .pairing-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: radial-gradient(circle at center, #1e293b 0%, #0f172a 100%);
+            padding: 2rem;
+            animation: fadeIn 0.5s ease;
+        }
+
+        .pairing-card {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 24px;
+            padding: 3rem;
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+            animation: scaleUp 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .pairing-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
+            background: linear-gradient(135deg, #3b82f6 0%, #60a5fa 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 0.5rem;
+        }
+
+        .pairing-subtitle {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.95rem;
+            margin-bottom: 2.5rem;
+        }
+
+        .pairing-code-box {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin-bottom: 2.5rem;
+            box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.2);
+        }
+
+        .pairing-code-digits {
+            font-size: 3.5rem;
+            font-weight: 800;
+            letter-spacing: 0.25rem;
+            font-family: 'SF Mono', Monaco, Consolas, monospace;
+            color: #ffffff;
+            text-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+        }
+
+        .pairing-pulse-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .pairing-pulse-dot {
+            width: 10px;
+            height: 10px;
+            background-color: #3b82f6;
+            border-radius: 50%;
+            animation: pulse 1.5s infinite ease-in-out;
+        }
+
+        .pairing-pulse-text {
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: #60a5fa;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .pairing-instruction {
+            font-size: 0.85rem;
+            color: rgba(255, 255, 255, 0.4);
+            line-height: 1.5;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(0.8);
+                opacity: 0.5;
+                box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7);
+            }
+            50% {
+                transform: scale(1.2);
+                opacity: 1;
+                box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);
+            }
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        @keyframes scaleUp {
+            from {
+                opacity: 0;
+                transform: scale(0.95) translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+            }
+        }
     </style>
 </head>
 
 <body>
-    <div class="display-container">
+    <!-- Active customer display view -->
+    <div class="display-container" id="activeDisplay" style="display: none;">
         <div class="header">
-            <h1>{{ org_name or 'Welcome' }}</h1>
+            <h1 id="merchantName">{{ org_name or 'Welcome' }}</h1>
         </div>
 
         <div class="cart-area" id="cartItems">
@@ -268,6 +387,30 @@
         </div>
     </div>
 
+    <!-- Stunning Pairing View when screen is unpaired -->
+    <div class="pairing-container" id="pairingDisplay" style="display: none;">
+        <div class="pairing-card">
+            <div class="pairing-title">📺 Link Customer Display</div>
+            <div class="pairing-subtitle">Register this tablet to your staff terminal</div>
+            
+            <div class="pairing-code-box">
+                <div class="pairing-code-digits" id="displayPairingCode">--- ---</div>
+            </div>
+            
+            <div class="pairing-pulse-container">
+                <div class="pairing-pulse-dot"></div>
+                <div class="pairing-pulse-text">Awaiting Register Link</div>
+            </div>
+            
+            <p class="pairing-instruction">
+                Type this 6-digit code into your register's pairing menu.<br>
+                This persistent pairing will survive reboots and logouts safely.
+            </p>
+            
+            <div class="text-muted small mt-4" style="font-size: 0.7rem; opacity: 0.5;" id="debugTerminalId"></div>
+        </div>
+    </div>
+
     <div class="connection-status disconnected" id="connectionStatus">
         ⚪ Connecting...
     </div>
@@ -287,45 +430,46 @@
 
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script>
-        const sessionCode = '{{ session_code }}';
         const csrfToken = '{{ csrf_token() }}';
-        let socket;
-        let pollingInterval = null;
+        let socket = null;
+        let cartPollInterval = null;
+        let heartbeatInterval = null;
+        let pairingPollInterval = null;
         let lastCartHash = '';
         let consecutiveFailures = 0;
         const MAX_FAILURES_BEFORE_RECOVERY = 3;
-        let isRecovering = false;
-        let recoveryAttempts = 0;
 
-        // Persist pairing info in localStorage for auto-recovery
-        function savePairingInfo() {
-            localStorage.setItem('rscp_customer_display', JSON.stringify({
-                session_code: sessionCode,
-                terminal_id: getTerminalId(),
-                timestamp: Date.now()
-            }));
-        }
-
-        function getTerminalId() {
-            let id = localStorage.getItem('rscp_terminal_id');
+        // Retrieve/Generate Unique Customer Terminal ID (stored in localStorage)
+        function getCustomerTerminalId() {
+            let id = localStorage.getItem('rscp_customer_terminal_id');
             if (!id) {
-                id = 'term_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-                localStorage.setItem('rscp_terminal_id', id);
+                id = 'term_cust_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('rscp_customer_terminal_id', id);
             }
             return id;
         }
 
-        function clearPairingInfo() {
-            localStorage.removeItem('rscp_customer_display');
+        // Get pairing credentials from local storage
+        function getPairingCredentials() {
+            return {
+                token: localStorage.getItem('rscp_customer_terminal_token'),
+                staffTerminalId: localStorage.getItem('rscp_staff_terminal_id'),
+                staffFriendlyName: localStorage.getItem('rscp_staff_friendly_name')
+            };
         }
-
-        // Save pairing info on load (we're successfully on the customer display)
-        savePairingInfo();
 
         function formatPrice(amount) {
             return '$' + (parseFloat(amount) || 0).toFixed(2);
         }
 
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // --- RENDER CART ---
         function updateCartDisplay(cart) {
             const cartArea = document.getElementById('cartItems');
             const items = cart.items || [];
@@ -391,179 +535,41 @@
             }
         }
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        // ===== DISCONNECTION DETECTION & AUTO-RECOVERY =====
-
-        function showDisconnectOverlay(statusText) {
-            const overlay = document.getElementById('disconnectOverlay');
-            overlay.style.display = 'flex';
-            document.getElementById('recoveryStatus').textContent = statusText || 'Attempting to reconnect...';
-        }
-
-        function hideDisconnectOverlay() {
-            document.getElementById('disconnectOverlay').style.display = 'none';
-        }
-
-        function updateRecoveryStatus(text) {
-            document.getElementById('recoveryStatus').textContent = text;
-            document.getElementById('retryCount').textContent = 'Attempt ' + recoveryAttempts;
-        }
-
-        async function attemptAutoRecovery() {
-            if (isRecovering) return;
-            isRecovering = true;
-            recoveryAttempts = 0;
-
-            // Stop polling during recovery
-            if (pollingInterval) {
-                clearInterval(pollingInterval);
-                pollingInterval = null;
-            }
-
-            showDisconnectOverlay('Reconnecting to session...');
-
-            // Retry loop: try to re-pair up to 100 times (covers ~10 minutes with backoff)
-            while (recoveryAttempts < 100) {
-                recoveryAttempts++;
-                updateRecoveryStatus('Re-pairing to session ' + sessionCode + '...');
-
-                try {
-                    // First, try fetching the cart directly — maybe we're still authenticated
-                    const checkResp = await fetch('/pos/api/shared-cart/' + sessionCode, {
-                        credentials: 'include'
-                    });
-
-                    if (checkResp.ok) {
-                        const checkData = await checkResp.json();
-                        if (checkData.success) {
-                            // Session is still valid! We just had a temporary blip
-                            console.log('Recovery: session still valid, resuming polling');
-                            consecutiveFailures = 0;
-                            isRecovering = false;
-                            hideDisconnectOverlay();
-                            startPolling();
-                            return;
-                        }
-                    }
-
-                    // If cart fetch failed (401/404), try to rejoin the session
-                    const pairResp = await fetch('/pos/terminal/rejoin', {
-                        method: 'POST',
-                        credentials: 'include',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-CSRFToken': csrfToken
-                        },
-                        body: JSON.stringify({
-                            session_code: sessionCode,
-                            terminal_type: 'customer',
-                            terminal_id: getTerminalId()
-                        })
-                    });
-
-                    if (pairResp.ok) {
-                        const pairData = await pairResp.json();
-                        if (pairData.success) {
-                            console.log('Recovery: successfully rejoined!');
-                            consecutiveFailures = 0;
-                            isRecovering = false;
-                            hideDisconnectOverlay();
-                            // Reload page to get fresh server-side session state
-                            window.location.href = '/pos/customer-display';
-                            return;
-                        }
-                    }
-
-                    // Check if session no longer exists (main terminal closed it)
-                    if (pairResp.status === 404) {
-                        updateRecoveryStatus('Session ended. Waiting for new session...');
-                    }
-
-                } catch (err) {
-                    console.error('Recovery attempt failed:', err);
-                    updateRecoveryStatus('Connection error. Retrying...');
-                }
-
-                // Backoff: wait before retrying (2s first few, then 5s, then 10s)
-                const delay = recoveryAttempts <= 3 ? 2000 : (recoveryAttempts <= 10 ? 5000 : 10000);
-                await new Promise(resolve => setTimeout(resolve, delay));
-            }
-
-            // After all retries exhausted, show permanent message
-            updateRecoveryStatus('Unable to reconnect. Please re-pair manually.');
-            document.getElementById('retryCount').innerHTML = '<a href="/pos/pair?type=customer" style="color: #60a5fa;">Go to Pairing Page</a>';
-            isRecovering = false;
-        }
-
-        // Polling with failure detection
-        function pollCart() {
-            fetch('/pos/api/shared-cart/' + sessionCode, {
-                credentials: 'include'
-            })
-                .then(response => {
-                    if (!response.ok) {
-                        // Auth failure (302 redirect to login, or 401, or 404 session gone)
-                        consecutiveFailures++;
-                        console.warn('Poll failed (status ' + response.status + '), failure #' + consecutiveFailures);
-
-                        if (consecutiveFailures >= MAX_FAILURES_BEFORE_RECOVERY) {
-                            console.error('Too many consecutive failures, starting auto-recovery');
-                            attemptAutoRecovery();
-                        }
-                        return null;
-                    }
-                    return response.json();
+        // --- HEARTBEAT LOOP ---
+        function startHeartbeat(token) {
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            
+            function sendHeartbeat() {
+                fetch('/pos/api/customer-display/heartbeat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({ customer_terminal_token: token })
                 })
+                .then(r => r.json())
                 .then(data => {
-                    if (!data) return; // Failed response handled above
-
-                    if (data.success) {
-                        // Reset failure counter on success
-                        consecutiveFailures = 0;
-
-                        // Only update if cart changed
-                        const cartHash = JSON.stringify(data.cart);
-                        if (cartHash !== lastCartHash) {
-                            lastCartHash = cartHash;
-                            updateCartDisplay(data.cart);
-                        }
-                    } else {
-                        // API returned success: false (session not found)
-                        consecutiveFailures++;
-                        if (consecutiveFailures >= MAX_FAILURES_BEFORE_RECOVERY) {
-                            attemptAutoRecovery();
-                        }
+                    if (!data.success) {
+                        console.warn('Heartbeat failed, token may be invalid.');
                     }
                 })
-                .catch(err => {
-                    consecutiveFailures++;
-                    console.error('Poll error:', err);
-                    if (consecutiveFailures >= MAX_FAILURES_BEFORE_RECOVERY) {
-                        attemptAutoRecovery();
-                    }
-                });
+                .catch(err => console.error('Error sending display heartbeat:', err));
+            }
+            
+            sendHeartbeat(); // initial call
+            heartbeatInterval = setInterval(sendHeartbeat, 5000);
         }
 
-        function startPolling() {
-            if (pollingInterval) clearInterval(pollingInterval);
-            // Poll every 500ms for near real-time updates
-            pollingInterval = setInterval(pollCart, 500);
-            pollCart(); // Initial fetch
+        // --- WEB SOCKET SYNC ---
+        function initWebSocket(token, staffTerminalId) {
+            if (socket) {
+                socket.disconnect();
+            }
 
-            document.getElementById('connectionStatus').className = 'connection-status connected';
-            document.getElementById('connectionStatus').textContent = '🟢 Syncing';
-        }
-
-        function connectWebSocket() {
-            // Check if Socket.IO is available
             if (typeof io === 'undefined') {
-                console.warn('Socket.IO not available, using polling');
-                startPolling();
+                console.warn('Socket.io client not loaded. Syncing via polling.');
+                startCartPolling(token);
                 return;
             }
 
@@ -574,71 +580,199 @@
                 });
 
                 socket.on('connect', () => {
-                    console.log('WebSocket connected');
-                    document.getElementById('connectionStatus').className = 'connection-status connected';
-                    document.getElementById('connectionStatus').textContent = '🟢 Live';
+                    console.log('WebSocket linked to persistent session');
+                    const statusBadge = document.getElementById('connectionStatus');
+                    statusBadge.className = 'connection-status connected';
+                    statusBadge.textContent = '🟢 Live';
 
-                    // Stop polling if it was running
-                    if (pollingInterval) {
-                        clearInterval(pollingInterval);
-                        pollingInterval = null;
+                    // Join the persistent staff terminal room
+                    socket.emit('join_terminal_room', { terminal_id: staffTerminalId });
+                    
+                    // Stop aggressive cart polling when socket is active
+                    if (cartPollInterval) {
+                        clearInterval(cartPollInterval);
+                        cartPollInterval = null;
                     }
-
-                    // Join the session room
-                    socket.emit('join_session', { session_code: sessionCode });
-                });
-
-                socket.on('disconnect', () => {
-                    console.log('WebSocket disconnected, falling back to polling');
-                    document.getElementById('connectionStatus').className = 'connection-status disconnected';
-                    document.getElementById('connectionStatus').textContent = '🔄 Reconnecting...';
-                    startPolling();
-                });
-
-                socket.on('connect_error', (err) => {
-                    console.log('WebSocket connection error, using polling:', err);
-                    startPolling();
                 });
 
                 socket.on('cart_update', (data) => {
-                    console.log('Cart update received via WebSocket, fetching computed totals');
-                    // WebSocket only notifies of change - fetch computed totals from API
-                    fetch('/pos/api/shared-cart/' + sessionCode, { credentials: 'include' })
-                        .then(response => response.json())
-                        .then(apiData => {
-                            if (apiData.success) {
-                                consecutiveFailures = 0;
-                                updateCartDisplay(apiData.cart);
-                            }
-                        })
-                        .catch(err => console.error('Error fetching cart:', err));
+                    console.log('Socket cart update, fetching calculated totals...');
+                    fetchCart(token);
                 });
 
-                socket.on('session_closed', (data) => {
-                    // Don't alert — just show overlay and wait for new session
-                    showDisconnectOverlay('Session ended. Waiting for new session...');
-                    // Start recovery to automatically reconnect when a new session starts
-                    attemptAutoRecovery();
+                socket.on('disconnect', () => {
+                    console.log('WebSocket lost connection, falling back to polling');
+                    const statusBadge = document.getElementById('connectionStatus');
+                    statusBadge.className = 'connection-status disconnected';
+                    statusBadge.textContent = '🔄 Reconnecting...';
+                    startCartPolling(token);
                 });
 
-                // If not connected after 3 seconds, fall back to polling
-                setTimeout(() => {
-                    if (!socket.connected) {
-                        console.log('WebSocket timeout, using polling');
-                        startPolling();
-                    }
-                }, 3000);
+                socket.on('connect_error', () => {
+                    console.warn('WebSocket connection error, using polling');
+                    startCartPolling(token);
+                });
 
             } catch (e) {
-                console.error('WebSocket error:', e);
-                startPolling();
+                console.error('Socket init exception:', e);
+                startCartPolling(token);
             }
         }
 
-        // Connect on page load
-        connectWebSocket();
+        // --- HTTP CART RETRIEVAL ---
+        function fetchCart(token) {
+            fetch(`/pos/api/customer-display/cart?customer_terminal_token=${encodeURIComponent(token)}`)
+            .then(res => {
+                if (res.status === 403) {
+                    // Token is invalid/revoked - clear and reload to pairing mode
+                    console.error('Token invalid or pairing revoked.');
+                    unpairAndExit();
+                    return null;
+                }
+                return res.json();
+            })
+            .then(data => {
+                if (data && data.success) {
+                    consecutiveFailures = 0;
+                    hideDisconnectOverlay();
+                    
+                    if (data.staff_friendly_name) {
+                        document.getElementById('merchantName').textContent = data.staff_friendly_name;
+                    }
+                    
+                    const cartHash = JSON.stringify(data.cart);
+                    if (cartHash !== lastCartHash) {
+                        lastCartHash = cartHash;
+                        updateCartDisplay(data.cart);
+                    }
+                } else if (data) {
+                    handleFailure();
+                }
+            })
+            .catch(err => {
+                console.error('Error fetching cart:', err);
+                handleFailure();
+            });
+        }
 
-        // ===== STAFF ESCAPE: Triple-click status badge to reveal exit button =====
+        function handleFailure() {
+            consecutiveFailures++;
+            if (consecutiveFailures >= MAX_FAILURES_BEFORE_RECOVERY) {
+                showDisconnectOverlay('Connection lost. Retrying...');
+            }
+        }
+
+        function startCartPolling(token) {
+            if (cartPollInterval) clearInterval(cartPollInterval);
+            
+            // Poll every 1.5 seconds as fallback
+            cartPollInterval = setInterval(() => fetchCart(token), 1500);
+            fetchCart(token); // immediate first load
+        }
+
+        // --- PAIRING MODE LOOP ---
+        function startPairingMode() {
+            const customerTerminalId = getCustomerTerminalId();
+            document.getElementById('debugTerminalId').textContent = 'ID: ' + customerTerminalId;
+            document.getElementById('activeDisplay').style.display = 'none';
+            document.getElementById('pairingDisplay').style.display = 'flex';
+
+            // Get standard pairing display code
+            fetch('/pos/api/display/request-code', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': csrfToken
+                },
+                body: JSON.stringify({ customer_terminal_id: customerTerminalId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    const code = data.pairing_code;
+                    // Format code with space in middle for perfect readability
+                    const formattedCode = code.slice(0, 3) + ' ' + code.slice(3);
+                    document.getElementById('displayPairingCode').textContent = formattedCode;
+                    
+                    // Listen for pairing event on WS
+                    initPairingSocket(customerTerminalId);
+                    
+                    // Poll as backup
+                    startPairingPolling(customerTerminalId);
+                } else {
+                    console.error('Failed to request display pairing code:', data.message);
+                }
+            })
+            .catch(err => console.error('Error requesting pairing code:', err));
+        }
+
+        function initPairingSocket(customerTerminalId) {
+            if (typeof io === 'undefined') return;
+            
+            try {
+                if (socket) socket.disconnect();
+                
+                socket = io({
+                    transports: ['websocket', 'polling'],
+                    timeout: 5000
+                });
+                
+                socket.on('connect', () => {
+                    // Join the room for this specific unpaired customer display
+                    socket.emit('join_terminal_room', { terminal_id: customerTerminalId });
+                });
+                
+                socket.on('display_paired', (data) => {
+                    console.log('Successfully paired via socket!', data);
+                    completePairing(data);
+                });
+            } catch (e) {
+                console.error('WebSocket pairing init error:', e);
+            }
+        }
+
+        function startPairingPolling(customerTerminalId) {
+            if (pairingPollInterval) clearInterval(pairingPollInterval);
+            
+            pairingPollInterval = setInterval(() => {
+                fetch(`/pos/api/display/check-paired?customer_terminal_id=${encodeURIComponent(customerTerminalId)}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success && data.paired) {
+                        console.log('Successfully paired via polling!', data);
+                        completePairing(data);
+                    }
+                })
+                .catch(err => console.error('Error polling pairing status:', err));
+            }, 2000);
+        }
+
+        function completePairing(data) {
+            // Stop pairing listeners
+            if (pairingPollInterval) clearInterval(pairingPollInterval);
+            pairingPollInterval = null;
+            
+            // Save credentials
+            localStorage.setItem('rscp_customer_terminal_token', data.customer_terminal_token);
+            localStorage.setItem('rscp_staff_terminal_id', data.staff_terminal_id);
+            localStorage.setItem('rscp_staff_friendly_name', data.staff_friendly_name);
+            
+            // Reload page to start active display cleanly
+            window.location.reload();
+        }
+
+        // --- DISCONNECTION OVERLAYS ---
+        function showDisconnectOverlay(statusText) {
+            const overlay = document.getElementById('disconnectOverlay');
+            overlay.style.display = 'flex';
+            document.getElementById('recoveryStatus').textContent = statusText || 'Attempting to reconnect...';
+        }
+
+        function hideDisconnectOverlay() {
+            document.getElementById('disconnectOverlay').style.display = 'none';
+        }
+
+        // --- STAFF ESCAPE CONTROLS ---
         let clickCount = 0;
         let clickTimer = null;
         document.getElementById('connectionStatus').addEventListener('click', function () {
@@ -654,31 +788,40 @@
         });
 
         function unpairAndExit() {
-            // Stop all polling/websocket
-            if (pollingInterval) clearInterval(pollingInterval);
+            // Stop all loops
+            if (cartPollInterval) clearInterval(cartPollInterval);
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+            if (pairingPollInterval) clearInterval(pairingPollInterval);
             if (socket) socket.disconnect();
 
-            fetch('/pos/terminal/unpair', {
-                method: 'POST',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': csrfToken
-                },
-                body: JSON.stringify({ terminal_id: getTerminalId() })
-            })
-            .then(() => {
-                clearPairingInfo();
-                localStorage.removeItem('rscp_terminal_pairing');
-                window.location.href = '/pos/';
-            })
-            .catch(() => {
-                // Even if unpair fails, clear local state and redirect
-                clearPairingInfo();
-                localStorage.removeItem('rscp_terminal_pairing');
-                window.location.href = '/pos/';
-            });
+            // Clear credentials
+            localStorage.removeItem('rscp_customer_terminal_token');
+            localStorage.removeItem('rscp_staff_terminal_id');
+            localStorage.removeItem('rscp_staff_friendly_name');
+
+            // Force reload to return to pairing mode
+            window.location.reload();
         }
+
+        // --- APP INITIALIZATION ---
+        (function initDisplay() {
+            const credentials = getPairingCredentials();
+            
+            if (credentials.token && credentials.staffTerminalId) {
+                // We are paired! Start active display mode
+                document.getElementById('merchantName').textContent = credentials.staffFriendlyName || 'Welcome';
+                document.getElementById('pairingDisplay').style.display = 'none';
+                document.getElementById('activeDisplay').style.display = 'flex';
+                
+                // Initialize heartbeat, socket sync, and active pulling fallback
+                startHeartbeat(credentials.token);
+                initWebSocket(credentials.token, credentials.staffTerminalId);
+                startCartPolling(credentials.token);
+            } else {
+                // Not paired! Enter pairing screen
+                startPairingMode();
+            }
+        })();
     </script>
 </body>
 

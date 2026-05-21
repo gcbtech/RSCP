@@ -465,8 +465,51 @@ def _create_pos_tables(conn):
         conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_paired_term_code ON pos_paired_terminals(session_code)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_paired_term_session ON pos_paired_terminals(flask_session_id)')
         
+        # POS Customer Display Pairings (persistent terminal pairings)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_customer_display_pairings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                customer_terminal_id TEXT UNIQUE NOT NULL,
+                customer_terminal_token TEXT UNIQUE NOT NULL,
+                staff_terminal_id TEXT NOT NULL,
+                staff_friendly_name TEXT,
+                customer_last_seen TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Migration: add staff_friendly_name column to pos_customer_display_pairings if it doesn't exist
+        try:
+            conn.execute("ALTER TABLE pos_customer_display_pairings ADD COLUMN staff_friendly_name TEXT")
+            conn.commit()
+            logger.info("Added staff_friendly_name column to pos_customer_display_pairings.")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+            
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_cust_disp_cust_id ON pos_customer_display_pairings(customer_terminal_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_cust_disp_token ON pos_customer_display_pairings(customer_terminal_token)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_cust_disp_staff_id ON pos_customer_display_pairings(staff_terminal_id)')
+
+        # POS Active Terminals Table (active registers and custom friendly names)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_active_terminals (
+                terminal_id TEXT PRIMARY KEY,
+                friendly_name TEXT NOT NULL,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
+        # POS Display Pairing Codes (temporary pairing codes for customer displays)
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS pos_display_pairing_codes (
+                pairing_code TEXT PRIMARY KEY,
+                customer_terminal_id TEXT UNIQUE NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+
         conn.commit()
-        logger.info("POS tables initialized.")
+        logger.info("POS tables and terminal pairing schemas initialized.")
         
         # ========================================
         # POS Coupons Tables

@@ -56,6 +56,13 @@ def init_socketio(app):
             logger.info(f"Client {request.sid} joined room {session_code}")
             # Do not emit cart_update here; client handles initial load via HTTP
 
+    @socketio.on('join_terminal_room')
+    def handle_join_terminal_room(data):
+        """Join a terminal room (for persistent terminal pairings)."""
+        terminal_id = data.get('terminal_id')
+        if terminal_id:
+            join_room(terminal_id)
+            logger.info(f"Client {request.sid} joined terminal room {terminal_id}")
     
     @socketio.on('leave_session')
     def handle_leave_session(data):
@@ -99,8 +106,14 @@ def broadcast_cart_update(session_code: str, cart: dict, sender_terminal_id: str
     """
     global socketio
     if socketio:
+        # Broadcast to transient session room
         socketio.emit('cart_update', {'cart': cart, 'sender': sender_terminal_id}, room=session_code)
-        logger.debug(f"Cart broadcast to {session_code} (sender: {sender_terminal_id})")
+        
+        # Broadcast to persistent staff terminal room (for paired customer displays)
+        if sender_terminal_id:
+            socketio.emit('cart_update', {'cart': cart, 'sender': sender_terminal_id}, room=sender_terminal_id)
+            
+        logger.debug(f"Cart broadcast to {session_code} and terminal room {sender_terminal_id}")
 
 
 def get_socketio():
