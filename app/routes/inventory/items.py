@@ -254,7 +254,6 @@ def list_items():
     """List all inventory items with sorting, pagination, and search support."""
     # Get sort parameters from query string
     sort_by = request.args.get('sort', 'name')
-    order = request.args.get('order', 'asc')
     search_query = request.args.get('q', '').strip()
     show_legacy = request.args.get('show_legacy', '0') == '1'
     
@@ -267,6 +266,9 @@ def list_items():
     allowed_columns = ['name', 'sku', 'quantity', 'location_area', 'buy_price', 'sell_price', 'created_at', 'updated_at']
     if sort_by not in allowed_columns:
         sort_by = 'name'
+        
+    default_order = 'desc' if sort_by == 'created_at' else 'asc'
+    order = request.args.get('order', default_order)
     
     # Validate order direction
     order_dir = 'ASC' if order.lower() == 'asc' else 'DESC'

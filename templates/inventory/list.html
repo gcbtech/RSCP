@@ -420,7 +420,7 @@
             Location {{ '↑' if sort_by == 'location_area' and order == 'asc' else ('↓' if sort_by == 'location_area'
             else '') }}
         </a>
-        <a href="?sort=created_at&order={{ 'desc' if sort_by == 'created_at' and order == 'asc' else 'asc' }}{% if show_legacy %}&show_legacy=1{% endif %}"
+        <a href="?sort=created_at&order={{ 'asc' if sort_by == 'created_at' and order == 'desc' else 'desc' }}{% if show_legacy %}&show_legacy=1{% endif %}"
             class="btn btn-sm {{ 'btn-primary' if sort_by == 'created_at' else 'btn-outline-secondary' }}">
             Date Added {{ '↑' if sort_by == 'created_at' and order == 'asc' else ('↓' if sort_by == 'created_at' else
             '') }}
