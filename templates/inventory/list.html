@@ -618,28 +618,85 @@
             }
         });
 
-        // Live Update
-        setInterval(function () {
-            // Don't refresh if a modal is open (prevent disruption)
-            if (document.querySelector('.modal.show')) return;
+        // Smart Auto-Refresh Controller with Visibility & Idle Tracking
+        (function () {
+            const REFRESH_INTERVAL_MS = 5000;
+            const IDLE_TIMEOUT_MS = 300000; // 5 minutes of inactivity
+            
+            let refreshTimer = null;
+            let idleTimer = null;
+            let isIdle = false;
 
-            // Don't refresh if searching (prevent overwriting results while typing)
-            if (document.getElementById('searchInput').value.trim() !== '') return;
+            // Trigger one AJAX live update row refresh
+            function triggerRefresh() {
+                if (document.querySelector('.modal.show')) return;
+                if (document.getElementById('searchInput').value.trim() !== '') return;
+                if (document.querySelectorAll('.item-checkbox:checked').length > 0) return;
 
-            // Don't refresh if items are selected for bulk edit
-            if (document.querySelectorAll('.item-checkbox:checked').length > 0) return;
+                const url = new URL(window.location.href);
+                url.searchParams.set('partial', '1');
 
-            const url = new URL(window.location.href);
-            url.searchParams.set('partial', '1');
+                fetch(url)
+                    .then(r => r.text())
+                    .then(html => {
+                        const tbody = document.getElementById('inventoryBody');
+                        if (tbody) tbody.innerHTML = html;
+                    })
+                    .catch(e => console.error('[Auto-Refresh Error]', e));
+            }
 
-            fetch(url)
-                .then(r => r.text())
-                .then(html => {
-                    document.getElementById('inventoryBody').innerHTML = html;
-                    // Re-attach listeners if needed (Bootstrap handles data-bs-toggle automatically)
-                })
-                .catch(e => console.error(e));
-        }, 5000);
+            function startTimer() {
+                stopTimer();
+                if (document.visibilityState === 'visible' && !isIdle) {
+                    refreshTimer = setInterval(triggerRefresh, REFRESH_INTERVAL_MS);
+                }
+            }
+
+            function stopTimer() {
+                if (refreshTimer) {
+                    clearInterval(refreshTimer);
+                    refreshTimer = null;
+                }
+            }
+
+            function resetIdleTimer() {
+                clearTimeout(idleTimer);
+                
+                // If we were idle, wake up and update immediately
+                if (isIdle) {
+                    isIdle = false;
+                    console.log('[Auto-Refresh] User active, waking up...');
+                    triggerRefresh();
+                }
+                
+                startTimer(); // Ensure timer is active
+                idleTimer = setTimeout(() => {
+                    isIdle = true;
+                    stopTimer();
+                    console.log('[Auto-Refresh] Idle timeout reached. Auto-refresh paused.');
+                }, IDLE_TIMEOUT_MS);
+            }
+
+            // Monitor Visibility Changes (tab minimized, locked, etc.)
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible') {
+                    console.log('[Auto-Refresh] Tab active, resuming refresh.');
+                    resetIdleTimer();
+                } else {
+                    console.log('[Auto-Refresh] Tab hidden, pausing refresh.');
+                    stopTimer();
+                }
+            });
+
+            // Monitor User Activity (mouse, key, touch)
+            const activityEvents = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll'];
+            activityEvents.forEach(evtName => {
+                document.addEventListener(evtName, resetIdleTimer, { passive: true });
+            });
+
+            // Initial startup
+            resetIdleTimer();
+        })();
     </script>
     </table>
     </div>
