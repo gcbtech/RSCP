@@ -144,7 +144,9 @@
                     {% else %}
                     <!-- Debug: No Reg Price -->
                     {% endif %}
-                    {% if item.discount_amount %} (-${{ "%.2f"|format(item.discount_amount) }}){% endif %}
+                    {% set manual_item_discount = (item.unit_price * item.quantity) - item.line_total %}
+                    {% if manual_item_discount > 0.005 %} (-${{ "%.2f"|format(manual_item_discount) }}){% endif %}
+                    {% if item.coupon_discount and item.coupon_discount > 0.005 %} (Coupon: -${{ "%.2f"|format(item.coupon_discount) }}){% endif %}
             </div>
             {% if item.addon_1 and config and config.get('ITEM_ADDON_1_TEXT') %}
             <div class="addon-text" style="font-size: 9pt; margin-left: 8px; font-style: italic;">
@@ -163,12 +165,24 @@
     <div class="section">
         <div class="row">
             <span>Subtotal</span>
-            <span>${{ "%.2f"|format(order.subtotal) }}</span>
+            <span>${{ "%.2f"|format(subtotal_before_discounts) }}</span>
         </div>
-        {% if order.discount_amount > 0 %}
+        {% if total_item_discount > 0.005 %}
         <div class="row">
-            <span>Discount</span>
+            <span>Item Discounts</span>
+            <span>-${{ "%.2f"|format(total_item_discount) }}</span>
+        </div>
+        {% endif %}
+        {% if order.discount_amount > 0.005 %}
+        <div class="row">
+            <span>Order Discount</span>
             <span>-${{ "%.2f"|format(order.discount_amount) }}</span>
+        </div>
+        {% endif %}
+        {% if coupon_redemption and coupon_redemption.discount_applied > 0.005 %}
+        <div class="row">
+            <span>Coupon ({{ coupon_redemption.coupon_code }})</span>
+            <span>-${{ "%.2f"|format(coupon_redemption.discount_applied) }}</span>
         </div>
         {% endif %}
         <div class="row">

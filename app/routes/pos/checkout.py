@@ -242,6 +242,24 @@ def checkout_process():
                         ''', (item['inventory_item_id'],))
                         logger.info(f"Sale auto-ended for item {item['inventory_item_id']} due to stock depletion.")
         
+        # Record coupon redemption if any
+        if cart.get('applied_coupon'):
+            coupon_id = cart['applied_coupon'].get('id')
+            coupon_code = cart['applied_coupon'].get('code')
+            if coupon_id:
+                conn.execute('''
+                    INSERT INTO pos_coupon_redemptions (
+                        coupon_id, order_id, serial_used, discount_applied, redeemed_by
+                    ) VALUES (?, ?, ?, ?, ?)
+                ''', (coupon_id, order_id, coupon_code, round(coupon_discount, 2), current_user.id))
+                
+                conn.execute('''
+                    UPDATE pos_coupons 
+                    SET current_uses = COALESCE(current_uses, 0) + 1 
+                    WHERE id = ?
+                ''', (coupon_id,))
+                logger.info(f"Recorded redemption of coupon ID {coupon_id} for order {order_number}")
+        
         conn.commit()
         clear_cart()
         
@@ -279,6 +297,73 @@ def checkout_process():
         conn.close()
 
 
+def _prepare_receipt_data(conn, order):
+    """Helper to load items, coupon, and calculate discount details for receipts."""
+    # Load items and convert to list of dicts to allow custom properties
+    items_rows = conn.execute('''
+        SELECT oi.*, ii.addon_1, ii.addon_2, ii.sell_price as current_reg_price
+        FROM pos_order_items oi
+        LEFT JOIN inventory_items ii ON oi.inventory_item_id = ii.id
+        WHERE oi.order_id = ?
+    ''', (order['id'],)).fetchall()
+    
+    items = [dict(row) for row in items_rows]
+    
+    # Fetch coupon redemption if any
+    redemption_row = conn.execute('''
+        SELECT cr.*, c.name as coupon_name, c.code as coupon_code, c.discount_type as coupon_discount_type, c.discount_value as coupon_discount_value,
+               c.buy_quantity, c.get_quantity, c.reward_item_id
+        FROM pos_coupon_redemptions cr
+        JOIN pos_coupons c ON cr.coupon_id = c.id
+        WHERE cr.order_id = ?
+    ''', (order['id'],)).fetchone()
+    
+    coupon_redemption = dict(redemption_row) if redemption_row else None
+    
+    # Track item coupon discounts if coupon is item-specific
+    if coupon_redemption and coupon_redemption['coupon_discount_type'] in ('item_dollar', 'item_percent', 'bogo_free', 'bogo_percent', 'bogo_cross'):
+        try:
+            targets = conn.execute('''
+                SELECT item_id FROM pos_coupon_items WHERE coupon_id = ?
+            ''', (coupon_redemption['coupon_id'],)).fetchall()
+            target_ids = [t['item_id'] for t in targets]
+        except Exception as e:
+            logger.error(f"Error loading target items for coupon: {e}")
+            target_ids = []
+            
+        # Calculate individual item coupon discounts
+        for item in items:
+            item['coupon_discount'] = 0
+            if coupon_redemption['coupon_discount_type'] == 'bogo_cross':
+                if item['inventory_item_id'] == coupon_redemption['reward_item_id']:
+                    item['coupon_discount'] = item['unit_price']
+            elif item['inventory_item_id'] in target_ids:
+                item_total = item['unit_price'] * item['quantity']
+                if coupon_redemption['coupon_discount_type'] == 'item_dollar':
+                    item['coupon_discount'] = min(coupon_redemption['coupon_discount_value'], item_total)
+                elif coupon_redemption['coupon_discount_type'] == 'item_percent':
+                    item['coupon_discount'] = round((item_total * coupon_redemption['coupon_discount_value']) / 100, 2)
+                elif coupon_redemption['coupon_discount_type'] == 'bogo_free':
+                    free_qty = item['quantity'] // (coupon_redemption['buy_quantity'] + 1)
+                    item['coupon_discount'] = round(free_qty * item['unit_price'], 2)
+                elif coupon_redemption['coupon_discount_type'] == 'bogo_percent':
+                    discounted_qty = item['quantity'] // (coupon_redemption['buy_quantity'] + 1)
+                    base_amount = discounted_qty * item['unit_price']
+                    item['coupon_discount'] = round((base_amount * coupon_redemption['coupon_discount_value']) / 100, 2)
+    else:
+        for item in items:
+            item['coupon_discount'] = 0
+            
+    # Calculate receipt-level summary statistics
+    # True subtotal is before any item-level manual discounts
+    subtotal_before_discounts = sum(item['unit_price'] * item['quantity'] for item in items)
+    
+    # Total item discount is the sum of manual item discounts
+    total_item_discount = sum((item['unit_price'] * item['quantity']) - item['line_total'] for item in items)
+    
+    return items, coupon_redemption, subtotal_before_discounts, total_item_discount
+
+
 @pos_bp.route('/receipt/<order_number>')
 @login_required
 def receipt(order_number):
@@ -296,13 +381,7 @@ def receipt(order_number):
         flash('Order not found.')
         return redirect(url_for('pos.sales'))
     
-    # JOIN with inventory_items to get addon_1 and addon_2 fields
-    items = conn.execute('''
-        SELECT oi.*, ii.addon_1, ii.addon_2, ii.sell_price as current_reg_price
-        FROM pos_order_items oi
-        LEFT JOIN inventory_items ii ON oi.inventory_item_id = ii.id
-        WHERE oi.order_id = ?
-    ''', (order['id'],)).fetchall()
+    items, coupon_redemption, subtotal_before_discounts, total_item_discount = _prepare_receipt_data(conn, order)
     
     # Parse payment details
     payment_details = {}
@@ -320,6 +399,9 @@ def receipt(order_number):
     return render_template('pos/receipt.html',
                            order=order,
                            items=items,
+                           coupon_redemption=coupon_redemption,
+                           subtotal_before_discounts=round(subtotal_before_discounts, 2),
+                           total_item_discount=round(total_item_discount, 2),
                            payment_details=payment_details,
                            config=config,
                            org_name=config.get('ORGANIZATION_NAME', ''),
@@ -351,13 +433,7 @@ def receipt_print(order_number):
         flash('Order not found.')
         return redirect(url_for('pos.sales'))
     
-    # JOIN with inventory_items to get addon_1 and addon_2 fields
-    items = conn.execute('''
-        SELECT oi.*, ii.addon_1, ii.addon_2, ii.sell_price as current_reg_price
-        FROM pos_order_items oi
-        LEFT JOIN inventory_items ii ON oi.inventory_item_id = ii.id
-        WHERE oi.order_id = ?
-    ''', (order['id'],)).fetchall()
+    items, coupon_redemption, subtotal_before_discounts, total_item_discount = _prepare_receipt_data(conn, order)
     
     payment_details = {}
     if order['payment_details']:
@@ -374,6 +450,9 @@ def receipt_print(order_number):
     return render_template('pos/receipt_print.html',
                            order=order,
                            items=items,
+                           coupon_redemption=coupon_redemption,
+                           subtotal_before_discounts=round(subtotal_before_discounts, 2),
+                           total_item_discount=round(total_item_discount, 2),
                            payment_details=payment_details,
                            config=config,
                            org_name=config.get('ORGANIZATION_NAME', ''),
