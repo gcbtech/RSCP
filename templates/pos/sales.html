@@ -704,6 +704,19 @@
                             </h2>
                             <div id="legacyPairingCollapse" class="accordion-collapse collapse" data-bs-parent="#legacyPairingAccordion">
                                 <div class="accordion-body px-0 pt-2 pb-0 d-grid gap-2">
+                                    {% if session.get('pos_pairing') %}
+                                    <div class="card bg-light border-0 mb-1">
+                                        <div class="card-body p-2 text-center">
+                                            <span class="badge bg-success mb-1">🔗 Legacy Paired</span>
+                                            <div class="small text-muted font-monospace mb-2" style="font-size: 0.75rem;">
+                                                Code: {{ session['pos_pairing']['session_code'] }} ({{ session['pos_pairing']['terminal_type'] }})
+                                            </div>
+                                            <button type="button" class="btn btn-warning btn-sm w-100 fw-semibold" onclick="unpairTerminal()">
+                                                🔓 Unpair Legacy Session
+                                            </button>
+                                        </div>
+                                    </div>
+                                    {% endif %}
                                     <div class="d-flex gap-2">
                                         <a href="{{ url_for('pos.pairing_page') }}?type=staff" class="btn btn-outline-primary btn-sm flex-fill text-decoration-none">
                                             👤 Staff Terminal

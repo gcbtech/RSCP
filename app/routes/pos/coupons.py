@@ -374,7 +374,14 @@ def validate_coupon():
         target_ids = [r['item_id'] for r in target_items]
         
         if target_ids:
-            cart_item_ids = [item.get('inventory_item_id') for item in cart_items if item.get('inventory_item_id')]
+            cart_item_ids = []
+            for item in cart_items:
+                iid = item.get('inventory_item_id')
+                if iid is not None:
+                    try:
+                        cart_item_ids.append(int(iid))
+                    except (ValueError, TypeError):
+                        pass
             matching = set(target_ids) & set(cart_item_ids)
             if not matching:
                 return jsonify({
@@ -420,7 +427,12 @@ def calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn):
         
         total_discount = 0
         for item in cart_items:
-            if item.get('inventory_item_id') in target_ids:
+            item_id = item.get('inventory_item_id')
+            try:
+                item_id = int(item_id) if item_id is not None else None
+            except (ValueError, TypeError):
+                item_id = None
+            if item_id in target_ids:
                 item_total = float(item.get('unit_price', 0)) * int(item.get('quantity', 1))
                 if discount_type == 'item_dollar':
                     # Apply once per item type, not per quantity
@@ -441,7 +453,12 @@ def calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn):
         
         total_discount = 0
         for item in cart_items:
-            if item.get('inventory_item_id') in target_ids:
+            item_id = item.get('inventory_item_id')
+            try:
+                item_id = int(item_id) if item_id is not None else None
+            except (ValueError, TypeError):
+                item_id = None
+            if item_id in target_ids:
                 qty = int(item.get('quantity', 1))
                 unit_price = float(item.get('unit_price', 0))
                 # For every buy_qty + 1, one is free
@@ -460,7 +477,12 @@ def calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn):
         
         total_discount = 0
         for item in cart_items:
-            if item.get('inventory_item_id') in target_ids:
+            item_id = item.get('inventory_item_id')
+            try:
+                item_id = int(item_id) if item_id is not None else None
+            except (ValueError, TypeError):
+                item_id = None
+            if item_id in target_ids:
                 qty = int(item.get('quantity', 1))
                 unit_price = float(item.get('unit_price', 0))
                 # For every buy_qty + 1, one gets discount
@@ -474,6 +496,10 @@ def calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn):
     elif discount_type == 'bogo_cross':
         # Buy A get B free
         reward_item_id = coupon['reward_item_id']
+        try:
+            reward_item_id = int(reward_item_id) if reward_item_id is not None else None
+        except (ValueError, TypeError):
+            reward_item_id = None
         buy_qty = coupon['buy_quantity']
         
         target_items = conn.execute('''
@@ -484,7 +510,12 @@ def calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn):
         # Check if required item is in cart with enough quantity
         has_required = False
         for item in cart_items:
-            if item.get('inventory_item_id') in target_ids:
+            item_id = item.get('inventory_item_id')
+            try:
+                item_id = int(item_id) if item_id is not None else None
+            except (ValueError, TypeError):
+                item_id = None
+            if item_id in target_ids:
                 if int(item.get('quantity', 1)) >= buy_qty:
                     has_required = True
                     break
@@ -494,7 +525,12 @@ def calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn):
         
         # Find reward item in cart
         for item in cart_items:
-            if item.get('inventory_item_id') == reward_item_id:
+            item_id = item.get('inventory_item_id')
+            try:
+                item_id = int(item_id) if item_id is not None else None
+            except (ValueError, TypeError):
+                item_id = None
+            if item_id == reward_item_id:
                 return float(item.get('unit_price', 0))  # One free
         
         return 0
