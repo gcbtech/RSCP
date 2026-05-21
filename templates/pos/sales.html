@@ -649,28 +649,11 @@
         <div class="d-flex gap-2 align-items-center">
             <!-- Terminal Pairing Controls -->
             <div id="pairingControls" class="d-flex align-items-center gap-2">
-                {% if session.get('pos_pairing') %}
-                <span class="badge bg-success" title="Legacy Paired Session" style="font-size: 0.8rem; padding: 0.4rem 0.6rem;">
-                    🔗 {{ session['pos_pairing']['session_code'] }} ({{ session['pos_pairing']['terminal_type'] }})
-                </span>
-                <button type="button" class="btn btn-outline-warning btn-sm" onclick="unpairTerminal()" title="Disconnect legacy session" style="padding: 0.2rem 0.5rem; font-size: 0.8rem;">
-                    Unpair Legacy
-                </button>
-                {% endif %}
-                
                 <button type="button" id="persistentDisplayBadge" class="btn btn-outline-light btn-sm fw-semibold d-flex align-items-center gap-1" data-bs-toggle="modal" data-bs-target="#pairingMenuModal" title="POS Customer Displays Status">
                     📺 Customer Display <span class="spinner-border spinner-border-sm" role="status" style="width: 0.85rem; height: 0.85rem;"></span>
                 </button>
             </div>
 
-            {% if pos_operator and pos_operator != local_user %}
-            <span class="badge bg-warning text-dark" title="Active Operator">🧑‍💼 {{ pos_operator }}</span>
-            {% endif %}
-            <span class="badge bg-light text-dark">{{ local_user }}</span>
-            <form action="{{ url_for('pos.pos_lock') }}" method="POST" style="margin: 0;">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button type="submit" class="btn btn-outline-light btn-sm" title="Lock POS">🔒</button>
-            </form>
             <a href="/" class="btn btn-outline-light btn-sm">← Exit POS</a>
         </div>
     </div>
