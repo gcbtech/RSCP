@@ -113,6 +113,23 @@ def broadcast_cart_update(session_code: str, cart: dict, sender_terminal_id: str
         if sender_terminal_id:
             socketio.emit('cart_update', {'cart': cart, 'sender': sender_terminal_id}, room=sender_terminal_id)
             
+        # Securely propagate to the primary register's room if in a legacy session
+        if session_code:
+            try:
+                from app.services.db import get_db_connection
+                conn = get_db_connection()
+                row = conn.execute(
+                    "SELECT flask_session_id FROM pos_paired_terminals WHERE session_code = ? AND terminal_type = 'main'",
+                    (session_code,)
+                ).fetchone()
+                conn.close()
+                if row and row['flask_session_id'] and row['flask_session_id'] != sender_terminal_id:
+                    primary_id = row['flask_session_id']
+                    socketio.emit('cart_update', {'cart': cart, 'sender': sender_terminal_id}, room=primary_id)
+                    logger.debug(f"Cart update propagated to primary terminal display room: {primary_id}")
+            except Exception as e:
+                logger.error(f"Error propagating cart update to primary terminal room: {e}")
+                
         logger.debug(f"Cart broadcast to {session_code} and terminal room {sender_terminal_id}")
 
 

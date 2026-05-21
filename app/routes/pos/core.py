@@ -145,10 +145,40 @@ def get_cart():
     Otherwise, uses session storage.
     """
     import json
+    from flask import request
     
     try:
         # Check if terminal is paired
         pairing = session.get('pos_pairing')
+        
+        # Safe fallback: if pairing is not in session but terminal_id is present, check DB
+        terminal_id = None
+        try:
+            if request:
+                terminal_id = request.headers.get('X-Terminal-Id')
+        except Exception:
+            pass
+        if not terminal_id:
+            terminal_id = session.get('terminal_id')
+            
+        if (not pairing or not pairing.get('session_code')) and terminal_id:
+            try:
+                from app.services.db import get_request_db
+                conn = get_request_db()
+                pt_row = conn.execute(
+                    'SELECT session_code, terminal_type FROM pos_paired_terminals WHERE flask_session_id = ?',
+                    (terminal_id,)
+                ).fetchone()
+                if pt_row:
+                    pairing = {
+                        'session_code': pt_row['session_code'],
+                        'terminal_type': pt_row['terminal_type']
+                    }
+                    session['pos_pairing'] = pairing
+                    session.modified = True
+                    logger.info(f"Restored pairing from database for terminal_id {terminal_id}: {pairing}")
+            except Exception as e:
+                logger.error(f"Error restoring pairing from db: {e}")
         
         if pairing and pairing.get('session_code'):
             # Load from shared storage
@@ -231,6 +261,30 @@ def save_cart(cart):
     if not terminal_id:
         terminal_id = session.get('terminal_id')
         
+    # Restore pairing from database if session is missing but terminal_id is present
+    pairing = session.get('pos_pairing')
+    if (not pairing or not pairing.get('session_code')) and terminal_id:
+        try:
+            from app.services.db import get_db_connection
+            conn = get_db_connection()
+            pt_row = conn.execute(
+                'SELECT session_code, terminal_type FROM pos_paired_terminals WHERE flask_session_id = ?',
+                (terminal_id,)
+            ).fetchone()
+            if pt_row:
+                pairing = {
+                    'session_code': pt_row['session_code'],
+                    'terminal_type': pt_row['terminal_type']
+                }
+                session['pos_pairing'] = pairing
+                session.modified = True
+                logger.info(f"Restored pairing in save_cart for terminal_id {terminal_id}: {pairing}")
+            conn.close()
+        except Exception as e:
+            logger.error(f"Error restoring pairing in save_cart from db: {e}")
+            
+    session_code = pairing.get('session_code') if pairing else None
+    
     # 2. Always save to session (for fallback/unpair scenarios)
     session['pos_cart'] = cart
     session.modified = True
@@ -253,9 +307,6 @@ def save_cart(cart):
             logger.error(f"Error saving terminal cart to db: {e}")
             
     # 4. Handle legacy session sharing if active
-    pairing = session.get('pos_pairing')
-    session_code = pairing.get('session_code') if pairing else None
-    
     if session_code:
         try:
             from app.services.db import get_db_connection
@@ -264,6 +315,23 @@ def save_cart(cart):
                 'UPDATE pos_terminal_sessions SET cart_data = ?, last_activity = CURRENT_TIMESTAMP WHERE session_code = ?',
                 (json.dumps(cart), session_code)
             )
+            
+            # Find primary/main terminal ID in this legacy session
+            main_row = conn.execute(
+                "SELECT flask_session_id FROM pos_paired_terminals WHERE session_code = ? AND terminal_type = 'main'",
+                (session_code,)
+            ).fetchone()
+            
+            if main_row and main_row['flask_session_id']:
+                primary_terminal_id = main_row['flask_session_id']
+                if primary_terminal_id != terminal_id:
+                    conn.execute(
+                        """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
+                           VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
+                           ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
+                        (primary_terminal_id, json.dumps(cart))
+                    )
+            
             conn.commit()
             conn.close()
         except Exception as e:
@@ -299,6 +367,30 @@ def clear_cart():
     if not terminal_id:
         terminal_id = session.get('terminal_id')
         
+    # Restore pairing from database if session is missing but terminal_id is present
+    pairing = session.get('pos_pairing')
+    if (not pairing or not pairing.get('session_code')) and terminal_id:
+        try:
+            from app.services.db import get_db_connection
+            conn = get_db_connection()
+            pt_row = conn.execute(
+                'SELECT session_code, terminal_type FROM pos_paired_terminals WHERE flask_session_id = ?',
+                (terminal_id,)
+            ).fetchone()
+            if pt_row:
+                pairing = {
+                    'session_code': pt_row['session_code'],
+                    'terminal_type': pt_row['terminal_type']
+                }
+                session['pos_pairing'] = pairing
+                session.modified = True
+                logger.info(f"Restored pairing in clear_cart for terminal_id {terminal_id}: {pairing}")
+            conn.close()
+        except Exception as e:
+            logger.error(f"Error restoring pairing in clear_cart from db: {e}")
+            
+    session_code = pairing.get('session_code') if pairing else None
+    
     # 2. Always clear session cart
     session.pop('pos_cart', None)
     session.modified = True
@@ -320,9 +412,6 @@ def clear_cart():
             logger.error(f"Error clearing terminal cart in db: {e}")
             
     # 4. Handle legacy session sharing if active
-    pairing = session.get('pos_pairing')
-    session_code = pairing.get('session_code') if pairing else None
-    
     if session_code:
         try:
             from app.services.db import get_db_connection
@@ -331,6 +420,23 @@ def clear_cart():
                 'UPDATE pos_terminal_sessions SET cart_data = ?, last_activity = CURRENT_TIMESTAMP WHERE session_code = ?',
                 (json.dumps(empty_cart), session_code)
             )
+            
+            # Find primary/main terminal ID in this legacy session
+            main_row = conn.execute(
+                "SELECT flask_session_id FROM pos_paired_terminals WHERE session_code = ? AND terminal_type = 'main'",
+                (session_code,)
+            ).fetchone()
+            
+            if main_row and main_row['flask_session_id']:
+                primary_terminal_id = main_row['flask_session_id']
+                if primary_terminal_id != terminal_id:
+                    conn.execute(
+                        """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
+                           VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
+                           ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
+                        (primary_terminal_id, json.dumps(empty_cart))
+                    )
+            
             conn.commit()
             conn.close()
         except Exception as e:
