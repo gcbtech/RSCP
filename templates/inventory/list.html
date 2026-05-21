@@ -816,7 +816,7 @@
 
                     // Ensure search input value is also in sync with URL
                     const sInput = document.getElementById('searchInput');
-                    if (sInput && sInput.value !== qVal) {
+                    if (sInput && document.activeElement !== sInput && sInput.value !== qVal) {
                         sInput.value = qVal;
                     }
 
@@ -897,13 +897,13 @@
 
         // Typing event listener with debounce for live search
         searchInput.addEventListener('input', function () {
-            const query = this.value.trim();
+            const query = this.value;
 
             clearTimeout(searchTimeout);
 
             searchTimeout = setTimeout(() => {
                 const url = new URL(window.location.href);
-                if (query) {
+                if (query.trim()) {
                     url.searchParams.set('q', query);
                 } else {
                     url.searchParams.delete('q');
