@@ -324,22 +324,18 @@ def validate_coupon():
     """Validate a coupon code and return details."""
     data = request.get_json()
     code = data.get('code', '').strip().upper()
-    cart_items = data.get('cart_items', [])
-    cart_subtotal = float(data.get('cart_subtotal', 0))
     
-    # Trace log the incoming validation request
-    logger.info(f"[Coupon Validate] Validating coupon: {code}. Received cart items count: {len(cart_items)}, subtotal: {cart_subtotal}")
-    
-    # Fallback to get_cart() from session/db if cart_items is empty/None
+    # ALWAYS use the authoritative server-side cart for validation.
+    # Client-passed cart data can be stale after DOM hot-swaps or across
+    # paired terminal sessions.  get_cart() handles all pairing/session
+    # resolution and returns the canonical cart.
     from app.routes.pos.core import get_cart
     live_cart = get_cart()
-    live_cart_items = live_cart.get('items', [])
+    cart_items = live_cart.get('items', [])
+    cart_subtotal = sum(item.get('line_total', 0) for item in cart_items)
     
-    # Always merge or use the live cart if the passed cart is empty
-    if not cart_items:
-        logger.info(f"[Coupon Validate] Passed cart items was empty. Falling back to live cart with {len(live_cart_items)} items.")
-        cart_items = live_cart_items
-        cart_subtotal = sum(item.get('line_total', 0) for item in cart_items)
+    logger.info(f"[Coupon Validate] Validating coupon: {code}. "
+                f"Live cart items count: {len(cart_items)}, subtotal: {cart_subtotal}")
     
     conn = get_db_connection()
     
@@ -393,14 +389,20 @@ def validate_coupon():
     # For item-specific coupons, check if item is in cart
     if coupon['discount_type'] in ('item_dollar', 'item_percent', 'bogo_free', 'bogo_percent'):
         target_items = conn.execute('''
-            SELECT item_id FROM pos_coupon_items WHERE coupon_id = ?
+            SELECT ci.item_id, ii.sku FROM pos_coupon_items ci
+            LEFT JOIN inventory_items ii ON ci.item_id = ii.id
+            WHERE ci.coupon_id = ?
         ''', (coupon['id'],)).fetchall()
         target_ids = [r['item_id'] for r in target_items]
+        target_skus = {r['sku'].upper() for r in target_items if r['sku']}
         
-        logger.info(f"[Coupon Validate] Item-specific validation for coupon ID {coupon['id']}. Target item IDs: {target_ids}")
+        logger.info(f"[Coupon Validate] Item-specific validation for coupon ID {coupon['id']}. "
+                     f"Target item IDs: {target_ids}, Target SKUs: {target_skus}")
         
         if target_ids:
+            # Build matching sets from the live cart: by inventory_item_id AND by SKU
             cart_item_ids = []
+            cart_item_skus = set()
             for item in cart_items:
                 iid = item.get('inventory_item_id')
                 if iid is not None:
@@ -408,17 +410,26 @@ def validate_coupon():
                         cart_item_ids.append(int(iid))
                     except (ValueError, TypeError):
                         pass
+                sku = item.get('sku')
+                if sku:
+                    cart_item_skus.add(str(sku).upper())
             
-            logger.info(f"[Coupon Validate] Cart item IDs: {cart_item_ids}")
-            matching = set(target_ids) & set(cart_item_ids)
-            if not matching:
-                logger.warning(f"[Coupon Validate] Required item for coupon {code} not in cart. Targets: {target_ids}, Cart: {cart_item_ids}")
+            # Match by inventory_item_id first, then fall back to SKU matching
+            matching_ids = set(target_ids) & set(cart_item_ids)
+            matching_skus = target_skus & cart_item_skus
+            
+            logger.info(f"[Coupon Validate] Cart item IDs: {cart_item_ids}, Cart SKUs: {cart_item_skus}")
+            logger.info(f"[Coupon Validate] Matching IDs: {matching_ids}, Matching SKUs: {matching_skus}")
+            
+            if not matching_ids and not matching_skus:
+                logger.warning(f"[Coupon Validate] Required item for coupon {code} not in cart. "
+                               f"Targets: {target_ids}/{target_skus}, Cart: {cart_item_ids}/{cart_item_skus}")
                 return jsonify({
                     'valid': False, 
                     'error': 'Required item for this coupon is not in cart.'
                 })
             else:
-                logger.info(f"[Coupon Validate] Matching target items found in cart: {matching}")
+                logger.info(f"[Coupon Validate] Matching target items found in cart (IDs: {matching_ids}, SKUs: {matching_skus})")
     
     # Calculate discount
     discount = calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn)

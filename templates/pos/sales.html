@@ -1236,26 +1236,17 @@
                 return;
             }
 
-            // Fetch live cart items first to avoid stale data from zero-reload scanning
-            fetch('/pos/api/cart')
-                .then(r => r.json())
-                .then(cartData => {
-                    const cartItems = cartData.items || [];
-                    const subtotal = cartData.subtotal || 0;
-
-                    return fetch('/pos/api/coupon/validate', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-CSRFToken': '{{ csrf_token() }}'
-                        },
-                        body: JSON.stringify({
-                            code: code,
-                            cart_items: cartItems,
-                            cart_subtotal: subtotal
-                        })
-                    });
-                })
+            // Server always uses the authoritative server-side cart via get_cart(),
+            // so we only need to send the coupon code.
+            fetch('/pos/api/coupon/validate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token() }}',
+                    'X-Terminal-Id': getTerminalId()
+                },
+                body: JSON.stringify({ code: code })
+            })
                 .then(r => r.json())
                 .then(data => {
                     if (data.valid) {
@@ -1264,7 +1255,8 @@
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
-                                'X-CSRFToken': '{{ csrf_token() }}'
+                                'X-CSRFToken': '{{ csrf_token() }}',
+                                'X-Terminal-Id': getTerminalId()
                             },
                             body: JSON.stringify({
                                 coupon_id: data.coupon.id,
@@ -1286,7 +1278,8 @@
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-CSRFToken': '{{ csrf_token() }}'
+                    'X-CSRFToken': '{{ csrf_token() }}',
+                    'X-Terminal-Id': getTerminalId()
                 }
             })
                 .then(() => location.reload());
@@ -1326,26 +1319,16 @@
                 return;
             }
 
-            // Fetch live cart items first to avoid stale data from zero-reload scanning
-            fetch('/pos/api/cart')
-                .then(r => r.json())
-                .then(cartData => {
-                    const cartItems = cartData.items || [];
-                    const subtotal = cartData.subtotal || 0;
-
-                    return fetch('/pos/api/coupon/validate', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'X-CSRFToken': '{{ csrf_token() }}'
-                        },
-                        body: JSON.stringify({
-                            code: code,
-                            cart_items: cartItems,
-                            cart_subtotal: subtotal
-                        })
-                    });
-                })
+            // Server always uses the authoritative server-side cart via get_cart()
+            fetch('/pos/api/coupon/validate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token() }}',
+                    'X-Terminal-Id': getTerminalId()
+                },
+                body: JSON.stringify({ code: code })
+            })
                 .then(r => r.json())
                 .then(data => {
                     if (data.valid) {
@@ -1353,7 +1336,8 @@
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
-                                'X-CSRFToken': '{{ csrf_token() }}'
+                                'X-CSRFToken': '{{ csrf_token() }}',
+                                'X-Terminal-Id': getTerminalId()
                             },
                             body: JSON.stringify({
                                 coupon_id: data.coupon.id,
