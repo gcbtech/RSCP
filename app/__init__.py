@@ -18,6 +18,14 @@ from app.services.migration import ensure_db_ready
 from app.services.logger import log_exception
 
 def create_app(test_config=None):
+    # Clean up any stale update status file on startup
+    try:
+        status_file = os.path.join(BASE_DIR, 'update_status.json')
+        if os.path.exists(status_file):
+            os.remove(status_file)
+    except Exception:
+        pass
+
     # Logging Setup
     from logging.handlers import RotatingFileHandler
     

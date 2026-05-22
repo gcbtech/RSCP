@@ -9,6 +9,10 @@ import tempfile
 import zipfile
 import subprocess
 import requests
+import json
+import threading
+import signal
+import time
 from flask import redirect, url_for, flash, request, jsonify
 
 from app.routes.admin import admin_bp, require_admin
@@ -137,65 +141,77 @@ def check_update():
         return {"error": str(e)}, 500
 
 
-@admin_bp.route('/update', methods=['POST'])
-def perform_update():
-    """Download and apply updates from GitHub."""
-    error = require_admin()
-    if error:
-        flash("Admin access required")
-        return redirect(url_for('admin.admin_panel'))
-    
-    # Get branch from form (defaults to stable/main)
-    branch_key = request.form.get('branch', 'stable')
-    branch_info = BRANCHES.get(branch_key, BRANCHES['stable'])
-    branch_name = branch_info['name']
+STATUS_FILE = os.path.join(BASE_DIR, 'update_status.json')
+
+def get_update_status():
+    """Retrieve the current update status from the local status file."""
+    if os.path.exists(STATUS_FILE):
+        try:
+            with open(STATUS_FILE, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"Error reading update status: {e}")
+    return {"status": "idle"}
+
+def set_update_status(status, progress="", error=None, version=None):
+    """Write the current update status to the status file."""
+    try:
+        data = {
+            "status": status,
+            "progress": progress,
+            "error": error,
+            "version": version
+        }
+        with open(STATUS_FILE, 'w') as f:
+            json.dump(data, f)
+    except Exception as e:
+        logger.error(f"Error writing update status: {e}")
+
+def run_update_in_background(branch_name, branch_info):
+    """Thread target that downloads the update, copies files, updates deps, and restarts."""
+    set_update_status("updating", "Starting update process...")
+    old_version = get_current_version()
     
     try:
-        old_version = get_current_version()
-        
-        # Download ZIP from GitHub
+        # 1. Download
+        set_update_status("updating", f"Downloading update ZIP from GitHub ({branch_info['display']})...")
         zip_url = get_github_zip_url(branch_name)
         logger.info(f"Downloading update from GitHub ({branch_name} branch)...")
         response = requests.get(zip_url, timeout=60, stream=True)
         if response.status_code != 200:
-            flash(f"Failed to download update: HTTP {response.status_code}")
-            return redirect(url_for('admin.admin_panel'))
+            raise Exception(f"Failed to download update: HTTP {response.status_code}")
         
-        # Save to temp file
+        # Save ZIP
         with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
             for chunk in response.iter_content(chunk_size=8192):
                 tmp_file.write(chunk)
             tmp_zip_path = tmp_file.name
-        
+            
         try:
-            # Extract to temp directory
+            # 2. Extract
+            set_update_status("updating", "Extracting update archive...")
             with tempfile.TemporaryDirectory() as tmp_dir:
                 with zipfile.ZipFile(tmp_zip_path, 'r') as zip_ref:
                     zip_ref.extractall(tmp_dir)
                 
-                # Find the extracted folder (GitHub adds -main suffix)
                 extracted_dirs = [d for d in os.listdir(tmp_dir) if os.path.isdir(os.path.join(tmp_dir, d))]
                 if not extracted_dirs:
-                    flash("Update failed: Invalid archive structure")
-                    return redirect(url_for('admin.admin_panel'))
+                    raise Exception("Update failed: Invalid archive structure")
                 
                 source_dir = os.path.join(tmp_dir, extracted_dirs[0])
                 
-                # Copy files, skipping protected ones
+                # 3. Copy files
+                set_update_status("updating", "Copying updated files to application...")
                 files_updated = 0
                 for root, dirs, files in os.walk(source_dir):
-                    # Skip protected directories
                     dirs[:] = [d for d in dirs if d not in PROTECTED_DIRS]
-                    
                     rel_path = os.path.relpath(root, source_dir)
                     dest_path = os.path.join(BASE_DIR, rel_path) if rel_path != '.' else BASE_DIR
                     
-                    # Create directory if needed
                     if not os.path.exists(dest_path):
                         os.makedirs(dest_path)
                     
                     for file in files:
-                        # Skip protected files
                         if file in PROTECTED_FILES:
                             continue
                         
@@ -207,15 +223,15 @@ def perform_update():
                             files_updated += 1
                         except Exception as e:
                             logger.warning(f"Could not update {file}: {e}")
-                
+                            
                 logger.info(f"Updated {files_updated} files")
-        
+                
         finally:
-            # Clean up temp zip file
             if os.path.exists(tmp_zip_path):
                 os.unlink(tmp_zip_path)
-        
-        # Install any new dependencies
+                
+        # 4. Install requirements
+        set_update_status("updating", "Checking and installing dependencies...")
         venv_pip = os.path.join(BASE_DIR, 'venv', 'bin', 'pip')
         if os.path.exists(venv_pip):
             subprocess.run(
@@ -224,18 +240,79 @@ def perform_update():
                 capture_output=True,
                 timeout=120
             )
-        
+            
         new_version = get_current_version()
-        
-        branch_display = branch_info['display']
-        flash(f"Update successful! {old_version} → {new_version} ({branch_display}). Please restart the service for changes to take effect.")
         logger.info(f"RSCP updated from {old_version} to {new_version}")
         
-    except requests.RequestException as e:
-        logger.error(f"Download error: {e}")
-        flash(f"Failed to download update: {str(e)}")
+        # 5. Success -> Restarting status
+        set_update_status("restarting", f"Update successful ({old_version} → {new_version})! Restarting services...", version=new_version)
+        
+        # Sleep for a bit to allow the frontend to fetch the restarting status
+        time.sleep(2)
+        
+        # 6. Trigger Restart
+        # First, try cleanly restarting via systemd
+        logger.info("Initiating RSCP service restart...")
+        try:
+            # Run asynchronously so that we don't block or hang
+            subprocess.Popen(['sudo', 'systemctl', 'restart', 'rscp'])
+            time.sleep(1)
+        except Exception as e:
+            logger.warning(f"Failed to run sudo systemctl restart rscp: {e}")
+            
+        # Fallback 1: Terminate the Gunicorn parent process
+        try:
+            ppid = os.getppid()
+            if ppid > 1:
+                logger.info(f"Sending SIGTERM to parent Gunicorn process {ppid}")
+                os.kill(ppid, signal.SIGTERM)
+                time.sleep(1)
+        except Exception as e:
+            logger.warning(f"Failed to kill Gunicorn parent: {e}")
+            
+        # Fallback 2: Terminate our own process
+        logger.info(f"Sending SIGTERM to current process {os.getpid()}")
+        os.kill(os.getpid(), signal.SIGTERM)
+        
     except Exception as e:
-        logger.error(f"Update error: {e}")
-        flash(f"Update failed: {str(e)}")
+        logger.error(f"Update background error: {e}")
+        set_update_status("error", error=str(e))
+
+
+@admin_bp.route('/update', methods=['POST'])
+def perform_update():
+    """Download and apply updates from GitHub asynchronously."""
+    error = require_admin()
+    if error:
+        return jsonify({"error": "Admin required"}), 403
     
-    return redirect(url_for('admin.admin_panel'))
+    # Check if an update is already in progress
+    status = get_update_status()
+    if status.get("status") == "updating":
+        return jsonify({"error": "An update is already in progress."}), 400
+        
+    # Get branch from request (defaults to stable)
+    branch_key = request.form.get('branch', 'stable')
+    branch_info = BRANCHES.get(branch_key, BRANCHES['stable'])
+    branch_name = branch_info['name']
+    
+    # Spawn background worker thread
+    thread = threading.Thread(
+        target=run_update_in_background,
+        args=(branch_name, branch_info),
+        daemon=True
+    )
+    thread.start()
+    
+    return jsonify({"status": "success", "message": "Update initiated in the background."})
+
+
+@admin_bp.route('/update_status')
+def update_status():
+    """Get the current update progress status."""
+    error = require_admin()
+    if error:
+        return jsonify({"error": "Admin required"}), 403
+        
+    status = get_update_status()
+    return jsonify(status)

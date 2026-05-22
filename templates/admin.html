@@ -1713,7 +1713,7 @@
                                                 <span id="stableVersion" class="small ms-1"></span>
                                             </div>
                                             <form action="/admin/update" method="POST" class="d-inline"
-                                                onsubmit="return confirm('Update to Stable version?');">
+                                                onsubmit="event.preventDefault(); startUpdate('stable');">
                                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                                 <input type="hidden" name="branch" value="stable">
                                                 <button type="submit" class="btn btn-success btn-sm">Update to
@@ -1730,7 +1730,7 @@
                                                 <span id="betaVersion" class="small ms-1"></span>
                                             </div>
                                             <form action="/admin/update" method="POST" class="d-inline"
-                                                onsubmit="return confirm('⚠️ WARNING: Beta versions may contain bugs and unstable features.\n\nAre you sure you want to update to the Beta branch?');">
+                                                onsubmit="event.preventDefault(); startUpdate('beta');">
                                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                                 <input type="hidden" name="branch" value="beta">
                                                 <button type="submit" class="btn btn-warning btn-sm">Update to
@@ -1792,6 +1792,36 @@
                     <button type="button" class="btn-close btn-close-white position-absolute top-0 end-0 m-3"
                         data-bs-dismiss="modal"></button>
                     <img id="previewImage" src="" class="img-fluid rounded shadow" style="max-height: 85vh;">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Update Progress Modal -->
+    <div class="modal fade" id="updateProgressModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content text-dark border-0 shadow-lg" style="border-radius: 16px; overflow: hidden; background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(10px);">
+                <div class="modal-body text-center p-4">
+                    <div class="mb-4 mt-2">
+                        <div class="spinner-border text-primary" role="status" style="width: 3.5rem; height: 3.5rem; border-width: 0.35em;">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                    <h4 class="modal-title fw-bold mb-2" id="updateModalTitle">System Update in Progress</h4>
+                    <p class="text-muted mb-4" id="updateModalSubtitle">Preparing system and checking update package...</p>
+                    
+                    <div class="progress mb-4" style="height: 10px; border-radius: 5px; background-color: #e9ecef;">
+                        <div id="updateProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" role="progressbar" style="width: 10%;" aria-valuenow="10" aria-valuemin="0" aria-valuemax="100"></div>
+                    </div>
+                    
+                    <div id="updateModalStatusBox" class="p-3 mb-3 bg-light rounded text-start" style="font-family: monospace; font-size: 0.85rem; max-height: 120px; overflow-y: auto; border: 1px solid #dee2e6; white-space: pre-wrap;">[info] Initializing updater...</div>
+                    
+                    <p class="small text-danger fw-semibold mb-0" id="updateModalWarning">
+                        ⚠️ Do not refresh, close this page, or turn off the host server!
+                    </p>
+                    <div id="updateModalCloseBtn" style="display: none;" class="mt-3">
+                        <button type="button" class="btn btn-secondary w-100" data-bs-dismiss="modal">Close</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -2079,6 +2109,189 @@
                     }
                 })
                 .catch(err => status.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`);
+        }
+
+        let updatePollInterval = null;
+        let hasEnteredRestartingState = false;
+        let reconnectAttempts = 0;
+        let lastLoggedProgress = '';
+
+        function showUpdateModal() {
+            const modalEl = document.getElementById('updateProgressModal');
+            const modal = new bootstrap.Modal(modalEl, {
+                backdrop: 'static',
+                keyboard: false
+            });
+            
+            // Reset UI states
+            document.getElementById('updateModalTitle').textContent = 'System Update in Progress';
+            document.getElementById('updateModalSubtitle').textContent = 'Preparing system and checking update package...';
+            
+            const progressBar = document.getElementById('updateProgressBar');
+            progressBar.style.width = '10%';
+            progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-primary';
+            progressBar.setAttribute('aria-valuenow', '10');
+            
+            document.getElementById('updateModalStatusBox').innerHTML = '[info] Requesting update...\n';
+            document.getElementById('updateModalStatusBox').scrollTop = 0;
+            document.getElementById('updateModalWarning').textContent = '⚠️ Do not refresh, close this page, or turn off the host server!';
+            document.getElementById('updateModalWarning').className = 'small text-danger fw-semibold mb-0';
+            document.getElementById('updateModalCloseBtn').style.display = 'none';
+            
+            hasEnteredRestartingState = false;
+            reconnectAttempts = 0;
+            lastLoggedProgress = '';
+            
+            modal.show();
+        }
+
+        function appendStatusLog(message) {
+            const box = document.getElementById('updateModalStatusBox');
+            const isAtBottom = box.scrollHeight - box.clientHeight <= box.scrollTop + 20;
+            box.innerHTML += message + '\n';
+            if (isAtBottom) {
+                box.scrollTop = box.scrollHeight;
+            }
+        }
+
+        function startUpdate(branch) {
+            let confirmationText = branch === 'beta' 
+                ? '⚠️ WARNING: Beta versions may contain bugs and unstable features.\n\nAre you sure you want to update to the Beta branch?'
+                : 'Are you sure you want to update to the Stable branch?';
+                
+            if (!confirm(confirmationText)) return;
+            
+            showUpdateModal();
+            
+            const formData = new FormData();
+            formData.append('branch', branch);
+            formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+            
+            fetch('/admin/update', {
+                method: 'POST',
+                body: formData
+            })
+            .then(r => {
+                if (!r.ok) {
+                    return r.json().then(data => { throw new Error(data.error || 'Server error'); });
+                }
+                return r.json();
+            })
+            .then(data => {
+                if (data.error) {
+                    showUpdateError(data.error);
+                } else {
+                    appendStatusLog('[info] Update task scheduled. Polling status...');
+                    // Start polling status
+                    updatePollInterval = setInterval(pollUpdateStatus, 1500);
+                }
+            })
+            .catch(err => {
+                showUpdateError('Failed to initiate update: ' + err.message);
+            });
+        }
+
+        function showUpdateError(errorMsg) {
+            if (updatePollInterval) {
+                clearInterval(updatePollInterval);
+                updatePollInterval = null;
+            }
+            
+            document.getElementById('updateModalTitle').textContent = 'Update Failed';
+            document.getElementById('updateModalSubtitle').textContent = 'An error occurred during the update process.';
+            
+            const progressBar = document.getElementById('updateProgressBar');
+            progressBar.style.width = '100%';
+            progressBar.className = 'progress-bar bg-danger';
+            progressBar.setAttribute('aria-valuenow', '100');
+            
+            appendStatusLog(`[error] ${errorMsg}`);
+            
+            document.getElementById('updateModalWarning').textContent = '❌ Update aborted. You can close this modal and try again.';
+            document.getElementById('updateModalWarning').className = 'small text-danger fw-semibold mb-0';
+            document.getElementById('updateModalCloseBtn').style.display = 'block';
+        }
+
+        function pollUpdateStatus() {
+            fetch('/admin/update_status')
+            .then(r => {
+                if (!r.ok) {
+                    throw new Error(`HTTP ${r.status}`);
+                }
+                return r.json();
+            })
+            .then(data => {
+                if (data.status === 'updating') {
+                    document.getElementById('updateModalSubtitle').textContent = data.progress || 'Applying updates...';
+                    
+                    // Increment progress bar based on status/log keywords for a nice visual progression
+                    let progress = 10;
+                    const logText = data.progress || '';
+                    if (logText.includes('Downloading')) {
+                        progress = 30;
+                    } else if (logText.includes('Extracting')) {
+                        progress = 50;
+                    } else if (logText.includes('Copying')) {
+                        progress = 70;
+                    } else if (logText.includes('dependencies') || logText.includes('pip')) {
+                        progress = 85;
+                    }
+                    
+                    document.getElementById('updateProgressBar').style.width = `${progress}%`;
+                    document.getElementById('updateProgressBar').setAttribute('aria-valuenow', progress);
+                    
+                    if (logText && logText !== lastLoggedProgress) {
+                        appendStatusLog(`[progress] ${logText}`);
+                        lastLoggedProgress = logText;
+                    }
+                    
+                } else if (data.status === 'restarting') {
+                    hasEnteredRestartingState = true;
+                    document.getElementById('updateModalTitle').textContent = 'Restarting Services...';
+                    document.getElementById('updateModalSubtitle').textContent = 'Applying updates and restarting RSCP...';
+                    
+                    const progressBar = document.getElementById('updateProgressBar');
+                    progressBar.style.width = '100%';
+                    progressBar.className = 'progress-bar progress-bar-striped progress-bar-animated bg-success';
+                    progressBar.setAttribute('aria-valuenow', '100');
+                    
+                    if (data.progress && data.progress !== lastLoggedProgress) {
+                        appendStatusLog(`[info] ${data.progress}`);
+                        lastLoggedProgress = data.progress;
+                    }
+                    
+                    document.getElementById('updateModalWarning').textContent = '⌛ Waiting for server to boot up. Please do not close...';
+                    document.getElementById('updateModalWarning').className = 'small text-success fw-semibold mb-0';
+                    
+                } else if (data.status === 'idle') {
+                    if (hasEnteredRestartingState) {
+                        if (updatePollInterval) {
+                            clearInterval(updatePollInterval);
+                            updatePollInterval = null;
+                        }
+                        appendStatusLog('[info] Server is online! Update completed successfully.');
+                        document.getElementById('updateModalSubtitle').textContent = 'Update successful! Reloading...';
+                        
+                        setTimeout(() => {
+                            window.location.reload();
+                        }, 1500);
+                    }
+                } else if (data.status === 'error') {
+                    showUpdateError(data.error || 'Unknown error occurred.');
+                }
+            })
+            .catch(err => {
+                // If we are in restarting state, connection failures are expected!
+                if (hasEnteredRestartingState) {
+                    reconnectAttempts++;
+                    if (reconnectAttempts % 3 === 0) {
+                        appendStatusLog(`[info] Reconnecting to server (attempt ${reconnectAttempts})...`);
+                    }
+                } else {
+                    // If we got a connection error BEFORE restarting state, it could be a network glitch, let's log it
+                    appendStatusLog(`[warning] Connection error: ${err.message}. Retrying...`);
+                }
+            });
         }
 
         // Save auto-confirm import setting
