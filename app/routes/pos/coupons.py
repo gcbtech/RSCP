@@ -23,18 +23,8 @@ def require_pos_admin():
     """Check if current user is POS admin or super admin."""
     if not current_user.is_authenticated:
         return False
-    if current_user.is_admin:
-        return True
-    # Check for pos_admin role
-    try:
-        conn = get_db_connection()
-        user = conn.execute('SELECT roles FROM users WHERE id = ?', (current_user.id,)).fetchone()
-        if user and user['roles']:
-            roles = json.loads(user['roles']) if isinstance(user['roles'], str) else user['roles']
-            return 'pos_admin' in roles
-    except Exception:
-        pass
-    return False
+    from app.utils.permissions import has_permission
+    return has_permission(current_user, 'pos.manage')
 
 
 def generate_serial_code(prefix="SAVE"):

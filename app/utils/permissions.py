@@ -29,32 +29,22 @@ ROLES = {
 PERMISSIONS = {
     # Inventory permissions
     'inventory.view': ['operator', 'inventory_admin', 'pos_admin', 'receiving_admin', 'super_admin'],
-    'inventory.edit': ['inventory_admin', 'super_admin'],
-    'inventory.delete': ['inventory_admin', 'super_admin'],
-    'inventory.settings': ['inventory_admin', 'super_admin'],
-    'inventory.alerts': ['inventory_admin', 'super_admin'],
-    'inventory.import': ['inventory_admin', 'super_admin'],
+    'inventory.manage': ['inventory_admin', 'super_admin'],
     
     # POS permissions
     'pos.view': ['operator', 'pos_admin', 'super_admin'],
-    'pos.checkout': ['operator', 'pos_admin', 'super_admin'],
-    'pos.refund': ['pos_admin', 'super_admin'],
-    'pos.delete_orders': ['pos_admin', 'super_admin'],
-    'pos.settings': ['pos_admin', 'super_admin'],
-    'pos.reports': ['pos_admin', 'super_admin'],
+    'pos.manage': ['pos_admin', 'super_admin'],
     
     # Receiving/Packages permissions
     'receiving.view': ['operator', 'receiving_admin', 'super_admin'],
-    'receiving.scan': ['operator', 'receiving_admin', 'super_admin'],
-    'receiving.edit': ['receiving_admin', 'super_admin'],
-    'receiving.delete': ['receiving_admin', 'super_admin'],
+    'receiving.manage': ['receiving_admin', 'super_admin'],
+    
+    # Timeclock permissions
+    'timeclock.view': ['operator', 'timeclock_admin', 'inventory_admin', 'pos_admin', 'receiving_admin', 'super_admin'],
+    'timeclock.manage': ['timeclock_admin', 'super_admin'],
     
     # Admin permissions
-    'admin.view': ['super_admin'],
-    'admin.users': ['super_admin'],
-    'admin.settings': ['super_admin'],
-    'admin.logs': ['super_admin'],
-    'admin.backup': ['super_admin'],
+    'admin.manage': ['super_admin'],
 }
 
 # =============================================================================
@@ -122,7 +112,7 @@ def require_permission(permission):
                 # Redirect based on context
                 if request.referrer:
                     return redirect(request.referrer)
-                return redirect(url_for('main.gateway'))
+                return redirect(url_for('main.index'))
             
             return f(*args, **kwargs)
         return decorated_function
@@ -142,7 +132,7 @@ def require_role(role):
                 flash(f'You need the {role} role to access this page.')
                 if request.referrer:
                     return redirect(request.referrer)
-                return redirect(url_for('main.gateway'))
+                return redirect(url_for('main.index'))
             
             return f(*args, **kwargs)
         return decorated_function
@@ -163,7 +153,7 @@ def require_any_role(*roles):
                 flash('You do not have the required role to access this page.')
                 if request.referrer:
                     return redirect(request.referrer)
-                return redirect(url_for('main.gateway'))
+                return redirect(url_for('main.index'))
             
             return f(*args, **kwargs)
         return decorated_function

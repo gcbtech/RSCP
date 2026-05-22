@@ -5,6 +5,7 @@ Routes for stock alert management.
 import logging
 from flask import request, redirect, url_for, flash, render_template
 from flask_login import login_required, current_user
+from app.utils.permissions import require_permission
 
 from app.routes.inventory import inventory_bp
 from app.services.db import get_db_connection
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 @inventory_bp.route('/alerts')
 @login_required
+@require_permission('inventory.manage')
 def alerts_page():
     """Manage stock alerts for all items."""
     conn = get_db_connection()
@@ -35,6 +37,7 @@ def alerts_page():
 
 @inventory_bp.route('/alerts/config', methods=['POST'])
 @login_required
+@require_permission('inventory.manage')
 def save_alerts_config():
     """Save global alert configuration."""
     try:
@@ -57,6 +60,7 @@ def save_alerts_config():
 
 @inventory_bp.route('/alerts/bulk', methods=['POST'])
 @login_required
+@require_permission('inventory.manage')
 def save_alerts_bulk():
     """Bulk save alert settings for all items."""
     conn = get_db_connection()

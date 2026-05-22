@@ -305,7 +305,7 @@
     <!-- Mobile Header Bar -->
     <div class="mobile-header d-md-none d-flex justify-content-between align-items-center p-2 mb-2"
         style="background: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-        {% if current_user.is_admin %}
+        {% if has_permission(current_user, 'admin.manage') %}
         <a href="/admin" class="btn btn-sm btn-outline-secondary">⚡ Admin</a>
         {% else %}
         <span></span>
@@ -315,7 +315,7 @@
     </div>
 
     <!-- Desktop Links -->
-    {% if current_user.is_admin %}
+    {% if has_permission(current_user, 'admin.manage') %}
     <a href="/admin" class="admin-link d-none d-md-block">⚡ Admin Panel</a>
     {% endif %}
     <a href="{{ url_for('auth.logout') }}" class="logout-link d-none d-md-block">Logout</a>

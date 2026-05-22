@@ -10,6 +10,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 from flask_login import current_user, login_required
+from app.utils.permissions import has_permission
 
 # DB Services
 from app.services.db import get_db_connection, DB_PATH
@@ -50,8 +51,8 @@ def index():
 @main_bp.route('/receiving')
 @login_required
 def receiving_dashboard():
-    # Check user role (admins bypass role check)
-    if not current_user.is_admin and not current_user.has_role('receiving'):
+    # Check user permission
+    if not has_permission(current_user, 'receiving.view'):
         flash("You don't have access to the Receiving module.")
         return redirect(url_for('main.index'))
     

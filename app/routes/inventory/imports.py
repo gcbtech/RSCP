@@ -8,6 +8,7 @@ import logging
 import json
 from flask import render_template, request, redirect, url_for, flash, Response, session
 from flask_login import login_required, current_user
+from app.utils.permissions import require_permission
 from app.routes.inventory import inventory_bp
 from app.services.db import get_db_connection
 
@@ -52,6 +53,7 @@ COLUMN_MAP = {
 
 @inventory_bp.route('/import', methods=['GET', 'POST'])
 @login_required
+@require_permission('inventory.manage')
 def import_items():
     """Import inventory items from CSV or Excel."""
     if request.method == 'POST':

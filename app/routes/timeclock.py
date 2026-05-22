@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 from flask_login import login_required, current_user
+from app.utils.permissions import has_permission
 import datetime
 from app.services.db import get_db_connection
 from app.services.data_manager import load_config
@@ -284,7 +285,7 @@ def inject_status():
 @timeclock_bp.route('/manager/shifts', methods=['GET', 'POST'])
 @login_required
 def shifts():
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         return redirect(url_for('timeclock.index'))
     
     conn = get_db_connection()
@@ -383,7 +384,7 @@ def shifts():
 @timeclock_bp.route('/manager/shift/delete/<int:shift_id>', methods=['POST'])
 @login_required
 def delete_shift(shift_id):
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         flash("Access Denied")
         return redirect(url_for('timeclock.index'))
         
@@ -513,7 +514,7 @@ def break_end():
 @timeclock_bp.route('/manager/recurring/add', methods=['POST'])
 @login_required
 def add_recurring_rule():
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         return "Unauthorized", 403
     
     conn = get_db_connection()
@@ -543,7 +544,7 @@ def add_recurring_rule():
 @timeclock_bp.route('/manager/recurring/delete/<int:rule_id>', methods=['POST'])
 @login_required
 def delete_recurring_rule(rule_id):
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         return "Unauthorized", 403
     conn = get_db_connection()
     conn.execute('DELETE FROM recurring_shift_rules WHERE id = ?', (rule_id,))
@@ -555,7 +556,7 @@ def delete_recurring_rule(rule_id):
 @timeclock_bp.route('/manager/generate_schedule', methods=['POST'])
 @login_required
 def generate_schedule():
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         return "Unauthorized", 403
         
     start_date_str = request.form.get('start_date')
@@ -621,7 +622,7 @@ def generate_schedule():
 @login_required
 def manager_dashboard():
     # Permission Check
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         flash("Access Denied")
         return redirect(url_for('timeclock.index'))
 
@@ -728,7 +729,7 @@ def manager_dashboard():
 @timeclock_bp.route('/manager/force_clock_out/<int:user_id>', methods=['POST'])
 @login_required
 def force_clock_out(user_id):
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         flash("Access Denied")
         return redirect(url_for('timeclock.index'))
         
@@ -752,7 +753,7 @@ def force_clock_out(user_id):
 @timeclock_bp.route('/manager/force_clock_in/<int:user_id>', methods=['POST'])
 @login_required
 def force_clock_in(user_id):
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         flash("Access Denied")
         return redirect(url_for('timeclock.index'))
         
@@ -782,7 +783,7 @@ def force_clock_in(user_id):
 @timeclock_bp.route('/manager/export')
 @login_required
 def export_csv():
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         return redirect(url_for('timeclock.index'))
     
     import csv
@@ -861,7 +862,7 @@ def export_csv():
 @timeclock_bp.route('/manager/timesheets')
 @login_required
 def timesheets():
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         return redirect(url_for('timeclock.index'))
     
     conn = get_db_connection()
@@ -939,7 +940,7 @@ def timesheets():
 @timeclock_bp.route('/manager/settings', methods=['POST'])
 @login_required
 def update_settings():
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         return redirect(url_for('timeclock.index'))
         
     from app.services.data_manager import save_config, load_config
@@ -1070,7 +1071,7 @@ def request_pto():
 @timeclock_bp.route('/manager/pto')
 @login_required
 def manager_pto():
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         return redirect(url_for('timeclock.index'))
         
     conn = get_db_connection()
@@ -1132,7 +1133,7 @@ def manager_pto():
 @timeclock_bp.route('/manager/pto/update_balance', methods=['POST'])
 @login_required
 def update_pto_balance():
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         return "Unauthorized", 403
     conn = get_db_connection()
     try:
@@ -1154,7 +1155,7 @@ def update_pto_balance():
 @timeclock_bp.route('/manager/pto/action/<int:req_id>', methods=['POST'])
 @login_required
 def pto_action(req_id):
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         return "Unauthorized", 403
         
     action = request.form.get('action') # 'approve', 'deny'
@@ -1230,7 +1231,7 @@ def pto_action(req_id):
 @timeclock_bp.route('/manager/timesheet/edit/<int:entry_id>', methods=['GET', 'POST'])
 @login_required
 def edit_entry(entry_id):
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         return redirect(url_for('timeclock.index'))
         
     conn = get_db_connection()
@@ -1286,7 +1287,7 @@ def edit_entry(entry_id):
 @timeclock_bp.route('/manager/timesheet/delete/<int:entry_id>', methods=['POST'])
 @login_required
 def delete_entry(entry_id):
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         return redirect(url_for('timeclock.index'))
     
     conn = get_db_connection()
@@ -1305,7 +1306,7 @@ def delete_entry(entry_id):
 @timeclock_bp.route('/manager/export/custom', methods=['GET'])
 @login_required
 def export_custom_form():
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         return redirect(url_for('timeclock.index'))
     
     conn = get_db_connection()
@@ -1332,7 +1333,7 @@ def export_custom_form():
 @timeclock_bp.route('/manager/export/report', methods=['POST'])
 @login_required
 def export_report():
-    if not current_user.is_admin and not current_user.has_role('timeclock_admin'):
+    if not has_permission(current_user, 'timeclock.manage'):
         return redirect(url_for('timeclock.index'))
         
     selected_users = request.form.getlist('user_ids')

@@ -395,6 +395,7 @@ def create_app(test_config=None):
         is_admin = current_user.is_admin if current_user.is_authenticated else False
         
         from app.utils.helpers import guess_shipper
+        from app.utils.permissions import has_permission
         
         return {
             'app_name': "RSCP",
@@ -409,6 +410,7 @@ def create_app(test_config=None):
             'local_user': local_user,
             'csrf_token': generate_csrf_token,
             'guess_shipper': guess_shipper,
+            'has_permission': has_permission,
             'config': c  # Full config for templates that need it
         }
         

@@ -274,8 +274,9 @@ def audit_export(session_id):
 def delete_audit(session_id):
     """Delete a specific audit session (admin only)."""
     from flask_login import current_user
+    from app.utils.permissions import has_permission
     
-    if not current_user.is_authenticated or not current_user.is_admin:
+    if not current_user.is_authenticated or not has_permission(current_user, 'inventory.manage'):
         flash("Admin access required.", "error")
         return redirect(url_for('inventory.audit_history'))
     
@@ -301,8 +302,9 @@ def delete_audit(session_id):
 def delete_all_audits():
     """Delete ALL audit sessions (admin only)."""
     from flask_login import current_user
+    from app.utils.permissions import has_permission
     
-    if not current_user.is_authenticated or not current_user.is_admin:
+    if not current_user.is_authenticated or not has_permission(current_user, 'inventory.manage'):
         flash("Admin access required.", "error")
         return redirect(url_for('inventory.audit_history'))
     

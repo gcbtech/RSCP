@@ -27,7 +27,8 @@ def require_admin(f):
     
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if not current_user.is_admin:
+        from app.utils.permissions import has_permission
+        if not has_permission(current_user, 'pos.manage'):
             flash('Admin access required.')
             return redirect(url_for('pos.sales'))
         return f(*args, **kwargs)

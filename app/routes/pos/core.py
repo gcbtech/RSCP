@@ -523,7 +523,8 @@ def check_pos_enabled():
     
     # Check user role (admins bypass role check)
     if not current_app.config.get('TESTING') and not current_user.is_admin:
-        if not current_user.has_role('pos'):
+        from app.utils.permissions import has_permission
+        if not has_permission(current_user, 'pos.view'):
             flash("You don't have access to the POS module.")
             return redirect(url_for('main.index'))
     

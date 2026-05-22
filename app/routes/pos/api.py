@@ -64,23 +64,28 @@ def api_item(sku):
 @login_required
 def api_validate_manager():
     """Validate manager credentials for void/refund operations."""
+    from app.services.auth import User
+    from app.utils.permissions import has_permission
+    
     data = request.get_json() or {}
     username = data.get('username', '')
     password = data.get('password', '')
     pin = data.get('pin', '')
     
-    users = load_users()
-    user_data = users.get(username)
-    
-    if not user_data or not user_data.get('is_admin'):
+    user_obj = User.get_by_username(username)
+    if not user_obj or not has_permission(user_obj, 'pos.manage'):
         return jsonify({'valid': False, 'error': 'User is not a manager'})
     
-    authenticated = False
+    # Check credentials
+    from app.services.db import get_request_db
+    conn = get_request_db()
+    pwd_row = conn.execute("SELECT password_hash, pin_hash FROM users WHERE id = ?", (user_obj.id,)).fetchone()
     
-    if password and check_password_hash(user_data['password_hash'], password):
-        authenticated = True
-    elif pin and user_data.get('pin_hash'):
-        if check_password_hash(user_data['pin_hash'], pin):
+    authenticated = False
+    if pwd_row:
+        if password and check_password_hash(pwd_row['password_hash'], password):
+            authenticated = True
+        elif pin and pwd_row['pin_hash'] and check_password_hash(pwd_row['pin_hash'], pin):
             authenticated = True
     
     if authenticated:

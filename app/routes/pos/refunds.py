@@ -20,8 +20,9 @@ def require_manager_auth(f):
     
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        # Check if user is admin
-        if not current_user.is_admin:
+        from app.utils.permissions import has_permission
+        # Check if user is admin or pos manager
+        if not has_permission(current_user, 'pos.manage'):
             # Check for temporary manager session
             manager_auth = session.get('pos_refund_manager_auth')
             if not manager_auth:
@@ -83,41 +84,46 @@ def refund_auth():
     """Manager authentication for refunds."""
     if request.method == 'POST':
         from werkzeug.security import check_password_hash
-        from app.services.auth import load_users
+        from app.services.auth import User
+        from app.utils.permissions import has_permission
         
         username = request.form.get('username', '')
         password = request.form.get('password', '')
         pin = request.form.get('pin', '')
         badge_id = request.form.get('badge_id', '')
         
-        users = load_users()
-        user_data = users.get(username)
-        
         # If badge_id provided, find user by badge
+        user_obj = None
         if badge_id and not username:
-            for uname, udata in users.items():
-                if udata.get('badge_id') == badge_id and udata.get('is_admin'):
-                    user_data = udata
-                    username = uname
-                    break
-        
-        if user_data and user_data.get('is_admin'):
+            from app.services.db import get_request_db
+            conn = get_request_db()
+            row = conn.execute("SELECT id FROM users WHERE badge_id = ?", (badge_id,)).fetchone()
+            if row:
+                user_obj = User.get(row['id'])
+        elif username:
+            user_obj = User.get_by_username(username)
+            
+        if user_obj and has_permission(user_obj, 'pos.manage'):
             # Check password, PIN, or Badge
+            from app.services.db import get_request_db
+            conn = get_request_db()
+            pwd_row = conn.execute("SELECT password_hash, pin_hash, badge_id FROM users WHERE id = ?", (user_obj.id,)).fetchone()
+            
             authenticated = False
-            if password and check_password_hash(user_data['password_hash'], password):
-                authenticated = True
-            elif pin and user_data.get('pin_hash'):
-                if check_password_hash(user_data['pin_hash'], pin):
+            if pwd_row:
+                if password and check_password_hash(pwd_row['password_hash'], password):
                     authenticated = True
-            elif badge_id and user_data.get('badge_id') == badge_id:
-                authenticated = True
+                elif pin and pwd_row['pin_hash'] and check_password_hash(pwd_row['pin_hash'], pin):
+                    authenticated = True
+                elif badge_id and pwd_row['badge_id'] == badge_id:
+                    authenticated = True
             
             if authenticated:
                 session['pos_refund_manager_auth'] = {
-                    'username': username,
+                    'username': user_obj.username,
                     'timestamp': datetime.now().timestamp()
                 }
-                flash(f'Manager {username} authenticated.')
+                flash(f'Manager {user_obj.username} authenticated.')
                 return redirect(url_for('pos.refunds'))
         
         flash('Invalid manager credentials.')
@@ -133,7 +139,8 @@ def verify_manager():
     Returns JSON with success status and manager username.
     """
     from werkzeug.security import check_password_hash
-    from app.services.auth import load_users
+    from app.services.auth import User
+    from app.utils.permissions import has_permission
     from flask import jsonify
     
     data = request.get_json() or {}
@@ -143,32 +150,36 @@ def verify_manager():
     if not pin and not badge_id:
         return jsonify({'success': False, 'error': 'PIN or Badge ID required'}), 400
     
-    users = load_users()
+    # Get all users from database to check their credentials
+    from app.services.db import get_request_db
+    conn = get_request_db()
+    rows = conn.execute("SELECT id, username, password_hash, pin_hash, badge_id FROM users").fetchall()
     
-    for username, user_data in users.items():
-        if not user_data.get('is_admin'):
+    for r in rows:
+        user_obj = User.get(r['id'])
+        if not user_obj or not has_permission(user_obj, 'pos.manage'):
             continue
         
         authenticated = False
         
         # Check PIN
-        if pin and user_data.get('pin_hash'):
-            if check_password_hash(user_data['pin_hash'], pin):
+        if pin and r['pin_hash']:
+            if check_password_hash(r['pin_hash'], pin):
                 authenticated = True
         
         # Check Badge ID
-        if badge_id and user_data.get('badge_id') == badge_id:
+        if badge_id and r['badge_id'] == badge_id:
             authenticated = True
         
         if authenticated:
             # Store manager approval in session for this discount
             session['pos_discount_manager_auth'] = {
-                'username': username,
+                'username': r['username'],
                 'timestamp': datetime.now().timestamp()
             }
             return jsonify({
                 'success': True,
-                'manager': username
+                'manager': r['username']
             })
     
     return jsonify({'success': False, 'error': 'Invalid manager credentials'}), 401

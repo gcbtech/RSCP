@@ -345,7 +345,7 @@
                     <a href="{{ url_for('pos.receipt_print', order_number=order.order_number) }}" target="_blank"
                         class="btn btn-outline-secondary">📄 Printable View</a>
                     <a href="{{ url_for('pos.sales') }}" class="btn btn-success">New Sale →</a>
-                    {% if current_user.is_admin %}
+                    {% if has_permission(current_user, 'pos.manage') %}
                     <div class="dropdown d-inline">
                         <button class="btn btn-outline-danger dropdown-toggle" type="button" data-bs-toggle="dropdown">
                             🗑️ Delete Order

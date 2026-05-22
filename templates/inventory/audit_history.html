@@ -48,7 +48,7 @@
                 <a href="{{ url_for('inventory.export_all_audits') }}" class="btn btn-outline-success">📥 Export All
                     CSV</a>
                 <a href="{{ url_for('inventory.audit_dashboard') }}" class="btn btn-outline-primary">Start New Audit</a>
-                {% if is_admin %}
+                {% if has_permission(current_user, 'inventory.manage') %}
                 <form action="{{ url_for('inventory.delete_all_audits') }}" method="POST"
                     onsubmit="return confirm('⚠️ DELETE ALL audit history? This cannot be undone!');">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -71,7 +71,7 @@
                         <p class="mb-1">Mode: {{ sess.mode|capitalize }}</p>
                         <small class="text-primary">View Report →</small>
                     </a>
-                    {% if is_admin %}
+                    {% if has_permission(current_user, 'inventory.manage') %}
                     <form action="{{ url_for('inventory.delete_audit', session_id=sess.id) }}" method="POST"
                         class="ms-3" onsubmit="return confirm('Delete audit session #{{ sess.id }}?');">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

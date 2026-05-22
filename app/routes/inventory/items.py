@@ -10,6 +10,7 @@ import sqlite3
 import json
 from flask import request, redirect, url_for, session, flash, render_template, jsonify
 from flask_login import login_required, current_user
+from app.utils.permissions import require_permission
 from werkzeug.utils import secure_filename
 import base64
 import uuid
@@ -150,6 +151,7 @@ def low_stock_report():
 
 @inventory_bp.route('/bulk-edit', methods=['POST'])
 @login_required
+@require_permission('inventory.manage')
 def bulk_edit():
     """Handle bulk editing of inventory items."""
     item_ids = request.form.getlist('item_ids')
@@ -365,6 +367,7 @@ def list_items():
 
 @inventory_bp.route('/add', methods=['GET', 'POST'])
 @login_required
+@require_permission('inventory.manage')
 def add_item():
     """Add a new inventory item."""
     if request.method == 'POST':
@@ -597,6 +600,7 @@ def add_item():
 
 @inventory_bp.route('/edit/<int:item_id>', methods=['GET', 'POST'])
 @login_required
+@require_permission('inventory.manage')
 def edit_item(item_id):
     """Edit an existing inventory item."""
     conn = get_db_connection()
@@ -769,6 +773,7 @@ def edit_item(item_id):
 
 @inventory_bp.route('/delete/<int:item_id>', methods=['POST'])
 @login_required
+@require_permission('inventory.manage')
 def delete_item(item_id):
     """Delete an inventory item."""
     conn = get_db_connection()
@@ -788,6 +793,7 @@ def delete_item(item_id):
 
 @inventory_bp.route('/toggle-legacy/<int:item_id>', methods=['POST'])
 @login_required
+@require_permission('inventory.manage')
 def toggle_legacy(item_id):
     """Toggle the legacy status of an inventory item."""
     conn = get_db_connection()
@@ -818,6 +824,7 @@ def toggle_legacy(item_id):
 
 @inventory_bp.route('/transaction/delete/<int:tx_id>', methods=['POST'])
 @login_required
+@require_permission('inventory.manage')
 def delete_transaction(tx_id):
     """Delete a transaction and revert the stock change."""
     conn = get_db_connection()
@@ -1033,6 +1040,7 @@ def upload_photo():
 
 @inventory_bp.route('/export_csv')
 @login_required
+@require_permission('inventory.manage')
 def export_inventory_csv():
     """Export inventory to CSV."""
     import csv

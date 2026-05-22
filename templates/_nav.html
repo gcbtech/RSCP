@@ -238,7 +238,7 @@
         <span class="nav-icon"></span> Shifts
     </a>
     {# Future: History Link #}
-    {% if current_user.is_admin or current_user.has_role('timeclock_admin') %}
+    {% if has_permission(current_user, 'timeclock.manage') %}
     <a href="/timeclock/manager"
         class="nav-link {% if '/manager' in request.path and '/shifts' not in request.path %}active{% endif %}">
         <span class="nav-icon"></span> Manager Portal
@@ -250,7 +250,7 @@
         class="nav-link {% if request.path == '/pos' or request.path == '/pos/' or '/checkout' in request.path or '/receipt' in request.path %}active{% endif %}">
         <span class="nav-icon"></span> Checkout
     </a>
-    {% if is_admin %}
+    {% if has_permission(current_user, 'pos.manage') %}
     <a href="{{ url_for('pos.sales_history') }}"
         class="nav-link {% if '/management/sales' in request.path %}active{% endif %}">
         <span class="nav-icon"></span> Sales History
@@ -330,7 +330,7 @@
             {% endif %}
         </div>
 
-        {% if is_admin %}
+        {% if has_permission(current_user, 'admin.manage') %}
         <div class="mt-1">
             <span class="badge bg-warning text-dark">Admin Access</span>
         </div>
