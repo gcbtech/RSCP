@@ -279,9 +279,11 @@
     <a href="/inventory/audit/history" class="nav-link {% if '/audit' in request.path %}active{% endif %}">
         <span class="nav-icon"></span> Audit History
     </a>
+    {% if has_permission(current_user, 'inventory.manage') %}
     <a href="/inventory/alerts" class="nav-link {% if '/inventory/alerts' in request.path %}active{% endif %}">
         <span class="nav-icon"></span> Settings
     </a>
+    {% endif %}
     {% else %}
     <!-- RECEIVING MODE -->
     <a href="/receiving" class="nav-link {% if request.path == '/receiving' %}active{% endif %}">

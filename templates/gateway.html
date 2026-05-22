@@ -329,6 +329,7 @@
 
         <div class="row g-4 g-lg-4 justify-content-lg-center">
             <!-- RECEIVING MODULE -->
+            {% if has_permission(current_user, 'receiving.view') %}
             <div class="col-12 col-lg-5">
                 <a href="/receiving" class="module-card module-receiving">
                     <div class="card-img-top">
@@ -341,9 +342,10 @@
                     </div>
                 </a>
             </div>
+            {% endif %}
 
             <!-- INVENTORY MODULE -->
-            {% if inventory_enabled %}
+            {% if inventory_enabled and has_permission(current_user, 'inventory.view') %}
             <div class="col-12 col-lg-5">
                 <a href="/inventory" class="module-card module-inventory">
                     <div class="card-img-top">
@@ -358,7 +360,7 @@
             {% endif %}
 
             <!-- POS MODULE -->
-            {% if pos_enabled %}
+            {% if pos_enabled and has_permission(current_user, 'pos.view') %}
             <div class="col-12 col-lg-5">
                 <a href="/pos" class="module-card module-pos">
                     <div class="card-img-top">
@@ -373,7 +375,7 @@
             {% endif %}
 
             <!-- TIMECLOCK MODULE -->
-            {% if timeclock_enabled %}
+            {% if timeclock_enabled and has_permission(current_user, 'timeclock.view') %}
             <div class="col-12 col-lg-5">
                 <a href="/timeclock" class="module-card module-timeclock">
                     <div class="card-img-top">

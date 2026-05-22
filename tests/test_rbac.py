@@ -205,3 +205,64 @@ class TestRBACPermissions:
         
         # Admin settings page
         assert super_admin_client.get('/admin/').status_code == 200
+
+    # =========================================================================
+    # 5. UI Element Visibility and Column Masking
+    # =========================================================================
+
+    def test_html_visibility_permissions_operator(self, operator_client):
+        """Verify that UI controls and sensitive columns are dynamically hidden for Operator."""
+        response = operator_client.get('/inventory/items')
+        assert response.status_code == 200
+        html = response.data.decode('utf-8')
+        
+        # Admin buttons must be hidden
+        assert 'href="/inventory/add"' not in html
+        assert 'href="/inventory/import"' not in html
+        assert 'href="/inventory/export_csv"' not in html
+        assert '⚡ Quick Add Item' not in html
+        
+        # Sensitive cost columns must be hidden/masked
+        assert 'class="col-cost"' not in html
+        assert '<th class="col-cost">Cost</th>' not in html
+        assert 'class="col-bulk"' not in html
+        assert 'id="selectAll"' not in html
+        assert 'class="badge col-markup' not in html
+        assert 'class="badge col-margin' not in html
+        
+        # Buy price sorting and Hide Cost toggles must be hidden
+        assert 'sort=buy_price' not in html
+        assert 'id="hideCostToggle"' not in html
+        assert 'id="bulkActions"' not in html
+        
+        # Row action buttons (Edit/Delete) must be hidden
+        assert '✏️' not in html
+        assert '🗑️' not in html
+        assert '♻️' not in html
+
+    def test_html_visibility_permissions_admin(self, inventory_admin_client):
+        """Verify that UI controls and sensitive columns are dynamically revealed for Inventory Admin."""
+        response = inventory_admin_client.get('/inventory/items')
+        assert response.status_code == 200
+        html = response.data.decode('utf-8')
+        
+        # Admin buttons must be present
+        assert 'href="/inventory/add"' in html
+        assert 'href="/inventory/import"' in html
+        assert 'href="/inventory/export_csv"' in html
+        
+        # Sensitive cost columns must be present
+        assert 'class="col-cost"' in html
+        assert 'class="col-bulk"' in html
+        assert 'id="selectAll"' in html
+        
+        # Buy price sorting and Hide Cost toggles must be present
+        assert 'sort=buy_price' in html
+        assert 'id="hideCostToggle"' in html
+        
+        # Row action buttons (Edit/Delete) must be present
+        assert '✏️' in html
+        assert '🗑️' in html
+
+
+
