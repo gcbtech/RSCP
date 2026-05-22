@@ -8,7 +8,7 @@ from flask import request, redirect, url_for, flash, render_template, jsonify
 from flask_login import login_required, current_user
 
 from app.routes.inventory import inventory_bp, CATEGORY_CODES
-from app.services.db import get_db_connection
+from app.services.db import get_db_connection, get_request_db
 from app.services.data_manager import load_config
 
 logger = logging.getLogger(__name__)
@@ -73,20 +73,24 @@ def validate_location(area, aisle, shelf, bin_loc):
     return any([area, aisle, shelf, bin_loc])
 
 
-def get_inventory_item(sku):
+def get_inventory_item(sku, conn=None):
     """Get an inventory item by SKU, UPC, or Part Number."""
-    conn = get_db_connection()
+    close_conn = False
+    if conn is None:
+        try:
+            from flask import has_app_context
+            if has_app_context():
+                conn = get_request_db()
+            else:
+                conn = get_db_connection()
+                close_conn = True
+        except ImportError:
+            conn = get_db_connection()
+            close_conn = True
+
     try:
-        # First try exact SKU match
-        # First try exact SKU match
-        result = conn.execute('''
-            SELECT * FROM inventory_items WHERE sku = ?
-        ''', (sku,)).fetchone()
-        
-        if result:
-            item = dict(result)
-            
-            # --- Sale Logic ---
+        # Helper to apply standard sale logic to an item dictionary
+        def apply_sale_logic(item):
             now = datetime.now()
             item['regular_price'] = item['sell_price'] # Keep track of original price
             item['is_on_sale'] = False
@@ -111,17 +115,39 @@ def get_inventory_item(sku):
                         item['current_price'] = item['sale_price']
                         item['is_on_sale'] = True
                 except (ValueError, TypeError) as e:
-                    logger.warning(f"Error parsing sale dates for item {sku}: {e}")
-            
+                    logger.warning(f"Error parsing sale dates for item {item.get('sku')}: {e}")
             return item
+
+        # First try exact SKU match
+        result = conn.execute('''
+            SELECT * FROM inventory_items WHERE sku = ?
+        ''', (sku,)).fetchone()
+        
+        if result:
+            return apply_sale_logic(dict(result))
             
         # If not found, search in secondary_ids (UPC, part_number)
-        if not result:
+        import sqlite3
+        search_sku = sku.strip() if sku else ""
+        
+        # Try native SQLite JSON extraction first (extremely fast, < 1ms)
+        try:
+            row = conn.execute('''
+                SELECT * FROM inventory_items 
+                WHERE secondary_ids IS NOT NULL 
+                  AND secondary_ids != '{}'
+                  AND (
+                    TRIM(json_extract(secondary_ids, '$.upc')) = ? 
+                    OR TRIM(json_extract(secondary_ids, '$.part_number')) = ?
+                  )
+            ''', (search_sku, search_sku)).fetchone()
+            if row:
+                return apply_sale_logic(dict(row))
+        except sqlite3.OperationalError as e:
+            # Fallback to the slow Python-level parsing if SQLite json_extract is not supported
+            logger.warning(f"Native SQLite JSON search failed (falling back to slow scan): {e}")
+            
             import json
-            # Search by checking if the input matches UPC or part_number in secondary_ids JSON
-            # Note: This scans all items with secondary_ids. 
-            # Ideally should be replaced with SQL JSON queries if SQLite version supports it,
-            # but this is safe for compatibility.
             all_items = conn.execute('''
                 SELECT * FROM inventory_items WHERE secondary_ids IS NOT NULL AND secondary_ids != '{}'
             ''').fetchall()
@@ -132,47 +158,17 @@ def get_inventory_item(sku):
                         ids = json.loads(row['secondary_ids'])
                         # Check UPC or Part Number
                         if str(ids.get('upc', '')).strip() == sku or str(ids.get('part_number', '')).strip() == sku:
-                            # Apply same sale logic to secondary ID match
-                            item = dict(row)
-                            
-                            # --- Sale Logic (Duplicated for fallback) ---
-                            now = datetime.now()
-                            item['regular_price'] = item['sell_price']
-                            item['is_on_sale'] = False
-                            item['current_price'] = item['sell_price']
-                            
-                            if item.get('sale_enabled'):
-                                try:
-                                    start_valid = True
-                                    end_valid = True
-                                    
-                                    if item.get('sale_start'):
-                                        start_dt = datetime.strptime(item['sale_start'], '%Y-%m-%dT%H:%M')
-                                        if now < start_dt:
-                                            start_valid = False
-                                            
-                                    if item.get('sale_end'):
-                                        end_dt = datetime.strptime(item['sale_end'], '%Y-%m-%dT%H:%M')
-                                        if now > end_dt:
-                                            end_valid = False
-                                            
-                                    if start_valid and end_valid:
-                                        item['current_price'] = item['sale_price']
-                                        item['is_on_sale'] = True
-                                except (ValueError, TypeError):
-                                    pass
-                                    
-                            result = item
-                            break
+                            return apply_sale_logic(dict(row))
                 except json.JSONDecodeError:
                     continue
         
-        return result
+        return None
     except Exception as e:
         logger.error(f"Error looking up inventory item: {e}")
         return None
     finally:
-        conn.close()
+        if close_conn:
+            conn.close()
 
 
 def get_inventory_stats():

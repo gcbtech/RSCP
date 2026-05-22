@@ -7,9 +7,9 @@
 # (These contain user-specific data)
 # ----------------------------------
 config.json
-rscp.db
-rscp.db-wal
-rscp.db-shm
+*.db
+*.db-wal
+*.db-shm
 manifest.csv
 received_log.csv
 

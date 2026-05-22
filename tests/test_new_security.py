@@ -10,9 +10,35 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 @pytest.fixture
 def app():
     from app import create_app
-    app = create_app()
-    app.config['TESTING'] = True
-    app.config['WTF_CSRF_ENABLED'] = False # Disable CSRF for API tests
+    from app.services.db import get_db_connection
+    
+    db_path = os.path.join(os.path.dirname(__file__), 'test_new_security.db')
+    if os.path.exists(db_path):
+        try:
+            os.remove(db_path)
+        except Exception:
+            pass
+            
+    app = create_app(test_config={
+        'TESTING': True,
+        'DATABASE': db_path,
+        'WTF_CSRF_ENABLED': False,
+        'SECRET_KEY': 'test_key',
+    })
+    
+    with app.app_context():
+        from app.services.migration import ensure_db_ready
+        ensure_db_ready()
+        
+        # Insert a test user with ID 1 so load_user('1') succeeds in authenticated client
+        conn = get_db_connection()
+        conn.execute('''
+            INSERT INTO users (id, username, password_hash, is_admin, roles)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (1, 'TestAdmin', 'pbkdf2:sha256:somehash', 1, '["super_admin"]'))
+        conn.commit()
+        conn.close()
+        
     return app
 
 @pytest.fixture

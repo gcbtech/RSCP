@@ -9,7 +9,7 @@ import threading
 from typing import Dict, Any, List, Optional, Set
 import sqlite3
 
-from app.services.db import get_db_connection, BASE_DIR
+from app.services.db import get_db_connection, BASE_DIR, get_request_db
 from app.utils.helpers import parse_date
 
 logger = logging.getLogger(__name__)
@@ -597,10 +597,21 @@ def send_priority_alert(tracking: str, item_name: str, quantity: str, user: str,
     except Exception as e:
         logger.error(f"Webhook error: {e}")
 
-def log_receipt(tracking: str, item_name: str, quantity: str, user: str) -> None:
+def log_receipt(tracking: str, item_name: str, quantity: str, user: str, conn=None) -> None:
     # 1. Add to History Table
     # 2. Update Package as Scanned
-    conn = get_db_connection()
+    close_conn = False
+    if conn is None:
+        try:
+            from flask import has_app_context
+            if has_app_context():
+                conn = get_request_db()
+            else:
+                conn = get_db_connection()
+                close_conn = True
+        except ImportError:
+            conn = get_db_connection()
+            close_conn = True
     try:
         # Get User ID
         res = conn.execute("SELECT id FROM users WHERE username = ?", (user,)).fetchone()
@@ -678,7 +689,8 @@ def log_receipt(tracking: str, item_name: str, quantity: str, user: str) -> None
     except Exception as e:
         logger.error(f"Log receipt error: {e}")
     finally:
-        conn.close()
+        if close_conn:
+            conn.close()
 
 def get_scan_count(days: int = 1) -> int:
     conn = get_db_connection()
@@ -695,12 +707,25 @@ def get_scan_count(days: int = 1) -> int:
     finally:
         conn.close()
 
-def check_history(tracking: str) -> bool:
-    conn = get_db_connection()
-    res = conn.execute("SELECT count(*) as c FROM history h JOIN packages p ON h.package_id = p.id WHERE p.tracking_number = ?", (tracking,)).fetchone()
-    found = res['c'] > 0
-    conn.close()
-    return found
+def check_history(tracking: str, conn=None) -> bool:
+    close_conn = False
+    if conn is None:
+        try:
+            from flask import has_app_context
+            if has_app_context():
+                conn = get_request_db()
+            else:
+                conn = get_db_connection()
+                close_conn = True
+        except ImportError:
+            conn = get_db_connection()
+            close_conn = True
+    try:
+        res = conn.execute("SELECT count(*) as c FROM history h JOIN packages p ON h.package_id = p.id WHERE p.tracking_number = ?", (tracking,)).fetchone()
+        return res['c'] > 0
+    finally:
+        if close_conn:
+            conn.close()
 
 # --- EMAIL INGEST INTEGRATION ---
 from email_ingest import check_amazon_emails

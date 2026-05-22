@@ -207,7 +207,7 @@
         {{ debug_info }}</div>
     {% endif %}
 
-    <form id="scanForm" method="POST" action="/scan" onsubmit="return lockForm()">
+    <form id="scanForm" method="POST" action="/scan">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <input type="text" id="scanInput" name="tracking_input" class="scan-target" autocomplete="off">
         <input type="hidden" id="userInput" name="user_input" value="">
@@ -396,6 +396,52 @@
     </div>
 
     <script>
+        // --- SOUND SYNTHESIS (WEB AUDIO API) ---
+        let audioCtx = null;
+        function initAudioContext() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+        document.addEventListener('click', initAudioContext, { once: true });
+        document.addEventListener('keydown', initAudioContext, { once: true });
+        document.addEventListener('touchstart', initAudioContext, { once: true });
+
+        function playScanBeep(success) {
+            try {
+                initAudioContext();
+                if (!audioCtx) return;
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                
+                const now = audioCtx.currentTime;
+                if (success) {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(1000, now);
+                    gain.gain.setValueAtTime(0.15, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+                    osc.start(now);
+                    osc.stop(now + 0.12);
+                } else {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(150, now);
+                    gain.gain.setValueAtTime(0.25, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+                    osc.start(now);
+                    osc.stop(now + 0.25);
+                }
+            } catch (e) {
+                console.warn('Audio synthesis block:', e);
+            }
+        }
+
         // --- SETUP ---
         if (localStorage.getItem('rscp_darkmode') === 'true') document.body.classList.add('dark-mode');
 
@@ -422,11 +468,112 @@
         renderHistory();
 
         let isSubmitting = false;
-        function lockForm() { if (isSubmitting) return false; isSubmitting = true; return true; }
-
         const input = document.getElementById('scanInput');
         const form = document.getElementById('scanForm');
         let scanTimeout = null;
+
+        form.addEventListener('submit', async function (e) {
+            e.preventDefault();
+            if (isSubmitting) return;
+
+            const val = input.value.trim();
+            if (!val) return;
+
+            isSubmitting = true;
+            // Clear input box instantly so the user can scan the next item right away!
+            input.value = '';
+
+            try {
+                const formData = new FormData(form);
+                formData.set('tracking_input', val);
+
+                const response = await fetch(form.action || '/scan', {
+                    method: 'POST',
+                    body: formData,
+                    headers: {
+                        'X-Requested-With': 'XMLHttpRequest'
+                    }
+                });
+
+                if (response.ok) {
+                    const html = await response.text();
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+
+                    const newBody = doc.body;
+                    const newBgColor = newBody.style.backgroundColor;
+                    const newClass = newBody.className;
+
+                    document.body.style.backgroundColor = newBgColor;
+                    document.body.className = newClass;
+
+                    const oldBanner = document.querySelector('.priority-banner');
+                    const newBanner = doc.querySelector('.priority-banner');
+                    if (oldBanner) oldBanner.remove();
+                    if (newBanner) {
+                        document.body.insertBefore(newBanner, document.body.firstChild);
+                    }
+
+                    const newContainer = doc.querySelector('.item-container');
+                    if (newContainer) {
+                        document.querySelector('.item-container').innerHTML = newContainer.innerHTML;
+                    }
+
+                    const newCsrf = doc.querySelector('input[name="csrf_token"]');
+                    if (newCsrf) {
+                        document.querySelector('input[name="csrf_token"]').value = newCsrf.value;
+                    }
+
+                    const oldDebug = document.querySelector('div[style*="font-family: monospace"]');
+                    const newDebug = doc.querySelector('div[style*="font-family: monospace"]');
+                    if (oldDebug) oldDebug.remove();
+                    if (newDebug && newContainer) {
+                        newContainer.parentNode.insertBefore(newDebug, newContainer);
+                    }
+
+                    if (newBgColor) {
+                        const isSuccess = (newBgColor === "#77dd77" || newBgColor === "rgb(119, 221, 119)" ||
+                                           newBgColor === "#C77DFF" || newBgColor === "rgb(199, 125, 255)" ||
+                                           newBgColor === "#6f42c1" || newBgColor === "rgb(111, 66, 193)");
+                        const isFailure = (newBgColor === "#ff6961" || newBgColor === "rgb(255, 105, 97)" ||
+                                           newBgColor === "#ffd700" || newBgColor === "rgb(255, 215, 0)");
+                        if (isSuccess || isFailure) {
+                            playScanBeep(isSuccess);
+                        }
+                    }
+
+                    if (newBgColor === "rgb(255, 105, 97)" || newBgColor === "#ff6961" || 
+                        newBgColor === "rgb(255, 215, 0)" || newBgColor === "#ffd700") {
+                        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+                    }
+
+                    const newItems = doc.querySelectorAll('.item-card h2');
+                    if (newItems.length > 0) {
+                        newItems.forEach(h2 => {
+                            const itemName = h2.textContent.trim();
+                            const itemLog = { name: itemName, time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+                            let history = JSON.parse(sessionStorage.getItem('rscp_session') || "[]");
+                            if (history.length === 0 || history[0].name !== itemLog.name) {
+                                history.unshift(itemLog);
+                                if (history.length > 3) history.pop();
+                                sessionStorage.setItem('rscp_session', JSON.stringify(history));
+                            }
+                        });
+                        renderHistory();
+                    }
+
+                } else {
+                    console.error("AJAX Scan failed:", response.status);
+                    playScanBeep(false);
+                }
+            } catch (err) {
+                console.error("AJAX Scan error:", err);
+                playScanBeep(false);
+            } finally {
+                isSubmitting = false;
+                input.focus();
+            }
+        });
 
         // --- KEYBOARD BLOCKER LOGIC ---
         let blockKeyboard = localStorage.getItem('rscp_block_kbd') === 'true';
@@ -474,8 +621,18 @@
         window.onload = function () {
             applyKeyboardState();
             applyHistoryDisplayState();
-            // V14.6: Haptic Feedback on Error/Duplicate
+            
+            // Audible Feedback on scan result
             const bg = "{{ color }}";
+            if (bg) {
+                const isSuccess = (bg === "#77dd77" || bg === "#C77DFF" || bg === "#6f42c1");
+                const isFailure = (bg === "#ff6961" || bg === "#ffd700");
+                if (isSuccess || isFailure) {
+                    playScanBeep(isSuccess);
+                }
+            }
+            
+            // V14.6: Haptic Feedback on Error/Duplicate
             if (bg === "#ff6961" || bg === "#ffd700") {
                 if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
             }
@@ -497,6 +654,17 @@
                 setTimeout(() => { input.removeAttribute('readonly'); }, 50);
             } else {
                 input.removeAttribute('readonly');
+            }
+        });
+
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                clearTimeout(scanTimeout);
+                const val = input.value.trim();
+                if (val && !isSubmitting) {
+                    form.requestSubmit();
+                }
             }
         });
 

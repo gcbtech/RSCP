@@ -1055,6 +1055,52 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
+        // --- SOUND SYNTHESIS (WEB AUDIO API) ---
+        let audioCtx = null;
+        function initAudioContext() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+        document.addEventListener('click', initAudioContext, { once: true });
+        document.addEventListener('keydown', initAudioContext, { once: true });
+        document.addEventListener('touchstart', initAudioContext, { once: true });
+
+        function playScanBeep(success) {
+            try {
+                initAudioContext();
+                if (!audioCtx) return;
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                
+                const now = audioCtx.currentTime;
+                if (success) {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(1000, now);
+                    gain.gain.setValueAtTime(0.15, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+                    osc.start(now);
+                    osc.stop(now + 0.12);
+                } else {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(150, now);
+                    gain.gain.setValueAtTime(0.25, now);
+                    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+                    osc.start(now);
+                    osc.stop(now + 0.25);
+                }
+            } catch (e) {
+                console.warn('Audio synthesis block:', e);
+            }
+        }
+
         const skuInput = document.getElementById('skuInput');
         const addForm = document.getElementById('addForm');
         const autocomplete = document.getElementById('autocompleteResults');
@@ -1105,11 +1151,24 @@
                     if (newCsrf) {
                         document.querySelectorAll('input[name="csrf_token"]').forEach(el => el.value = newCsrf.value);
                     }
+                    
+                    // Audible scan result evaluation
+                    let isSuccess = true;
+                    if (newFlashes) {
+                        const hasError = Array.from(newFlashes.querySelectorAll('.alert-warning, .alert-danger'))
+                            .some(alert => alert.textContent.includes('Item not found') || alert.textContent.includes('Please enter a SKU'));
+                        if (hasError) {
+                            isSuccess = false;
+                        }
+                    }
+                    playScanBeep(isSuccess);
                 } else {
                     console.error("Scan submission failed with status:", response.status);
+                    playScanBeep(false);
                 }
             } catch (err) {
                 console.error("Error processing scan queue", err);
+                playScanBeep(false);
             } finally {
                 isScanning = false;
                 // Maintain relentless focus on the input box

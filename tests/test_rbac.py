@@ -12,14 +12,11 @@ from app.services.db import get_db_connection
 def app():
     """Create application for testing with an isolated database."""
     from app import create_app
+    import uuid
     
-    db_path = os.path.join(os.path.dirname(__file__), 'test_rbac.db')
-    if os.path.exists(db_path):
-        try:
-            os.remove(db_path)
-        except Exception:
-            pass
-            
+    db_name = f'test_rbac_{uuid.uuid4().hex}.db'
+    db_path = os.path.join(os.path.dirname(__file__), db_name)
+    
     app = create_app(test_config={
         'TESTING': True,
         'DATABASE': db_path,

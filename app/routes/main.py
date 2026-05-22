@@ -13,7 +13,7 @@ from flask_login import current_user, login_required
 from app.utils.permissions import has_permission
 
 # DB Services
-from app.services.db import get_db_connection, DB_PATH
+from app.services.db import get_db_connection, DB_PATH, get_request_db
 from app.services.auth import create_user, BASE_DIR # load_users shim used for login selection
 from app.services.data_manager import (
     get_dashboard_stats, sync_manifest, log_receipt, load_config, MANIFEST_FILE,
@@ -143,7 +143,7 @@ def scan_page_legacy():
         # Better: Duplicate minimal logic or extract to service.
         # Extracting logic is best, but for now, inline.
         
-        conn = get_db_connection()
+        conn = get_request_db()
         msg = "Scan Failed"
         color = ""
         items = []
@@ -197,7 +197,7 @@ def scan_page_legacy():
                      conf = load_config()
                      if conf and conf.get('INVENTORY_ENABLED'):
                          from app.routes.inventory import get_inventory_item
-                         inv_item = get_inventory_item(tracking)
+                         inv_item = get_inventory_item(tracking, conn=conn)
                  except Exception as e:
                      logger.warning(f"Inventory SKU lookup failed during scan: {e}")
                  
@@ -220,7 +220,7 @@ def scan_page_legacy():
             else:
                 # Check status BEFORE processing (to detect duplicates)
                 all_received = all(r['date_scanned'] for r in rows)
-                already_in_history = check_history(tracking)
+                already_in_history = check_history(tracking, conn=conn)
                 
                 if all_received and already_in_history:
                      msg = f"Duplicate: {len(rows)} Items"
@@ -228,7 +228,7 @@ def scan_page_legacy():
                 else:
                      # Log Receipt (Updates ALL items with this tracking)
                      # We use the first item's name for the log summary, but specific items are updated in DB
-                     log_receipt(tracking, rows[0]['item_name'], str(rows[0]['quantity']), current_user.username)
+                     log_receipt(tracking, rows[0]['item_name'], str(rows[0]['quantity']), current_user.username, conn=conn)
                      
                      # Check Priority (If ANY item is priority)
                      is_priority = any((r['priority'] for r in rows if 'priority' in r.keys() and r['priority']))
@@ -258,60 +258,56 @@ def scan_page_legacy():
             color = "#ff6961"
             items = []
         finally:
-            conn.close()
+            pass
         
         # Check if inventory is enabled for Add to Inventory button
         inventory_match = None
         config = load_config()
         inv_enabled = config.get('INVENTORY_ENABLED', False) if config else False
         
-            # V1.16.1: Check if received package matches existing inventory item
+        # V1.16.1: Check if received package matches existing inventory item
         if inv_enabled and color == "#77dd77" and items:
             try:
-                inv_conn = get_db_connection()
-                try:
-                    pkg_asin = items[0].get('asin', '') or ''
-                    pkg_name = items[0].get('name', '') or ''
-                    
-                    # 1. Try SKU Match (if package has one from Manifest or Mapping)
-                    # We need to fetch the SKU from the package row we just fetched if it exists
-                    pkg_sku = None
-                    if rows and 'sku' in rows[0].keys():
-                        pkg_sku = rows[0]['sku']
-                    
-                    # If no SKU on package, check product_mappings (Real-time check)
-                    if not pkg_sku:
-                        mapping = inv_conn.execute("SELECT inventory_sku FROM product_mappings WHERE package_name = ?", (pkg_name,)).fetchone()
-                        if mapping: pkg_sku = mapping['inventory_sku']
+                pkg_asin = items[0].get('asin', '') or ''
+                pkg_name = items[0].get('name', '') or ''
+                
+                # 1. Try SKU Match (if package has one from Manifest or Mapping)
+                # We need to fetch the SKU from the package row we just fetched if it exists
+                pkg_sku = None
+                if rows and 'sku' in rows[0].keys():
+                    pkg_sku = rows[0]['sku']
+                
+                # If no SKU on package, check product_mappings (Real-time check)
+                if not pkg_sku:
+                    mapping = conn.execute("SELECT inventory_sku FROM product_mappings WHERE package_name = ?", (pkg_name,)).fetchone()
+                    if mapping: pkg_sku = mapping['inventory_sku']
 
-                    if pkg_sku:
-                        match = inv_conn.execute("SELECT id, name, sku, quantity, image_url FROM inventory_items WHERE sku = ?", (pkg_sku,)).fetchone()
-                        if match:
-                            inventory_match = dict(match)
+                if pkg_sku:
+                    match = conn.execute("SELECT id, name, sku, quantity, image_url FROM inventory_items WHERE sku = ?", (pkg_sku,)).fetchone()
+                    if match:
+                        inventory_match = dict(match)
 
-                    # 2. Try ASIN match (exact)
-                    if not inventory_match and pkg_asin and pkg_asin.strip():
-                        match = inv_conn.execute(
-                            "SELECT id, name, sku, quantity, image_url FROM inventory_items WHERE asin = ?",
-                            (pkg_asin.strip(),)
-                        ).fetchone()
-                        if match:
-                            inventory_match = dict(match)
-                    
-                    # 3. Try name match (fuzzy - case insensitive contains)
-                    if not inventory_match and pkg_name and pkg_name.strip():
-                        # Use first 30 chars for matching (handles truncated names)
-                        search_prefix = pkg_name[:30].lower().rstrip('.').rstrip()
-                        match = inv_conn.execute(
-                            """SELECT id, name, sku, quantity, image_url FROM inventory_items 
-                               WHERE LOWER(name) LIKE ? 
-                               LIMIT 1""",
-                            (f'{search_prefix}%',)
-                        ).fetchone()
-                        if match:
-                            inventory_match = dict(match)
-                finally:
-                    inv_conn.close()
+                # 2. Try ASIN match (exact)
+                if not inventory_match and pkg_asin and pkg_asin.strip():
+                    match = conn.execute(
+                        "SELECT id, name, sku, quantity, image_url FROM inventory_items WHERE asin = ?",
+                        (pkg_asin.strip(),)
+                    ).fetchone()
+                    if match:
+                        inventory_match = dict(match)
+                
+                # 3. Try name match (fuzzy - case insensitive contains)
+                if not inventory_match and pkg_name and pkg_name.strip():
+                    # Use first 30 chars for matching (handles truncated names)
+                    search_prefix = pkg_name[:30].lower().rstrip('.').rstrip()
+                    match = conn.execute(
+                        """SELECT id, name, sku, quantity, image_url FROM inventory_items 
+                           WHERE LOWER(name) LIKE ? 
+                           LIMIT 1""",
+                        (f'{search_prefix}%',)
+                    ).fetchone()
+                    if match:
+                        inventory_match = dict(match)
             except Exception as e:
                 logger.error(f"Error checking inventory match: {e}")
             

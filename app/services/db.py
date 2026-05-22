@@ -6,7 +6,11 @@ from app.utils.helpers import parse_date
 logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-DB_PATH = os.path.join(BASE_DIR, 'rscp.db')
+import sys
+if 'pytest' in sys.modules or os.environ.get('TESTING') == 'True':
+    DB_PATH = os.path.join(BASE_DIR, 'tests', 'test_fallback.db')
+else:
+    DB_PATH = os.path.join(BASE_DIR, 'rscp.db')
 
 def get_db_connection():
     """Returns a NEW connection to the SQLite database.

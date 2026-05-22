@@ -51,7 +51,9 @@ def create_app(test_config=None):
     logging.getLogger().setLevel(logging.INFO)
     
     # DB Migration (Async) - Skip during testing
-    if not test_config or not test_config.get('TESTING'):
+    import sys
+    is_testing = (test_config and test_config.get('TESTING')) or 'pytest' in sys.modules or os.environ.get('TESTING') == 'True'
+    if not is_testing:
         import threading
         def run_db_init():
             try:
@@ -60,6 +62,11 @@ def create_app(test_config=None):
                 logging.error(f"Startup DB Init Error: {e}")
                 
         threading.Thread(target=run_db_init, daemon=True).start()
+    else:
+        try:
+            ensure_db_ready()
+        except Exception as e:
+            logging.error(f"Test DB Init Error: {e}")
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     

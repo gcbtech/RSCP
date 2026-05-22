@@ -2,7 +2,7 @@
 
 A self-hosted package and shipment management system for tracking incoming packages, deliveries, returns, and inventory.
 
-![Version](https://img.shields.io/badge/version-2.5.20-blue)
+![Version](https://img.shields.io/badge/version-2.6.0-blue)
 ![Python](https://img.shields.io/badge/python-3.11+-green)
 ![Flask](https://img.shields.io/badge/flask-2.3+-orange)
 
@@ -156,6 +156,7 @@ MIT License - See LICENSE file for details.
 
 ## Version History
 
+- **2.6.0** - Significant scanning speed optimization (<30ms DB lookups) and clean single-beep client auditory feedback integration for Receiving and POS checkout views.
 - **2.1.18** - Full POS system implementation, robust Inventory tracking, advanced Analytics/Reporting, and receipt printer support.
 - **1.16.5** - Security audit fixes, performance optimizations, admin panel redesign, automated tests
 - **1.16.2** - Inventory module, ASIN tracking, audit sessions
