@@ -57,9 +57,7 @@ def ensure_db_ready():
         # Schema Update Check (Phase 9 - PIN Support)
         _safe_add_column(conn, 'users', 'pin_hash', 'TEXT')
         
-        # Add source_tracking column to inventory_transactions (for POS order references)
-        _safe_add_column(conn, 'inventory_transactions', 'source_tracking', 'TEXT')
-        
+
         # Add roles column to users table (for module access control)
         _safe_add_column(conn, 'users', 'roles', "TEXT DEFAULT '[]'")
         
@@ -82,9 +80,7 @@ def ensure_db_ready():
         except Exception as e:
             logger.warning(f"Role migration note: {e}")
         
-        # Add secondary_ids column to inventory_items (for UPC, part number, etc.)
-        _safe_add_column(conn, 'inventory_items', 'secondary_ids', "TEXT DEFAULT '{}'")
-        
+
         # V1.16.1: Add asin and source_url to packages table
         _safe_add_column(conn, 'packages', 'asin', 'TEXT')
         _safe_add_column(conn, 'packages', 'source_url', 'TEXT')
@@ -133,9 +129,7 @@ def ensure_db_ready():
         except Exception as e:
             logger.warning(f"Error creating unique index on users(badge_id): {e}")
         
-        # V1.21: Add remote_api_key to federation_peers for bidirectional linking
-        _safe_add_column(conn, 'federation_peers', 'remote_api_key', 'TEXT')
-        
+
         # POS Module Tables (V1.18)
         _create_pos_tables(conn)
         
@@ -266,6 +260,9 @@ def _create_inventory_tables(conn):
         conn.execute('CREATE INDEX IF NOT EXISTS idx_trans_item ON inventory_transactions(inventory_item_id)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_trans_date ON inventory_transactions(created_at)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_trans_reason ON inventory_transactions(reason)')
+        
+        # Migrations: Add columns if they don't exist (for existing installs)
+        _safe_add_column(conn, 'inventory_transactions', 'source_tracking', 'TEXT')
         
         # Audit Sessions Table
         conn.execute('''
@@ -596,6 +593,9 @@ def _create_pos_tables(conn):
         ''')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_federation_peer_url ON federation_peers(url)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_federation_peer_status ON federation_peers(status)')
+        
+        # Migrations: Add columns if they don't exist (for existing installs)
+        _safe_add_column(conn, 'federation_peers', 'remote_api_key', 'TEXT')
         
         # Federation Transfers Table (pending/completed transfers)
         conn.execute('''

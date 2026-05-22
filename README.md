@@ -2,7 +2,7 @@
 
 A self-hosted package and shipment management system for tracking incoming packages, deliveries, returns, and inventory.
 
-![Version](https://img.shields.io/badge/version-2.1.18-blue)
+![Version](https://img.shields.io/badge/version-2.5.19-blue)
 ![Python](https://img.shields.io/badge/python-3.11+-green)
 ![Flask](https://img.shields.io/badge/flask-2.3+-orange)
 
