@@ -788,7 +788,7 @@ def delete_item(item_id):
     finally:
         conn.close()
     
-    return redirect(url_for('inventory.list_items'))
+    return redirect(request.referrer or url_for('inventory.list_items'))
 
 
 @inventory_bp.route('/toggle-legacy/<int:item_id>', methods=['POST'])
@@ -863,7 +863,7 @@ def adjust_quantity(item_id):
     
     if quantity_change == 0:
         flash("No change specified.")
-        return redirect(url_for('inventory.list_items'))
+        return redirect(request.referrer or url_for('inventory.list_items'))
     
     conn = get_db_connection()
     try:
@@ -872,7 +872,7 @@ def adjust_quantity(item_id):
             if current and (current['quantity'] + quantity_change) < 0:
                 flash(f"Cannot reduce by {abs(quantity_change)} - only {current['quantity']} in stock.")
                 conn.close()
-                return redirect(url_for('inventory.list_items'))
+                return redirect(request.referrer or url_for('inventory.list_items'))
         
         conn.execute('''
             UPDATE inventory_items 
@@ -962,7 +962,7 @@ def adjust_quantity(item_id):
     finally:
         conn.close()
     
-    return redirect(url_for('inventory.list_items'))
+    return redirect(request.referrer or url_for('inventory.list_items'))
 
 
 @inventory_bp.route('/add_stock/<int:item_id>', methods=['GET', 'POST'])

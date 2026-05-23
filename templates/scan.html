@@ -275,7 +275,7 @@
                 <div
                     style="background: rgba(255,255,255,0.1); padding: 20px 30px; border-radius: 12px; text-align: center;">
                     <div style="font-size: 3rem; font-weight: bold; cursor: pointer;" id="invQty"
-                        onclick="promptCustomQty()">{{ inventory_item.quantity }}</div>
+                        onclick="promptCustomQty({{ inventory_item.id }})">{{ inventory_item.quantity }}</div>
                     <div style="font-size: 0.9rem; color: #aaa;">In Stock</div>
                 </div>
                 {% if inventory_item.sell_price %}
@@ -755,7 +755,10 @@
         var currentItemId = {{ inventory_item.id if inventory_item else 0 }};
         var qtyBeforeEdit = 0;
 
-        function promptCustomQty() {
+        function promptCustomQty(itemId) {
+            if (itemId) {
+                currentItemId = itemId;
+            }
             const current = parseInt(document.getElementById('invQty').textContent) || 0;
             qtyBeforeEdit = current;
             const qtyInput = document.getElementById('qtyInput');
