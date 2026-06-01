@@ -25,17 +25,51 @@ def export_backup():
     if not current_user.is_authenticated or not current_user.is_admin:
         return redirect(url_for('auth.login'))
     
-    files_to_save = [CONFIG_FILE, DB_PATH, MANIFEST_FILE]
+    import tempfile
+    import sqlite3
+    from app.services.db import get_db_connection
     
-    memory_file = io.BytesIO()
-    with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-        for f_path in files_to_save:
-            if os.path.exists(f_path):
-                zf.write(f_path, os.path.basename(f_path))
-    
-    memory_file.seek(0)
-    date_str = datetime.datetime.now().strftime("%Y-%m-%d")
-    return send_file(memory_file, download_name=f"rscp_sqlite_backup_{date_str}.zip", as_attachment=True)
+    temp_db_path = None
+    try:
+        # Create a temp file path and immediately close file descriptor to release handles
+        temp_fd, temp_db_path = tempfile.mkstemp(suffix=".db")
+        os.close(temp_fd)
+        
+        # Connect to active DB and safely perform online backup to the temp DB file
+        src_conn = get_db_connection()
+        dest_conn = sqlite3.connect(temp_db_path)
+        with dest_conn:
+            src_conn.backup(dest_conn)
+        dest_conn.close()
+        src_conn.close()
+        
+        memory_file = io.BytesIO()
+        with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
+            # Zip config and manifest from their active files
+            for f_path in [CONFIG_FILE, MANIFEST_FILE]:
+                if os.path.exists(f_path):
+                    zf.write(f_path, os.path.basename(f_path))
+            
+            # Zip the safe temporary backup file as 'rscp.db'
+            if os.path.exists(temp_db_path):
+                zf.write(temp_db_path, "rscp.db")
+                
+        memory_file.seek(0)
+        date_str = datetime.datetime.now().strftime("%Y-%m-%d")
+        return send_file(memory_file, download_name=f"rscp_sqlite_backup_{date_str}.zip", as_attachment=True)
+        
+    except Exception as e:
+        logger.error(f"Failed to generate safe database backup: {e}")
+        flash(f"Backup failed: {str(e)}", "danger")
+        return redirect(url_for('admin.admin_panel'))
+        
+    finally:
+        # Ensure temporary backup file is cleaned up
+        if temp_db_path and os.path.exists(temp_db_path):
+            try:
+                os.remove(temp_db_path)
+            except Exception as e:
+                logger.warning(f"Could not clean up temporary backup file '{temp_db_path}': {e}")
 
 
 @admin_bp.route('/import_backup', methods=['POST'])
