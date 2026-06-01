@@ -438,6 +438,12 @@
         let lastCartHash = '';
         let consecutiveFailures = 0;
         const MAX_FAILURES_BEFORE_RECOVERY = 3;
+        
+        // Watchdog & Self-Healing states
+        let consecutiveHeartbeatFailures = 0;
+        const MAX_HEARTBEAT_FAILURES = 3;
+        let isDisconnectedMode = false;
+        let recoveryPingInterval = null;
 
         // Retrieve/Generate Unique Customer Terminal ID (stored in localStorage)
         function getCustomerTerminalId() {
@@ -548,13 +554,36 @@
                     },
                     body: JSON.stringify({ customer_terminal_token: token })
                 })
-                .then(r => r.json())
+                .then(r => {
+                    if (!r.ok) throw new Error("HTTP error " + r.status);
+                    return r.json();
+                })
                 .then(data => {
-                    if (!data.success) {
-                        console.warn('Heartbeat failed, token may be invalid.');
+                    if (data && data.success) {
+                        consecutiveHeartbeatFailures = 0;
+                        if (isDisconnectedMode) {
+                            // Server is back online, clear overlay and reload to restore state
+                            isDisconnectedMode = false;
+                            window.location.reload();
+                        }
+                    } else {
+                        console.warn('Heartbeat returned success=false, token may be invalid.');
+                        handleHeartbeatFailure();
                     }
                 })
-                .catch(err => console.error('Error sending display heartbeat:', err));
+                .catch(err => {
+                    console.error('Error sending display heartbeat:', err);
+                    handleHeartbeatFailure();
+                });
+            }
+            
+            function handleHeartbeatFailure() {
+                consecutiveHeartbeatFailures++;
+                if (consecutiveHeartbeatFailures >= MAX_HEARTBEAT_FAILURES) {
+                    isDisconnectedMode = true;
+                    showDisconnectOverlay('Connection lost. Retrying...');
+                    startRecoveryPingLoop(token);
+                }
             }
             
             sendHeartbeat(); // initial call
@@ -576,7 +605,11 @@
             try {
                 socket = io({
                     transports: ['websocket', 'polling'],
-                    timeout: 5000
+                    timeout: 5000,
+                    reconnection: true,
+                    reconnectionAttempts: Infinity,
+                    reconnectionDelay: 1000,
+                    reconnectionDelayMax: 5000
                 });
 
                 socket.on('connect', () => {
@@ -593,6 +626,9 @@
                         clearInterval(cartPollInterval);
                         cartPollInterval = null;
                     }
+                    
+                    // Always pull latest cart immediately on connect/reconnect
+                    fetchCart(token);
                 });
 
                 socket.on('cart_update', (data) => {
@@ -658,7 +694,12 @@
         function handleFailure() {
             consecutiveFailures++;
             if (consecutiveFailures >= MAX_FAILURES_BEFORE_RECOVERY) {
+                isDisconnectedMode = true;
                 showDisconnectOverlay('Connection lost. Retrying...');
+                const credentials = getPairingCredentials();
+                if (credentials.token) {
+                    startRecoveryPingLoop(credentials.token);
+                }
             }
         }
 
@@ -668,6 +709,33 @@
             // Poll every 1.5 seconds as fallback
             cartPollInterval = setInterval(() => fetchCart(token), 1500);
             fetchCart(token); // immediate first load
+        }
+
+        // --- SELF-HEALING WATCHDOG RECOVERY LOOP ---
+        function startRecoveryPingLoop(token) {
+            if (recoveryPingInterval) return; // Already running
+            
+            const statusBadge = document.getElementById('connectionStatus');
+            if (statusBadge) {
+                statusBadge.className = 'connection-status disconnected';
+                statusBadge.textContent = '🔄 Reconnecting...';
+            }
+            
+            recoveryPingInterval = setInterval(() => {
+                console.log("Watchdog pinging server for recovery...");
+                fetch(`/pos/api/customer-display/cart?customer_terminal_token=${encodeURIComponent(token)}`)
+                .then(res => {
+                    if (res.ok) {
+                        console.log("Server detected online! Initiating self-healing reload...");
+                        clearInterval(recoveryPingInterval);
+                        recoveryPingInterval = null;
+                        window.location.reload();
+                    }
+                })
+                .catch(err => {
+                    console.log("Watchdog ping failed, server still offline.");
+                });
+            }, 3000);
         }
 
         // --- PAIRING MODE LOOP ---
@@ -714,7 +782,11 @@
                 
                 socket = io({
                     transports: ['websocket', 'polling'],
-                    timeout: 5000
+                    timeout: 5000,
+                    reconnection: true,
+                    reconnectionAttempts: Infinity,
+                    reconnectionDelay: 1000,
+                    reconnectionDelayMax: 5000
                 });
                 
                 socket.on('connect', () => {
