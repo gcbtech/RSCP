@@ -76,6 +76,32 @@ def sales():
                            pos_operator=session.get('pos_operator'))
 
 
+def _render_cart_ajax(cart):
+    """Helper to render only the cart fragment for AJAX updates."""
+    tax_rate = get_tax_rate()
+    subtotal = sum(item.get('line_total', 0) for item in cart['items'])
+    
+    order_discount = 0
+    if cart.get('discount_amount') and cart.get('discount_type'):
+        if cart['discount_type'] == 'percent':
+            order_discount = calculate_percentage(subtotal, cart['discount_amount'])
+        else:
+            order_discount = cart['discount_amount']
+            
+    discounted_subtotal = max(0, subtotal - order_discount)
+    tax_amount = calculate_tax(discounted_subtotal)
+    total = discounted_subtotal + tax_amount
+    
+    return render_template('pos/_cart_fragment.html',
+                           cart=cart,
+                           subtotal=round(subtotal, 2),
+                           order_discount=round(order_discount, 2),
+                           tax_rate=tax_rate * 100,
+                           tax_amount=round(tax_amount, 2),
+                           total=round(total, 2),
+                           allow_hold=allow_hold_orders())
+
+
 @pos_bp.route('/cart/add', methods=['POST'])
 @login_required
 def cart_add():
@@ -85,12 +111,16 @@ def cart_add():
     
     if not sku:
         flash('Please enter a SKU or scan an item.')
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return _render_cart_ajax(get_cart())
         return redirect(url_for('pos.sales'))
     
     # Look up the item
     item = get_inventory_item(sku)
     if not item:
         flash(f'Item not found: {sku}. Use "Add Custom Item" for non-inventory items.', 'warning')
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return _render_cart_ajax(get_cart())
         return redirect(url_for('pos.sales'))
     
     cart = get_cart()
@@ -142,6 +172,10 @@ def cart_add():
         })
     
     save_cart(cart)
+    
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return _render_cart_ajax(cart)
+        
     return redirect(url_for('pos.sales'))
 
 

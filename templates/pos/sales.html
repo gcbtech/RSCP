@@ -764,19 +764,7 @@
 
     <!-- Flash Messages -->
     <div id="flashMessagesContainer">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-        <div class="flash-container" style="padding: 0 1rem;">
-            {% for category, message in messages %}
-            <div class="alert alert-{{ 'warning' if category == 'warning' else 'success' }} alert-dismissible fade show"
-                role="alert" style="margin-bottom: 0.5rem;">
-                {{ message }}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-        {% endwith %}
+        {% include 'pos/_flashes.html' %}
     </div>
 
     <div class="pos-container">
@@ -850,181 +838,7 @@
 
         <!-- Right: Cart -->
         <div class="pos-card pos-cart-card d-flex flex-column" id="posCartContainer">
-            <div class="pos-card-header">
-                <span>🛒 Cart ({{ cart['items']|length }} items)</span>
-                {% if cart['items'] %}
-                <form action="{{ url_for('pos.cart_clear') }}" method="POST" class="d-inline">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-sm btn-outline-danger"
-                        onclick="return confirm('Clear entire cart?')">Clear</button>
-                </form>
-                {% endif %}
-            </div>
-
-            <div class="pos-card-body flex-grow-1" style="overflow-y: auto;">
-                {% if cart['items'] %}
-                {% for item in cart['items'] %}
-                <div class="cart-item">
-                    <div class="flex-grow-1">
-                        <div class="cart-item-name">{{ item.name }}</div>
-                        <div class="cart-item-sku">
-                            {{ item.sku }}
-                            {% if item.stock_quantity is defined %}
-                            <span
-                                class="ms-2 {% if item.quantity > item.stock_quantity %}text-danger fw-bold{% elif item.stock_quantity <= 0 %}text-danger{% else %}text-muted{% endif %}">
-                                ({{ item.stock_quantity }} in stock)
-                            </span>
-                            {% endif %}
-                            {% if item.is_on_sale %}
-                            <span class="badge bg-danger ms-2">SALE</span>
-                            {% endif %}
-                        </div>
-                        {% if item.discount_amount %}
-                        <small class="text-warning">-${{ "%.2f"|format(item.discount_amount) }} off</small>
-                        {% endif %}
-                        {% if not item.sell_price or item.sell_price <= 0 %} <small class="text-danger fw-bold">⚠️ No
-                            price set!</small>
-                            {% endif %}
-                            {% if item.stock_quantity is defined and item.quantity > item.stock_quantity %}
-                            <small class="text-danger fw-bold">⚠️ Exceeds stock!</small>
-                            {% endif %}
-                    </div>
-                    <div class="text-center mx-2">
-                        <form action="{{ url_for('pos.cart_update', index=loop.index0) }}" method="POST"
-                            class="d-inline">
-                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                            <input type="number" name="quantity" value="{{ item.quantity }}" min="1" max="999"
-                                class="form-control form-control-sm text-center"
-                                style="width: 60px; display: inline-block;" onchange="this.form.submit()"
-                                title="Click to edit quantity">
-                        </form>
-                    </div>
-                    <div
-                        class="cart-item-price {% if not item.sell_price or item.sell_price <= 0 %}text-danger{% endif %}">
-                        {% if item.is_on_sale %}
-                        <small class="text-muted text-decoration-line-through d-block" style="font-size: 0.8rem;">
-                            ${{ "%.2f"|format(item.regular_price * item.quantity) }}
-                        </small>
-                        {% endif %}
-                        ${{ "%.2f"|format(item.line_total) }}
-                    </div>
-                    <form action="{{ url_for('pos.cart_remove', index=loop.index0) }}" method="POST" class="d-inline">
-                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                        <button type="submit" class="cart-item-remove">×</button>
-                    </form>
-                </div>
-                {% endfor %}
-                {% else %}
-                <div class="empty-cart">
-                    <div class="empty-cart-icon">🛒</div>
-                    <p>Cart is empty</p>
-                    <small>Scan an item to begin</small>
-                </div>
-                {% endif %}
-            </div>
-
-            {% if cart['items'] %}
-            <div class="totals">
-                <div class="totals-row">
-                    <span>Subtotal</span>
-                    <span>${{ "%.2f"|format(subtotal) }}</span>
-                </div>
-                {% if order_discount > 0 %}
-                <div class="totals-row text-warning">
-                    <span>Discount</span>
-                    <span>-${{ "%.2f"|format(order_discount) }}</span>
-                </div>
-                {% endif %}
-                {% if cart.get('applied_coupon') and cart['applied_coupon'].get('discount', 0) > 0 %}
-                <div class="totals-row" style="color: #16a34a;">
-                    <span>🎟️ Coupon ({{ cart['applied_coupon']['code'] }})</span>
-                    <span>-${{ "%.2f"|format(cart['applied_coupon']['discount']) }}</span>
-                </div>
-                {% endif %}
-                <div class="totals-row">
-                    <span>Tax ({{ "%.2f"|format(tax_rate) }}%)</span>
-                    <span>${{ "%.2f"|format(tax_amount) }}</span>
-                </div>
-                <div class="totals-row grand-total">
-                    <span>Total</span>
-                    <span>${{ "%.2f"|format(total) }}</span>
-                </div>
-            </div>
-
-            <div class="pos-actions">
-                {% if allow_hold %}
-                <button class="pos-btn pos-btn-secondary" onclick="holdOrder()">📋 Hold</button>
-                {% endif %}
-                <button class="pos-btn pos-btn-secondary" type="button" data-bs-toggle="modal"
-                    data-bs-target="#discountModal">🏷️ Discount</button>
-                <a href="{{ url_for('pos.checkout') }}"
-                    class="pos-btn pos-btn-success text-decoration-none text-center">
-                    💳 Checkout (${{ "%.2f"|format(total) }})
-                </a>
-            </div>
-
-            <!-- Discount Modal -->
-            <div class="modal fade" id="discountModal" tabindex="-1">
-                <div class="modal-dialog">
-                    <div class="modal-content">
-                        <div class="modal-header">
-                            <h5 class="modal-title">🏷️ Discount / Coupon</h5>
-                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                        </div>
-                        <div class="modal-body">
-                            <!-- Order Discount -->
-                            <h6>Order Discount</h6>
-                            <form action="{{ url_for('pos.cart_discount') }}" method="POST" class="mb-3">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                <div class="row g-2">
-                                    <div class="col-4">
-                                        <input type="number" name="discount_amount" class="form-control" step="0.01"
-                                            min="0" value="{{ cart['discount_amount'] or '' }}" placeholder="Amount">
-                                    </div>
-                                    <div class="col-3">
-                                        <select name="discount_type" class="form-select">
-                                            <option value="fixed" {% if cart['discount_type']=='fixed' %}selected{%
-                                                endif %}>$</option>
-                                            <option value="percent" {% if cart['discount_type']=='percent' %}selected{%
-                                                endif %}>%</option>
-                                        </select>
-                                    </div>
-                                    <div class="col-5">
-                                        <input type="text" name="discount_reason" class="form-control"
-                                            placeholder="Reason" value="{{ cart['discount_reason'] or '' }}">
-                                    </div>
-                                </div>
-                                <button type="submit" class="btn btn-warning w-100 mt-2">Apply Discount</button>
-                            </form>
-
-                            <hr>
-
-                            <!-- Coupon Code -->
-                            <h6>Coupon Code</h6>
-                            <div class="input-group">
-                                <input type="text" id="couponCodeModal" class="form-control" placeholder="Enter code..."
-                                    style="text-transform: uppercase;"
-                                    value="{{ (cart.get('applied_coupon') or {}).get('code', '') }}">
-                                <button type="button" class="btn btn-success"
-                                    onclick="applyCouponFromModal()">Apply</button>
-                            </div>
-                            {% if cart.get('applied_coupon') %}
-                            <div class="mt-2 text-center">
-                                <span class="badge bg-success">
-                                    ✓ {{ cart['applied_coupon']['name'] }} (-${{
-                                    "%.2f"|format(cart['applied_coupon']['discount']) }})
-                                </span>
-                                <button type="button" class="btn btn-sm btn-outline-danger ms-1"
-                                    onclick="removeCoupon()">×</button>
-                            </div>
-                            {% endif %}
-                            <div id="couponErrorModal" class="alert alert-danger py-1 px-2 mt-2"
-                                style="display: none; font-size: 0.85rem;"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            {% endif %}
+            {% include 'pos/_cart_details.html' %}
         </div>
     </div>
 
@@ -1215,7 +1029,20 @@
         }
 
         // Auto-queue on barcode scan (ultra-fast input without reload)
+        let lastKeyTime = 0;
+        let keystrokeDelays = [];
+        
         skuInput.addEventListener('keydown', (e) => {
+            const now = Date.now();
+            if (lastKeyTime > 0) {
+                const delay = now - lastKeyTime;
+                keystrokeDelays.push(delay);
+                if (keystrokeDelays.length > 5) {
+                    keystrokeDelays.shift();
+                }
+            }
+            lastKeyTime = now;
+
             if (e.key === 'Enter') {
                 e.preventDefault();
                 const val = skuInput.value.trim();
@@ -1223,6 +1050,8 @@
                     scanQueue.push(val);
                     // Clear barcode input INSTANTLY so user can zap the next item
                     skuInput.value = '';
+                    keystrokeDelays = []; // Reset for next scan
+                    lastKeyTime = 0;
                     processScanQueue();
                 }
             }
@@ -1231,6 +1060,17 @@
         // Search autocomplete
         skuInput.addEventListener('input', () => {
             clearTimeout(debounceTimer);
+            
+            // Check if input is coming extremely fast (hardware barcode scanner)
+            if (keystrokeDelays.length >= 3) {
+                const averageDelay = keystrokeDelays.reduce((a, b) => a + b, 0) / keystrokeDelays.length;
+                if (averageDelay < 35) {
+                    // Suppress autocomplete search to save rendering and API cycles
+                    autocomplete.classList.remove('show');
+                    return;
+                }
+            }
+            
             const query = skuInput.value.trim();
 
             if (query.length < 2) {

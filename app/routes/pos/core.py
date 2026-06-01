@@ -114,7 +114,18 @@ def generate_order_number(terminal_id='POS-1'):
     today = date.today().strftime('%Y%m%d')
     prefix = f"POS-{today}"
     
-    conn = get_db_connection()
+    close_conn = False
+    try:
+        from flask import has_app_context
+        if has_app_context():
+            conn = get_request_db()
+        else:
+            conn = get_db_connection()
+            close_conn = True
+    except ImportError:
+        conn = get_db_connection()
+        close_conn = True
+        
     try:
         # Find the highest order number for today
         result = conn.execute('''
@@ -135,7 +146,8 @@ def generate_order_number(terminal_id='POS-1'):
         
         return f"{prefix}-{str(next_seq).zfill(3)}"
     finally:
-        conn.close()
+        if close_conn:
+            conn.close()
 
 
 def get_cart():
@@ -289,53 +301,60 @@ def save_cart(cart):
     session['pos_cart'] = cart
     session.modified = True
     
-    # 3. If we have a terminal_id, persist cart to pos_active_terminals
-    if terminal_id:
+    # 3. If we have a terminal_id or session_code, persist cart to database
+    if terminal_id or session_code:
+        close_conn = False
         try:
-            from app.services.db import get_db_connection
+            from flask import has_app_context
+            if has_app_context():
+                conn = get_request_db()
+            else:
+                conn = get_db_connection()
+                close_conn = True
+        except ImportError:
             conn = get_db_connection()
-            # Insert or update cart_data for this terminal
-            conn.execute(
-                """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
-                   VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
-                   ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
-                (terminal_id, json.dumps(cart))
-            )
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.error(f"Error saving terminal cart to db: {e}")
-            
-    # 4. Handle legacy session sharing if active
-    if session_code:
+            close_conn = True
+
         try:
-            from app.services.db import get_db_connection
-            conn = get_db_connection()
-            conn.execute(
-                'UPDATE pos_terminal_sessions SET cart_data = ?, last_activity = CURRENT_TIMESTAMP WHERE session_code = ?',
-                (json.dumps(cart), session_code)
-            )
-            
-            # Find primary/main terminal ID in this legacy session
-            main_row = conn.execute(
-                "SELECT flask_session_id FROM pos_paired_terminals WHERE session_code = ? AND terminal_type = 'main'",
-                (session_code,)
-            ).fetchone()
-            
-            if main_row and main_row['flask_session_id']:
-                primary_terminal_id = main_row['flask_session_id']
-                if primary_terminal_id != terminal_id:
-                    conn.execute(
-                        """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
-                           VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
-                           ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
-                        (primary_terminal_id, json.dumps(cart))
-                    )
-            
-            conn.commit()
-            conn.close()
+            if terminal_id:
+                # Insert or update cart_data for this terminal
+                conn.execute(
+                    """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
+                       VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
+                       ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
+                    (terminal_id, json.dumps(cart))
+                )
+                conn.commit()
+
+            # 4. Handle legacy session sharing if active
+            if session_code:
+                conn.execute(
+                    'UPDATE pos_terminal_sessions SET cart_data = ?, last_activity = CURRENT_TIMESTAMP WHERE session_code = ?',
+                    (json.dumps(cart), session_code)
+                )
+                
+                # Find primary/main terminal ID in this legacy session
+                main_row = conn.execute(
+                    "SELECT flask_session_id FROM pos_paired_terminals WHERE session_code = ? AND terminal_type = 'main'",
+                    (session_code,)
+                ).fetchone()
+                
+                if main_row and main_row['flask_session_id']:
+                    primary_terminal_id = main_row['flask_session_id']
+                    if primary_terminal_id != terminal_id:
+                        conn.execute(
+                            """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
+                               VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
+                               ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
+                            (primary_terminal_id, json.dumps(cart))
+                        )
+                
+                conn.commit()
         except Exception as e:
-            logger.error(f"Error saving shared legacy cart: {e}")
+            logger.error(f"Error saving cart to db: {e}")
+        finally:
+            if close_conn:
+                conn.close()
             
     # 5. Broadcast to WebSockets
     try:
@@ -395,52 +414,59 @@ def clear_cart():
     session.pop('pos_cart', None)
     session.modified = True
     
-    # 3. If we have a terminal_id, clear database cart
-    if terminal_id:
+    # 3. If we have a terminal_id or session_code, clear database cart
+    if terminal_id or session_code:
+        close_conn = False
         try:
-            from app.services.db import get_db_connection
+            from flask import has_app_context
+            if has_app_context():
+                conn = get_request_db()
+            else:
+                conn = get_db_connection()
+                close_conn = True
+        except ImportError:
             conn = get_db_connection()
-            conn.execute(
-                """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
-                   VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
-                   ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
-                (terminal_id, json.dumps(empty_cart))
-            )
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.error(f"Error clearing terminal cart in db: {e}")
-            
-    # 4. Handle legacy session sharing if active
-    if session_code:
+            close_conn = True
+
         try:
-            from app.services.db import get_db_connection
-            conn = get_db_connection()
-            conn.execute(
-                'UPDATE pos_terminal_sessions SET cart_data = ?, last_activity = CURRENT_TIMESTAMP WHERE session_code = ?',
-                (json.dumps(empty_cart), session_code)
-            )
-            
-            # Find primary/main terminal ID in this legacy session
-            main_row = conn.execute(
-                "SELECT flask_session_id FROM pos_paired_terminals WHERE session_code = ? AND terminal_type = 'main'",
-                (session_code,)
-            ).fetchone()
-            
-            if main_row and main_row['flask_session_id']:
-                primary_terminal_id = main_row['flask_session_id']
-                if primary_terminal_id != terminal_id:
-                    conn.execute(
-                        """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
-                           VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
-                           ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
-                        (primary_terminal_id, json.dumps(empty_cart))
-                    )
-            
-            conn.commit()
-            conn.close()
+            if terminal_id:
+                conn.execute(
+                    """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
+                       VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
+                       ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
+                    (terminal_id, json.dumps(empty_cart))
+                )
+                conn.commit()
+
+            # 4. Handle legacy session sharing if active
+            if session_code:
+                conn.execute(
+                    'UPDATE pos_terminal_sessions SET cart_data = ?, last_activity = CURRENT_TIMESTAMP WHERE session_code = ?',
+                    (json.dumps(empty_cart), session_code)
+                )
+                
+                # Find primary/main terminal ID in this legacy session
+                main_row = conn.execute(
+                    "SELECT flask_session_id FROM pos_paired_terminals WHERE session_code = ? AND terminal_type = 'main'",
+                    (session_code,)
+                ).fetchone()
+                
+                if main_row and main_row['flask_session_id']:
+                    primary_terminal_id = main_row['flask_session_id']
+                    if primary_terminal_id != terminal_id:
+                        conn.execute(
+                            """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
+                               VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
+                               ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
+                            (primary_terminal_id, json.dumps(empty_cart))
+                        )
+                
+                conn.commit()
         except Exception as e:
-            logger.error(f"Error clearing shared legacy cart: {e}")
+            logger.error(f"Error clearing cart in db: {e}")
+        finally:
+            if close_conn:
+                conn.close()
             
     # 5. Broadcast clear to WebSockets
     try:

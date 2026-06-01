@@ -241,6 +241,8 @@ def _create_inventory_tables(conn):
         conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_name ON inventory_items(name)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_quantity ON inventory_items(quantity)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_secondary ON inventory_items(secondary_ids)')
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_inventory_secondary_upc ON inventory_items(TRIM(json_extract(secondary_ids, '$.upc')))")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_inventory_secondary_part_number ON inventory_items(TRIM(json_extract(secondary_ids, '$.part_number')))")
         
         # Inventory Transactions Table (audit trail)
         conn.execute('''

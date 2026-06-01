@@ -37,8 +37,9 @@ def get_db_connection():
     if path != ':memory:':
         try:
             conn.execute('PRAGMA journal_mode=WAL')
+            conn.execute('PRAGMA synchronous=NORMAL')
         except sqlite3.OperationalError as e:
-            logger.warning(f"Failed to enable WAL mode: {e}. Falling back to default journal mode.")
+            logger.warning(f"Failed to enable WAL mode or synchronous NORMAL: {e}. Falling back to default journal mode.")
     return conn
 
 
