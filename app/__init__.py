@@ -12,6 +12,7 @@ from app.routes.inventory import inventory_bp
 from app.routes.pos import pos_bp
 from app.routes.federation import federation_bp
 from app.routes.timeclock import timeclock_bp
+from app.routes.public_api import public_api_bp
 from app.utils.helpers import format_date_filter
 from app.services.data_manager import load_config, BASE_DIR
 from app.services.migration import ensure_db_ready
@@ -168,6 +169,7 @@ def create_app(test_config=None):
     app.register_blueprint(pos_bp)
     app.register_blueprint(federation_bp)
     app.register_blueprint(timeclock_bp)
+    app.register_blueprint(public_api_bp)
     
     # Notifications API
     from app.routes.notifications import notifications_bp
@@ -269,7 +271,8 @@ def create_app(test_config=None):
                 '/logout', 
                 '/setup',
                 '/static/',
-                '/favicon.ico'
+                '/favicon.ico',
+                '/api/public/',  # Public storefront API (uses API key auth)
             ]
             
             # Check if current path is public

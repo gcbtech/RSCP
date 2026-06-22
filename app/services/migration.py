@@ -225,6 +225,7 @@ def _create_inventory_tables(conn):
         _safe_add_column(conn, 'inventory_items', 'secondary_ids', 'TEXT')
         _safe_add_column(conn, 'inventory_items', 'description', 'TEXT')
         _safe_add_column(conn, 'inventory_items', 'first_stock_date', 'TEXT')
+        _safe_add_column(conn, 'inventory_items', 'additional_images', 'TEXT')
         _safe_add_column(conn, 'inventory_items', 'addon_1', 'BOOLEAN DEFAULT 0')
         _safe_add_column(conn, 'inventory_items', 'addon_2', 'BOOLEAN DEFAULT 0')
         _safe_add_column(conn, 'inventory_items', 'notes', 'TEXT')

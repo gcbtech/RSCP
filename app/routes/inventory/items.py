@@ -390,10 +390,10 @@ def add_item():
         resupply_interval = request.form.get('resupply_interval', '').strip()
         keywords = request.form.get('keywords', '').strip()
         notes = request.form.get('notes', '').strip()
+        description = request.form.get('description', '').strip() or None
         
         if not name:
             flash("Name is required.")
-            # Preserve form data on validation error
             # Preserve form data on validation error
             prefill = {
                 'sku': sku,
@@ -416,6 +416,7 @@ def add_item():
                 'alert_enabled': request.form.get('alert_enabled') == 'on',
                 'alert_threshold': request.form.get('alert_threshold', 0),
                 'tracking': request.form.get('source_tracking'),
+                'description': description,
                 'notes': notes,
             }
             # Add secondary IDs for prefill
@@ -430,7 +431,6 @@ def add_item():
         if not validate_location(location_area, location_aisle, location_shelf, location_bin):
             flash("At least one location field is required.")
             # Preserve form data on validation error
-            # Preserve form data on validation error
             prefill = {
                 'sku': sku,
                 'category': category,
@@ -452,6 +452,7 @@ def add_item():
                 'alert_enabled': request.form.get('alert_enabled') == 'on',
                 'alert_threshold': request.form.get('alert_threshold', 0),
                 'tracking': request.form.get('source_tracking'),
+                'description': description,
                 'notes': notes,
             }
             secondary_ids = {'upc': request.form.get('upc'), 'part_number': request.form.get('part_number')}
@@ -489,6 +490,28 @@ def add_item():
                         f.write(optimized_data)
                     image_url = url_for('static', filename=f'uploads/inventory/{unique_name}')
 
+            # Handle additional gallery images
+            additional_images_list = []
+            if 'additional_images' in request.files:
+                gallery_files = request.files.getlist('additional_images')
+                for i, file in enumerate(gallery_files):
+                    if file and file.filename:
+                        optimized_data = optimize_image(file)
+                        unique_name = f"{secure_filename(sku)}_gallery_{i}_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
+                        
+                        upload_folder = os.path.join(BASE_DIR, 'static', 'uploads', 'inventory')
+                        if not os.path.exists(upload_folder):
+                            os.makedirs(upload_folder)
+                            
+                        with open(os.path.join(upload_folder, unique_name), 'wb') as f:
+                            f.write(optimized_data)
+                        img_path = url_for('static', filename=f'uploads/inventory/{unique_name}')
+                        additional_images_list.append(img_path)
+
+            # If cover is empty, the first uploaded gallery image automatically becomes the primary cover
+            if not image_url and additional_images_list:
+                image_url = additional_images_list.pop(0)
+
             source_url = request.form.get('source_url', '').strip() or None
 
             if asin:
@@ -502,7 +525,6 @@ def add_item():
             alert_enabled = True if alert_threshold > 0 else False
             
             # Collect secondary IDs (UPC, part number, etc.)
-            import json
             secondary_ids = {}
             upc = request.form.get('upc', '').strip()
             part_number = request.form.get('part_number', '').strip()
@@ -520,12 +542,12 @@ def add_item():
                 INSERT INTO inventory_items 
                 (sku, name, quantity, location_area, location_aisle, location_shelf, location_bin,
                  asin, image_url, source_url, buy_price, sell_price, supplier, first_stock_date, 
-                 resupply_interval, alert_enabled, alert_threshold, secondary_ids, keywords, addon_1, addon_2, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 resupply_interval, alert_enabled, alert_threshold, secondary_ids, keywords, addon_1, addon_2, description, additional_images, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (sku, name, quantity, location_area or None, location_aisle or None, 
                   location_shelf or None, location_bin or None, asin, image_url, source_url, 
                   buy_price, sell_price, supplier, first_stock_date, resupply_interval,
-                  1 if alert_enabled else 0, alert_threshold, secondary_ids_json, keywords, addon_1, addon_2, notes))
+                  1 if alert_enabled else 0, alert_threshold, secondary_ids_json, keywords, addon_1, addon_2, description, json.dumps(additional_images_list) if additional_images_list else None, notes))
             conn.commit()
             
             item_id = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
@@ -571,6 +593,14 @@ def add_item():
                     'buy_price': buy_price,
                     'sell_price': sell_price,
                     'supplier': supplier,
+                    'first_stock_date': first_stock_date,
+                    'resupply_interval': resupply_interval,
+                    'keywords': keywords,
+                    'alert_enabled': request.form.get('alert_enabled') == 'on',
+                    'alert_threshold': request.form.get('alert_threshold', 0),
+                    'tracking': request.form.get('source_tracking'),
+                    'description': description,
+                    'notes': notes,
                 }
                 return render_template('inventory/add.html', prefill=prefill, categories=CATEGORY_CODES)
             else:
@@ -657,15 +687,56 @@ def edit_item(item_id):
             # User Rule: Enabled if > 0, Disabled if 0
             alert_enabled = True if alert_threshold > 0 else False
             
-            current_img = conn.execute('SELECT image_url FROM inventory_items WHERE id = ?', (item_id,)).fetchone()
-            image_url = current_img['image_url'] if current_img else None
-            
+            # Get description from form
+            description = request.form.get('description', '').strip() or None
+
+            # Fetch current state from DB
+            current_item = conn.execute('SELECT image_url, additional_images FROM inventory_items WHERE id = ?', (item_id,)).fetchone()
+            image_url = current_item['image_url'] if current_item else None
+            additional_images_json = current_item['additional_images'] if current_item else None
+            additional_images_list = []
+            if additional_images_json:
+                try:
+                    additional_images_list = json.loads(additional_images_json)
+                except json.JSONDecodeError:
+                    pass
+
+            # Handle deleted images
+            deleted_images = request.form.getlist('delete_images')
+            for img in deleted_images:
+                if img in additional_images_list:
+                    additional_images_list.remove(img)
+                    # Safely delete file from static folder
+                    if img.startswith('/static/'):
+                        file_path = os.path.join(BASE_DIR, img.lstrip('/'))
+                        if os.path.exists(file_path):
+                            try:
+                                os.remove(file_path)
+                                # Check if a thumbnail exists and delete it too
+                                thumb_url = generate_thumbnail(img)
+                                if thumb_url and thumb_url.startswith('/static/'):
+                                    thumb_path = os.path.join(BASE_DIR, thumb_url.lstrip('/'))
+                                    if os.path.exists(thumb_path):
+                                        os.remove(thumb_path)
+                            except Exception as e:
+                                logger.error(f"Error deleting image file: {e}")
+
             # Check if a new image URL was fetched/submitted via the form
             form_image_url = request.form.get('image_url', '').strip()
             if form_image_url:
                 image_url = form_image_url
-            
-            # Check if a file was uploaded (takes priority over fetched URL)
+
+            # Handle cover swap
+            swap_cover = request.form.get('swap_cover', '').strip()
+            if swap_cover and swap_cover in additional_images_list:
+                old_cover = image_url
+                image_url = swap_cover
+                additional_images_list.remove(swap_cover)
+                if old_cover:
+                    # Add old cover to additional images
+                    additional_images_list.append(old_cover)
+
+            # Check if a new cover file was uploaded (takes priority over fetched URL and swap)
             if 'image' in request.files:
                 file = request.files['image']
                 if file and file.filename:
@@ -681,13 +752,33 @@ def edit_item(item_id):
                         f.write(optimized_data)
                     image_url = url_for('static', filename=f'uploads/inventory/{unique_name}')
 
+            # Handle new gallery uploads
+            if 'additional_images' in request.files:
+                gallery_files = request.files.getlist('additional_images')
+                for i, file in enumerate(gallery_files):
+                    if file and file.filename:
+                        optimized_data = optimize_image(file)
+                        unique_name = f"{secure_filename(sku)}_gallery_{i}_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
+                        
+                        upload_folder = os.path.join(BASE_DIR, 'static', 'uploads', 'inventory')
+                        if not os.path.exists(upload_folder):
+                            os.makedirs(upload_folder)
+                            
+                        with open(os.path.join(upload_folder, unique_name), 'wb') as f:
+                            f.write(optimized_data)
+                        img_path = url_for('static', filename=f'uploads/inventory/{unique_name}')
+                        additional_images_list.append(img_path)
+
+            # Fallback: if not image_url and additional_images_list:
+            if not image_url and additional_images_list:
+                image_url = additional_images_list.pop(0)
+
             if asin:
                 if not image_url:
                     image_url = f"https://images-na.ssl-images-amazon.com/images/P/{asin}.01._SX200_.jpg"
                 # Note: Do NOT auto-generate source_url on edit - respect user's decision to clear it
 
             # Collect secondary IDs (UPC, part number, etc.)
-            import json
             secondary_ids = {}
             upc = request.form.get('upc', '').strip()
             part_number = request.form.get('part_number', '').strip()
@@ -710,15 +801,17 @@ def edit_item(item_id):
                     location_shelf = ?, location_bin = ?, asin = ?,
                     buy_price = ?, sell_price = ?, supplier = ?,
                     first_stock_date = ?, resupply_interval = ?, source_url = ?,
-                     image_url = ?, alert_enabled = ?, alert_threshold = ?,
-                     secondary_ids = ?, keywords = ?, addon_1 = ?, addon_2 = ?, notes = ?, 
-                     is_legacy = ?, updated_at = CURRENT_TIMESTAMP
+                    image_url = ?, alert_enabled = ?, alert_threshold = ?,
+                    secondary_ids = ?, keywords = ?, addon_1 = ?, addon_2 = ?, 
+                    description = ?, additional_images = ?, notes = ?, 
+                    is_legacy = ?, updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?
              ''', (sku, name, location_area or None, location_aisle or None,
                    location_shelf or None, location_bin or None, asin,
                    buy_price, sell_price, supplier, first_stock_date,
                    resupply_interval, source_url, image_url, 1 if alert_enabled else 0, 
-                   alert_threshold, secondary_ids_json, keywords, addon_1, addon_2, notes, is_legacy, item_id))
+                   alert_threshold, secondary_ids_json, keywords, addon_1, addon_2, 
+                   description, json.dumps(additional_images_list) if additional_images_list else None, notes, is_legacy, item_id))
             conn.commit()
             
             flash("Item updated.")
@@ -727,6 +820,17 @@ def edit_item(item_id):
         except Exception as e:
             logger.error(f"Error updating inventory item: {e}")
             flash(f"Error updating item: {e}")
+            try:
+                page = request.form.get('page') or 1
+                sort_by = request.form.get('sort') or 'name'
+                order = request.form.get('order') or 'asc'
+                search_query = request.form.get('q') or ''
+            except Exception:
+                page = 1
+                sort_by = 'name'
+                order = 'asc'
+                search_query = ''
+            return redirect(url_for('inventory.edit_item', item_id=item_id, page=page, sort=sort_by, order=order, q=search_query))
         finally:
             conn.close()
     
@@ -744,13 +848,20 @@ def edit_item(item_id):
         ''', (item_id,)).fetchall()
         
         # Parse secondary IDs for template
-        import json
         secondary_ids = {}
         try:
             if 'secondary_ids' in item.keys() and item['secondary_ids']:
                 secondary_ids = json.loads(item['secondary_ids'])
         except json.JSONDecodeError:
             pass  # Invalid JSON in secondary_ids
+
+        # Parse additional images for template
+        additional_images_list = []
+        if 'additional_images' in item.keys() and item['additional_images']:
+            try:
+                additional_images_list = json.loads(item['additional_images'])
+            except json.JSONDecodeError:
+                pass
         
         # Capture pagination state
         pagination_state = {
@@ -766,6 +877,7 @@ def edit_item(item_id):
                                edit_mode=True,
                                categories=CATEGORY_CODES,
                                secondary_ids=secondary_ids,
+                               additional_images_list=additional_images_list,
                                pagination_state=pagination_state)
     finally:
         conn.close()
