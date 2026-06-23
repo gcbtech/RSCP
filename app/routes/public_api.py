@@ -74,6 +74,8 @@ def get_public_inventory():
             # Only query the columns we need, plus sale fields for price computation
             rows = conn.execute(f'''
                 SELECT 
+                    id,
+                    sku,
                     name,
                     sell_price,
                     sale_price,
@@ -131,6 +133,8 @@ def get_public_inventory():
                         pass
                 
                 items.append({
+                    'id': row['id'],
+                    'sku': row['sku'],
                     'name': row['name'],
                     'price': round(price, 2) if price else 0,
                     'quantity': row['quantity'],
