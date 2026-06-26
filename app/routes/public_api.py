@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 public_api_bp = Blueprint('public_api', __name__, url_prefix='/api/public')
 
 # ── Hardcoded allowlist — customers can ONLY see these aisles ──
-ALLOWED_AISLES = ('Laptops', 'Desktops', 'Servers')
+ALLOWED_AISLES = ('Laptops', 'Desktops', 'Servers', 'Glass Case', 'Glass Counter', 'Island Shelves')
 
 
 def require_api_key(f):
