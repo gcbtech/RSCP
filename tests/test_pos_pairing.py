@@ -292,6 +292,67 @@ class PairingV3TestCase(unittest.TestCase):
         self.assertTrue(reg_poll['changed'])
         self.assertGreaterEqual(reg_poll['version'], 1)
 
+    def test_slaved_handheld_full_pos_flow(self):
+        """A logged-in handheld with a scanner token can enter 'slave' mode:
+        the session binds to the register, and plain cart posts + checkout
+        (no X-Pairing-Token header) route to the register's cart."""
+        scanner_token = self.pair('scan-slave', 'scanner', register_id='reg-slave',
+                                   register_name='Slave Register')
+
+        # The handheld is a SEPARATE logged-in device (its own session),
+        # exactly like a real FZ-N1 that isn't the register that claimed it.
+        hh = self.app.test_client()
+        self.login(hh)
+
+        # Enter slave mode -> session bound to the register
+        resp = hh.post('/pos/api/scanner/enter-slave', json={'token': scanner_token})
+        self.assertEqual(resp.status_code, 200)
+        d = resp.get_json()
+        self.assertTrue(d['success'])
+        self.assertEqual(d['register_id'], 'reg-slave')
+        self.assertEqual(d['register_name'], 'Slave Register')
+
+        # A plain cart add (NO token header) now lands in the register cart
+        resp = hh.post('/pos/cart/add',
+                       data={'sku': 'TEST-SKU', 'quantity': 2},
+                       headers={'X-Response-Format': 'json'})
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.get_json()['item_count'], 1)
+
+        # The register machine sees the handheld's item
+        from app.services import pos_registers
+        with self.app.app_context():
+            conn = get_db_connection()
+            cart, _v = pos_registers.load_register_cart(conn, 'reg-slave')
+            conn.close()
+        self.assertEqual(len(cart['items']), 1)
+        self.assertEqual(cart['items'][0]['quantity'], 2)
+
+        # The /pos/ sales page renders in the slave session without error
+        self.assertEqual(hh.get('/pos/').status_code, 200)
+
+        # Exit slave -> the handheld's own session cart no longer routes to
+        # the register (this device never claimed a register, so it's empty)
+        resp = hh.post('/pos/api/scanner/exit-slave', json={'token': scanner_token})
+        self.assertTrue(resp.get_json()['success'])
+        after = hh.get('/pos/api/cart').get_json()
+        self.assertEqual(after['item_count'], 0)
+
+    def test_enter_slave_rejects_display_token(self):
+        display_token = self.pair('disp-slave', 'display', register_id='reg-ds')
+        self.login()
+        resp = self.client.post('/pos/api/scanner/enter-slave', json={'token': display_token})
+        self.assertEqual(resp.status_code, 403)
+        self.assertTrue(resp.get_json()['revoked'])
+
+    def test_enter_slave_rejects_revoked_token(self):
+        scanner_token = self.pair('scan-rev', 'scanner', register_id='reg-rev')
+        self.login()
+        self.client.post('/pos/api/register/unpair',
+                         json={'peripheral_id': 'scan-rev', 'register_id': 'reg-rev'})
+        resp = self.client.post('/pos/api/scanner/enter-slave', json={'token': scanner_token})
+        self.assertEqual(resp.status_code, 403)
+
     def test_revoked_scanner_cannot_mutate(self):
         scanner_token = self.pair('scan-2', 'scanner', register_id='reg-3')
         self.login()

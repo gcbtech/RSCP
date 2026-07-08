@@ -175,8 +175,13 @@ def resolve_register_id():
     Priority:
       1. X-Pairing-Token header - a paired staff scanner acting on its
          register's cart (raises ScannerTokenInvalid if revoked/unknown)
-      2. X-Terminal-Id header - the register page's own AJAX calls
-      3. session['terminal_id'] - register form posts (populated by
+      2. session['slaved_register_id'] - a logged-in handheld running the
+         full POS page "slaved" to a register (set by /api/scanner/enter-slave
+         after validating its scanner token). Makes every cart operation,
+         including plain form posts and checkout, target the register's cart
+         with no per-request header needed.
+      3. X-Terminal-Id header - the register page's own AJAX calls
+      4. session['terminal_id'] - register form posts (populated by
          /pos/api/register/hello when the sales page loads)
 
     Returns None when the request has no register identity yet (a fresh
@@ -190,6 +195,10 @@ def resolve_register_id():
         if not peripheral or peripheral['role'] != 'scanner':
             raise ScannerTokenInvalid()
         return peripheral['register_id']
+
+    slaved = session.get('slaved_register_id')
+    if slaved:
+        return slaved
 
     terminal_id = request.headers.get('X-Terminal-Id') if request else None
     return terminal_id or session.get('terminal_id') or None

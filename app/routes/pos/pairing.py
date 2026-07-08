@@ -301,6 +301,55 @@ def register_unpair():
         return jsonify({'success': False, 'message': 'Server error'}), 500
 
 
+@pos_bp.route('/api/scanner/enter-slave', methods=['POST'])
+@login_required
+def scanner_enter_slave():
+    """A logged-in handheld with a scanner pairing token asks to run the
+    full POS page "slaved" to its register. Validates the token and binds
+    the register to this browser session, so every subsequent cart action
+    (scans, discounts, coupons, checkout) targets the register's cart via
+    resolve_register_id() with no per-request header.
+
+    Returns 403 {revoked} if the token no longer maps to a scanner pairing,
+    so the handheld can drop back to its own register mode.
+    """
+    data = request.get_json() or {}
+    token = (data.get('token') or '').strip()
+    if not token:
+        return jsonify({'success': False, 'message': 'token required'}), 400
+
+    peripheral = pos_registers.resolve_peripheral(get_request_db(), token)
+    if not peripheral or peripheral['role'] != 'scanner':
+        session.pop('slaved_register_id', None)
+        session.modified = True
+        return jsonify({'success': False, 'revoked': True,
+                        'message': 'Pairing revoked or not a scanner'}), 403
+
+    session['slaved_register_id'] = peripheral['register_id']
+    session.modified = True
+    return jsonify({
+        'success': True,
+        'register_id': peripheral['register_id'],
+        'register_name': peripheral['register_name'] or 'Register',
+    })
+
+
+@pos_bp.route('/api/scanner/exit-slave', methods=['POST'])
+@login_required
+def scanner_exit_slave():
+    """Stop slaving this session to a register. If unpair=true, also delete
+    the scanner pairing so the device is fully released back to normal use."""
+    data = request.get_json() or {}
+    session.pop('slaved_register_id', None)
+    session.modified = True
+
+    if data.get('unpair'):
+        token = (data.get('token') or '').strip()
+        if token:
+            pos_registers.unpair_peripheral(get_request_db(), token=token)
+    return jsonify({'success': True})
+
+
 @pos_bp.route('/api/register/poll')
 @login_required
 def register_poll():

@@ -647,7 +647,17 @@
     <div class="pos-header">
         <h1>💳 Point of Sale</h1>
         <div class="d-flex gap-2 align-items-center">
-            <!-- Terminal Pairing Controls -->
+            <!-- Slave-mode banner: this handheld is ringing into another register -->
+            <div id="slaveBanner" class="d-none align-items-center gap-2">
+                <span class="badge bg-warning text-dark fw-semibold" style="font-size: 0.85rem;">
+                    📡 Ringing into <span id="slaveRegisterName">register</span>
+                </span>
+                <button type="button" class="btn btn-outline-light btn-sm" onclick="unSlaveDevice()" title="Stop acting as a handheld for this register">
+                    Release
+                </button>
+            </div>
+
+            <!-- Terminal Pairing Controls (register mode only) -->
             <div id="pairingControls" class="d-flex align-items-center gap-2">
                 <button type="button" id="persistentDisplayBadge" class="btn btn-outline-light btn-sm fw-semibold d-flex align-items-center gap-1" data-bs-toggle="modal" data-bs-target="#pairingMenuModal" title="POS Customer Displays Status">
                     📺 Customer Display <span class="spinner-border spinner-border-sm" role="status" style="width: 0.85rem; height: 0.85rem;"></span>
@@ -700,11 +710,35 @@
                     </div>
 
                     <!-- Paired devices -->
-                    <div class="card border-0 bg-light">
+                    <div class="card border-0 bg-light mb-4">
                         <div class="card-body">
                             <h6 class="card-title text-primary mb-2 fw-semibold">🖧 Paired Devices</h6>
                             <div id="peripheralList" class="d-grid gap-2">
                                 <div class="text-muted small">Loading&hellip;</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Turn THIS device into a handheld slaved to another register -->
+                    <div class="card border-1 border-warning-subtle">
+                        <div class="card-body">
+                            <h6 class="card-title text-warning-emphasis mb-2 fw-semibold">🤳 Use this device as a handheld</h6>
+                            <p class="text-muted small mb-3">
+                                Turn this tablet into a mobile terminal for another register (e.g. an
+                                FZ-N1 for line-busting). It keeps the full POS screen but rings into
+                                that register's cart, and you can still use inventory, receiving, etc.
+                            </p>
+                            <div id="handheldPairIdle">
+                                <button type="button" class="btn btn-outline-warning btn-sm fw-semibold" onclick="startHandheldPairing()">
+                                    Get pairing code
+                                </button>
+                            </div>
+                            <div id="handheldPairActive" style="display: none;">
+                                <div class="text-center">
+                                    <div class="display-6 fw-bold font-monospace text-warning-emphasis" id="handheldPairCode">--- ---</div>
+                                    <p class="text-muted small mt-2 mb-2">Type this code into the target register's “Pair a Device” box. This device will switch to handheld mode automatically.</p>
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="cancelHandheldPairing()">Cancel</button>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1225,7 +1259,160 @@
 
         const REGISTER_POLL_MS = 2000;
         const PERIPHERAL_REFRESH_MS = 10000;
+        const SLAVE_POLL_MS = 1500;
         let registerCartVersion = -1;
+
+        // ============================================================
+        // SLAVE MODE: this device holds a scanner pairing token and runs
+        // the full POS page against a paired register's cart. Same
+        // localStorage keys as /pos/scan, so a device paired there slaves
+        // here automatically. The server session binding (enter-slave)
+        // makes every cart op + checkout target the register with no
+        // per-request header, so the normal POS code path is unchanged.
+        // ============================================================
+        const csrfToken = '{{ csrf_token() }}';
+
+        function getScannerToken() { return localStorage.getItem('rscp_scanner_token'); }
+
+        function getScannerPeripheralId() {
+            let id = localStorage.getItem('rscp_scanner_peripheral_id');
+            if (!id) {
+                id = 'term_scan_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem('rscp_scanner_peripheral_id', id);
+            }
+            return id;
+        }
+
+        let slaveVersion = -1;
+        let slavePollTimer = null;
+        let handheldPairPollTimer = null;
+
+        async function initSlaveMode(token) {
+            // Present the handheld chrome, hide register-only controls
+            document.getElementById('pairingControls').classList.add('d-none');
+            const banner = document.getElementById('slaveBanner');
+            banner.classList.remove('d-none');
+            banner.classList.add('d-flex');
+            document.getElementById('slaveRegisterName').textContent =
+                localStorage.getItem('rscp_scanner_register_name') || 'register';
+
+            // Bind this session to the register (validates the token too)
+            try {
+                const res = await fetch('/pos/api/scanner/enter-slave', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                    body: JSON.stringify({ token: token })
+                });
+                if (res.status === 403) { revokedExitSlave(); return; }
+                const data = await res.json();
+                if (!data.success) { revokedExitSlave(); return; }
+                if (data.register_name) {
+                    localStorage.setItem('rscp_scanner_register_name', data.register_name);
+                    document.getElementById('slaveRegisterName').textContent = data.register_name;
+                }
+                // Session is now slaved -> pull the register's cart into the DOM
+                syncCartDOM();
+            } catch (err) {
+                console.warn('enter-slave failed, will retry via poll:', err);
+            }
+
+            startSlavePolling(token);
+        }
+
+        async function startSlavePolling(token) {
+            async function tick() {
+                try {
+                    const res = await fetch(`/pos/api/peripheral/poll?since=${slaveVersion}`, {
+                        headers: { 'X-Pairing-Token': token }, cache: 'no-store'
+                    });
+                    if (res.status === 403) {
+                        let revoked = false;
+                        try { revoked = (await res.json()).revoked === true; } catch (e) {}
+                        if (revoked) { revokedExitSlave(); return; }
+                    } else if (res.ok) {
+                        const data = await res.json();
+                        if (data.success) {
+                            if (slaveVersion === -1) {
+                                slaveVersion = data.version;
+                            } else if (data.changed && !userIsInteractingWithCart()) {
+                                slaveVersion = data.version;
+                                syncCartDOM();
+                            }
+                        }
+                    }
+                } catch (err) { /* offline; retry */ }
+                slavePollTimer = setTimeout(tick, SLAVE_POLL_MS);
+            }
+            tick();
+        }
+
+        function revokedExitSlave() {
+            // The register unpaired us: clear local pairing, return to register mode
+            if (slavePollTimer) clearTimeout(slavePollTimer);
+            localStorage.removeItem('rscp_scanner_token');
+            localStorage.removeItem('rscp_scanner_register_name');
+            window.location.reload();
+        }
+
+        function unSlaveDevice() {
+            if (!confirm('Stop using this device as a handheld? It will return to normal register mode.')) return;
+            const token = getScannerToken();
+            fetch('/pos/api/scanner/exit-slave', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify({ token: token, unpair: true })
+            }).catch(() => {}).finally(() => {
+                localStorage.removeItem('rscp_scanner_token');
+                localStorage.removeItem('rscp_scanner_register_name');
+                window.location.reload();
+            });
+        }
+
+        // --- Become a handheld: show a code for a register to claim ---
+        function startHandheldPairing() {
+            const pid = getScannerPeripheralId();
+            fetch('/pos/api/pairing/request-code', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify({ peripheral_id: pid, role: 'scanner' })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.success) { alert('Could not get a pairing code: ' + (data.message || '')); return; }
+                const code = data.pairing_code;
+                document.getElementById('handheldPairCode').textContent = code.slice(0, 3) + ' ' + code.slice(3);
+                document.getElementById('handheldPairIdle').style.display = 'none';
+                document.getElementById('handheldPairActive').style.display = 'block';
+                pollHandheldClaimed(pid);
+            })
+            .catch(err => alert('Error requesting pairing code: ' + err));
+        }
+
+        function pollHandheldClaimed(peripheralId) {
+            if (handheldPairPollTimer) clearTimeout(handheldPairPollTimer);
+            fetch(`/pos/api/pairing/status?peripheral_id=${encodeURIComponent(peripheralId)}`, { cache: 'no-store' })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success && data.paired && data.token) {
+                    localStorage.setItem('rscp_scanner_token', data.token);
+                    if (data.register_name) localStorage.setItem('rscp_scanner_register_name', data.register_name);
+                    fetch('/pos/api/pairing/ack', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                        body: JSON.stringify({ peripheral_id: peripheralId, token: data.token })
+                    }).catch(() => {}).finally(() => window.location.reload());
+                    return;
+                }
+                handheldPairPollTimer = setTimeout(() => pollHandheldClaimed(peripheralId), 2000);
+            })
+            .catch(() => { handheldPairPollTimer = setTimeout(() => pollHandheldClaimed(peripheralId), 2000); });
+        }
+
+        function cancelHandheldPairing() {
+            if (handheldPairPollTimer) clearTimeout(handheldPairPollTimer);
+            document.getElementById('handheldPairActive').style.display = 'none';
+            document.getElementById('handheldPairIdle').style.display = 'block';
+        }
 
         // --- HELLO: announce this register (also binds the register id to
         // the server session so plain form posts hit the same cart) ---
@@ -1450,11 +1637,17 @@
                 });
             }
 
-            // Announce this register, then start the sync + status loops
-            registerHello();
-            pollRegisterCart();
-            refreshPeripherals();
-            setInterval(refreshPeripherals, PERIPHERAL_REFRESH_MS);
+            // MODE SWITCH: a scanner pairing token means this device is a
+            // handheld slaved to another register; otherwise it's a register.
+            if (getScannerToken()) {
+                initSlaveMode(getScannerToken());
+            } else {
+                // Announce this register, then start the sync + status loops
+                registerHello();
+                pollRegisterCart();
+                refreshPeripherals();
+                setInterval(refreshPeripherals, PERIPHERAL_REFRESH_MS);
+            }
         });
 
         // --- AUTO-PRINT & REPRINT FUNCTIONALITY ---
