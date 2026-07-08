@@ -36,6 +36,7 @@ __pycache__/
 # ----------------------------------
 # Testing
 # ----------------------------------
+tests/
 .pytest_cache/
 .coverage
 htmlcov/
