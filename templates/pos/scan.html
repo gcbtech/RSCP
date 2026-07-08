@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Line Scanner</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            background: #0f172a;
+            color: #e2e8f0;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            margin: 0;
+            min-height: 100vh;
+        }
+
+        .scan-app {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            height: 100dvh;
+        }
+
+        .scan-header {
+            background: #1e293b;
+            padding: 0.6rem 0.75rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.5rem;
+            flex-shrink: 0;
+        }
+
+        .scan-header .register-name {
+            font-weight: 600;
+            font-size: 0.95rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .scan-header .conn {
+            font-size: 0.75rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 6px;
+            white-space: nowrap;
+        }
+
+        .conn.live { background: rgba(74, 222, 128, 0.15); color: #4ade80; }
+        .conn.down { background: rgba(248, 113, 113, 0.15); color: #f87171; }
+
+        .scan-input-wrap {
+            padding: 0.6rem 0.75rem;
+            flex-shrink: 0;
+        }
+
+        .scan-input-wrap input {
+            width: 100%;
+            padding: 0.9rem 1rem;
+            font-size: 1.15rem;
+            border-radius: 10px;
+            border: 2px solid #334155;
+            background: #1e293b;
+            color: white;
+        }
+
+        .scan-input-wrap input:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        .scan-items {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0 0.75rem;
+        }
+
+        .scan-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.5rem;
+            background: #1e293b;
+            border-radius: 10px;
+            padding: 0.6rem 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .scan-item .info { min-width: 0; flex: 1; }
+
+        .scan-item .name {
+            font-weight: 500;
+            font-size: 0.95rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .scan-item .meta { font-size: 0.8rem; color: #94a3b8; }
+
+        .qty-controls {
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            flex-shrink: 0;
+        }
+
+        .qty-controls button {
+            width: 2.2rem;
+            height: 2.2rem;
+            border-radius: 8px;
+            border: none;
+            font-size: 1.1rem;
+            font-weight: 700;
+            background: #334155;
+            color: white;
+        }
+
+        .qty-controls .remove-btn { background: rgba(220, 38, 38, 0.7); }
+        .qty-controls .qty { min-width: 1.6rem; text-align: center; font-weight: 600; }
+
+        .empty-hint {
+            text-align: center;
+            color: #64748b;
+            padding: 3rem 1rem;
+        }
+
+        .scan-footer {
+            background: #1e293b;
+            padding: 0.6rem 0.75rem calc(0.6rem + env(safe-area-inset-bottom));
+            flex-shrink: 0;
+        }
+
+        .totals-line {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: #94a3b8;
+            padding: 0.1rem 0;
+        }
+
+        .totals-line.big {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #4ade80;
+            padding-top: 0.3rem;
+        }
+
+        .footer-buttons {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .footer-buttons button {
+            flex: 1;
+            padding: 0.7rem;
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+        }
+
+        .btn-hold { background: #d97706; color: white; }
+        .btn-menu { background: #334155; color: white; flex: 0 0 3.2rem; }
+
+        .toast-msg {
+            position: fixed;
+            top: 3.2rem;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.95);
+            border: 1px solid #334155;
+            color: #fbbf24;
+            padding: 0.5rem 1rem;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            z-index: 10000;
+            max-width: 92vw;
+            text-align: center;
+            display: none;
+        }
+
+        /* Pairing mode */
+        .pairing-wrap {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            text-align: center;
+            padding: 1.5rem;
+        }
+
+        .pairing-wrap .code {
+            font-size: 3rem;
+            font-weight: 800;
+            font-family: Monaco, Consolas, monospace;
+            letter-spacing: 0.2rem;
+            margin: 1.25rem 0;
+            color: white;
+        }
+
+        .pairing-wrap .hint { color: #94a3b8; font-size: 0.9rem; line-height: 1.5; }
+        .pairing-wrap .state { color: #60a5fa; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 1rem; }
+
+        /* Menu sheet */
+        .menu-sheet {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #1e293b;
+            border-radius: 16px 16px 0 0;
+            padding: 1rem 1rem calc(1.5rem + env(safe-area-inset-bottom));
+            z-index: 10001;
+            display: none;
+        }
+
+        .menu-sheet.open { display: block; }
+
+        .menu-sheet button {
+            width: 100%;
+            padding: 0.8rem;
+            border: none;
+            border-radius: 10px;
+            margin-top: 0.5rem;
+            font-weight: 600;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- ACTIVE SCANNER UI -->
+    <div class="scan-app" id="scannerApp" style="display: none;">
+        <div class="scan-header">
+            <div class="register-name" id="registerName">🤳 → Register</div>
+            <div class="conn down" id="connBadge">Connecting…</div>
+        </div>
+
+        <div class="scan-input-wrap">
+            <input type="text" id="scanInput" placeholder="Scan barcode or type SKU…" autocomplete="off" autofocus>
+        </div>
+
+        <div class="scan-items" id="itemList">
+            <div class="empty-hint">🛒 Cart is empty<br><small>Scan an item to start</small></div>
+        </div>
+
+        <div class="scan-footer">
+            <div class="totals-line"><span>Subtotal</span><span id="tSubtotal">$0.00</span></div>
+            <div class="totals-line" id="tDiscountRow" style="display: none;"><span>Discounts</span><span id="tDiscount">-$0.00</span></div>
+            <div class="totals-line"><span id="tTaxLabel">Tax</span><span id="tTax">$0.00</span></div>
+            <div class="totals-line" id="tCashRow" style="display: none;"><span>💵 Cash</span><span id="tCash">$0.00</span></div>
+            <div class="totals-line big"><span id="tTotalLabel">Total</span><span id="tTotal">$0.00</span></div>
+            <div class="footer-buttons">
+                <button type="button" class="btn-hold" onclick="holdCart()">📋 Hold for Register</button>
+                <button type="button" class="btn-menu" onclick="toggleMenu()">⚙️</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- PAIRING UI -->
+    <div class="pairing-wrap" id="pairingWrap">
+        <h4>🤳 Link Handheld Scanner</h4>
+        <div class="code" id="pairingCode">--- ---</div>
+        <div class="state" id="pairingState">Awaiting Register Link</div>
+        <p class="hint">
+            Enter this code in the pairing menu on the register this scanner
+            should feed. Pairing is permanent — the scanner reconnects by
+            itself after a reboot.
+        </p>
+        <p class="hint" style="opacity: 0.5; font-size: 0.7rem;" id="scannerDebugId"></p>
+        <a href="{{ url_for('pos.sales') }}" class="btn btn-outline-light btn-sm mt-3">← Back to POS</a>
+    </div>
+
+    <div class="toast-msg" id="toastMsg"></div>
+
+    <div class="menu-sheet" id="menuSheet">
+        <div class="text-muted small text-center">Scanner options</div>
+        <button type="button" class="btn-hold" onclick="clearCartRemote()">🗑️ Clear Cart</button>
+        <button type="button" style="background: #dc2626; color: white;" onclick="unpairScanner()">🔓 Unpair from Register</button>
+        <button type="button" style="background: #334155; color: white;" onclick="toggleMenu()">Close</button>
+    </div>
+
+    <script>
+        'use strict';
+
+        // ============================================================
+        // Staff line-busting scanner (pairing v3)
+        // Login-authenticated (this page sits behind the normal POS
+        // auth), paired to one register by bearer token. All cart
+        // mutations go through the standard /pos/cart/* routes with
+        // X-Pairing-Token, so they land in the REGISTER's cart.
+        // Reconnect rules match the customer display: credentials are
+        // only dropped on an authoritative revoke.
+        // ============================================================
+
+        const csrfToken = '{{ csrf_token() }}';
+
+        const LS_ID = 'rscp_scanner_peripheral_id';
+        const LS_TOKEN = 'rscp_scanner_token';
+        const LS_REG_NAME = 'rscp_scanner_register_name';
+
+        const POLL_MS = 2000;
+        const BACKOFF_MAX_MS = 6000;
+        const PAIRING_STATUS_MS = 2000;
+
+        let cartVersion = -1;
+        let failures = 0;
+        let pollTimer = null;
+        let pairingTimers = [];
+        let busy = false;
+
+        function getPeripheralId() {
+            let id = localStorage.getItem(LS_ID);
+            if (!id) {
+                id = 'term_scan_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+                localStorage.setItem(LS_ID, id);
+            }
+            return id;
+        }
+
+        function getToken() { return localStorage.getItem(LS_TOKEN); }
+
+        function fmt(v) { return '$' + (parseFloat(v) || 0).toFixed(2); }
+
+        function esc(text) {
+            const div = document.createElement('div');
+            div.textContent = text || '';
+            return div.innerHTML;
+        }
+
+        function toast(msg, ms) {
+            const el = document.getElementById('toastMsg');
+            el.textContent = msg;
+            el.style.display = 'block';
+            clearTimeout(el._t);
+            el._t = setTimeout(() => { el.style.display = 'none'; }, ms || 2500);
+        }
+
+        function setConn(live, text) {
+            const badge = document.getElementById('connBadge');
+            badge.className = 'conn ' + (live ? 'live' : 'down');
+            badge.textContent = text;
+        }
+
+        // --- BEEP ---
+        let audioCtx = null;
+        function beep(success) {
+            try {
+                if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                const now = audioCtx.currentTime;
+                osc.type = success ? 'sine' : 'sawtooth';
+                osc.frequency.setValueAtTime(success ? 1000 : 150, now);
+                gain.gain.setValueAtTime(success ? 0.15 : 0.25, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + (success ? 0.12 : 0.25));
+                osc.start(now);
+                osc.stop(now + (success ? 0.12 : 0.25));
+            } catch (e) { /* audio unavailable */ }
+        }
+
+        // --- RENDER (consumes compute_cart_totals payload) ---
+        function renderCart(data) {
+            const items = data.items || [];
+            const list = document.getElementById('itemList');
+
+            if (!items.length) {
+                list.innerHTML = '<div class="empty-hint">🛒 Cart is empty<br><small>Scan an item to start</small></div>';
+            } else {
+                list.innerHTML = items.map((item, i) => `
+                    <div class="scan-item">
+                        <div class="info">
+                            <div class="name">${esc(item.name)}</div>
+                            <div class="meta">${fmt(item.unit_price)} each · ${fmt(item.line_total)}</div>
+                        </div>
+                        <div class="qty-controls">
+                            <button type="button" onclick="changeQty(${i}, ${item.quantity - 1})">−</button>
+                            <span class="qty">${item.quantity}</span>
+                            <button type="button" onclick="changeQty(${i}, ${item.quantity + 1})">+</button>
+                            <button type="button" class="remove-btn" onclick="removeItem(${i})">✕</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+
+            document.getElementById('tSubtotal').textContent = fmt(data.subtotal);
+
+            const discounts = (data.order_discount || 0) + (data.coupon_discount || 0);
+            document.getElementById('tDiscount').textContent = '-' + fmt(discounts);
+            document.getElementById('tDiscountRow').style.display = discounts > 0 ? 'flex' : 'none';
+
+            document.getElementById('tTaxLabel').textContent = 'Tax (' + (data.tax_rate_pct || 0).toFixed(2) + '%)';
+            document.getElementById('tTax').textContent = fmt(data.tax_amount);
+
+            if (data.cash_discount_enabled && data.cash_discount_value > 0) {
+                document.getElementById('tCashRow').style.display = 'flex';
+                document.getElementById('tCash').textContent = fmt(data.cash_total);
+                document.getElementById('tTotalLabel').textContent = '💳 Card';
+            } else {
+                document.getElementById('tCashRow').style.display = 'none';
+                document.getElementById('tTotalLabel').textContent = 'Total';
+            }
+            document.getElementById('tTotal').textContent = fmt(data.card_total);
+        }
+
+        function showMessages(data) {
+            (data.messages || []).forEach(m => {
+                if (m.text) toast(m.text, 3000);
+            });
+        }
+
+        // --- MUTATIONS (standard cart routes + pairing token) ---
+        function revokedCheck(res, data) {
+            if ((res.status === 401 || res.status === 403) && data && data.revoked) {
+                toast('Pairing revoked — re-pair this scanner.');
+                hardUnpair();
+                return true;
+            }
+            return false;
+        }
+
+        async function mutate(url, formFields) {
+            const token = getToken();
+            if (!token) return null;
+            const body = new URLSearchParams();
+            body.append('csrf_token', csrfToken);
+            Object.entries(formFields || {}).forEach(([k, v]) => body.append(k, v));
+
+            const res = await fetch(url, {
+                method: 'POST',
+                body: body,
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-Pairing-Token': token,
+                    'X-Response-Format': 'json'
+                }
+            });
+            let data = null;
+            try { data = await res.json(); } catch (e) { /* non-JSON (e.g. auth redirect) */ }
+            if (data && revokedCheck(res, data)) return null;
+            if (!data) throw new Error('Unexpected response ' + res.status);
+            return data;
+        }
+
+        async function addSku(sku) {
+            try {
+                const data = await mutate('/pos/cart/add', { sku: sku, quantity: 1 });
+                if (!data) return;
+                renderCart(data);
+                showMessages(data);
+                beep(data.success && data.error !== 'not_found');
+            } catch (err) {
+                console.error('Add failed:', err);
+                beep(false);
+                toast('Scan failed — check connection');
+            }
+        }
+
+        async function changeQty(index, qty) {
+            if (qty < 1) return removeItem(index);
+            try {
+                const data = await mutate('/pos/cart/update/' + index, { quantity: qty });
+                if (data) { renderCart(data); showMessages(data); }
+            } catch (err) { toast('Update failed — check connection'); }
+        }
+
+        async function removeItem(index) {
+            try {
+                const data = await mutate('/pos/cart/remove/' + index, {});
+                if (!data) return;
+                if (data.error === 'manager_required') {
+                    toast('Manager approval required — void this item at the register.');
+                    return;
+                }
+                renderCart(data);
+                showMessages(data);
+            } catch (err) { toast('Remove failed — check connection'); }
+        }
+
+        async function clearCartRemote() {
+            toggleMenu();
+            try {
+                const data = await mutate('/pos/cart/clear', {});
+                if (data) renderCart(data);
+            } catch (err) { toast('Clear failed — check connection'); }
+        }
+
+        async function holdCart() {
+            const note = prompt('Note for this order (customer name, etc.):') || '';
+            try {
+                const data = await mutate('/pos/cart/hold', { note: note });
+                if (!data) return;
+                if (data.success) {
+                    renderCart(data);
+                    toast('✅ Held — recall it at any register');
+                } else {
+                    showMessages(data);
+                }
+            } catch (err) { toast('Hold failed — check connection'); }
+        }
+
+        // --- SCAN INPUT (keyboard-wedge friendly) ---
+        const scanInput = document.getElementById('scanInput');
+        const scanQueue = [];
+        let scanning = false;
+
+        async function drainQueue() {
+            if (scanning || !scanQueue.length) return;
+            scanning = true;
+            const sku = scanQueue.shift();
+            try { await addSku(sku); }
+            finally {
+                scanning = false;
+                scanInput.focus();
+                drainQueue();
+            }
+        }
+
+        scanInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const val = scanInput.value.trim();
+                scanInput.value = '';
+                if (val) {
+                    scanQueue.push(val);
+                    drainQueue();
+                }
+            }
+        });
+
+        // --- SYNC POLL (register-side changes, presence, revoke detection) ---
+        function scheduleNextPoll(delay) {
+            if (pollTimer) clearTimeout(pollTimer);
+            pollTimer = setTimeout(pollCart, delay);
+        }
+
+        async function pollCart() {
+            const token = getToken();
+            if (!token) return;
+            try {
+                const res = await fetch(`/pos/api/peripheral/poll?since=${cartVersion}`, {
+                    headers: { 'X-Pairing-Token': token },
+                    cache: 'no-store'
+                });
+                if (res.status === 403) {
+                    let d = null;
+                    try { d = await res.json(); } catch (e) {}
+                    if (d && d.revoked) { hardUnpair(); return; }
+                    throw new Error('403');
+                }
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message || 'poll failed');
+
+                failures = 0;
+                setConn(true, '🟢 Live');
+                if (data.changed) {
+                    cartVersion = data.version;
+                    if (data.register_name) {
+                        document.getElementById('registerName').textContent = '🤳 → ' + data.register_name;
+                        localStorage.setItem(LS_REG_NAME, data.register_name);
+                    }
+                    renderCart(data.cart || { items: [] });
+                }
+                scheduleNextPoll(POLL_MS);
+            } catch (err) {
+                failures++;
+                setConn(false, '🔄 Reconnecting…');
+                scheduleNextPoll(Math.min(POLL_MS * Math.pow(1.5, failures), BACKOFF_MAX_MS));
+            }
+        }
+
+        // --- PAIRING MODE ---
+        function clearPairingTimers() {
+            pairingTimers.forEach(t => clearTimeout(t));
+            pairingTimers = [];
+        }
+
+        async function requestPairingCode(attempt) {
+            attempt = attempt || 0;
+            try {
+                const res = await fetch('/pos/api/pairing/request-code', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken
+                    },
+                    body: JSON.stringify({ peripheral_id: getPeripheralId(), role: 'scanner' })
+                });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || 'failed');
+                const code = data.pairing_code;
+                document.getElementById('pairingCode').textContent = code.slice(0, 3) + ' ' + code.slice(3);
+                document.getElementById('pairingState').textContent = 'Awaiting Register Link';
+                pairingTimers.push(setTimeout(() => requestPairingCode(0), (data.ttl_seconds || 600) * 800));
+            } catch (err) {
+                document.getElementById('pairingCode').textContent = '--- ---';
+                document.getElementById('pairingState').textContent = 'Connecting to server…';
+                pairingTimers.push(setTimeout(() => requestPairingCode(attempt + 1),
+                    Math.min(2000 * Math.pow(1.5, attempt), 15000)));
+            }
+        }
+
+        async function pollPairingStatus() {
+            try {
+                const res = await fetch(`/pos/api/pairing/status?peripheral_id=${encodeURIComponent(getPeripheralId())}`,
+                    { cache: 'no-store' });
+                const data = await res.json();
+                if (data.success && data.paired && data.token) {
+                    localStorage.setItem(LS_TOKEN, data.token);
+                    if (data.register_name) localStorage.setItem(LS_REG_NAME, data.register_name);
+                    try {
+                        await fetch('/pos/api/pairing/ack', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': csrfToken
+                            },
+                            body: JSON.stringify({ peripheral_id: getPeripheralId(), token: data.token })
+                        });
+                    } catch (e) {}
+                    clearPairingTimers();
+                    window.location.reload();
+                    return;
+                }
+            } catch (err) { /* keep polling */ }
+            pairingTimers.push(setTimeout(pollPairingStatus, PAIRING_STATUS_MS));
+        }
+
+        // --- UNPAIR ---
+        function hardUnpair() {
+            if (pollTimer) clearTimeout(pollTimer);
+            clearPairingTimers();
+            localStorage.removeItem(LS_TOKEN);
+            localStorage.removeItem(LS_REG_NAME);
+            window.location.reload();
+        }
+
+        function unpairScanner() {
+            if (!confirm('Unpair this scanner from its register?')) return;
+            const token = getToken();
+            if (token) {
+                fetch('/pos/api/peripheral/unpair', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken,
+                        'X-Pairing-Token': token
+                    },
+                    body: '{}'
+                }).catch(() => {}).finally(hardUnpair);
+            } else {
+                hardUnpair();
+            }
+        }
+
+        function toggleMenu() {
+            document.getElementById('menuSheet').classList.toggle('open');
+        }
+
+        // --- WAKE-UPS ---
+        function wakeUp() {
+            if (!getToken()) return;
+            failures = 0;
+            if (pollTimer) clearTimeout(pollTimer);
+            pollCart();
+        }
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') wakeUp();
+        });
+        window.addEventListener('online', wakeUp);
+
+        // --- BOOT ---
+        (function init() {
+            if (getToken()) {
+                document.getElementById('scannerApp').style.display = 'flex';
+                document.getElementById('pairingWrap').style.display = 'none';
+                document.getElementById('registerName').textContent =
+                    '🤳 → ' + (localStorage.getItem(LS_REG_NAME) || 'Register');
+                pollCart();
+                scanInput.focus();
+            } else {
+                document.getElementById('scannerApp').style.display = 'none';
+                document.getElementById('pairingWrap').style.display = 'flex';
+                document.getElementById('scannerDebugId').textContent = 'ID: ' + getPeripheralId();
+                requestPairingCode(0);
+                pollPairingStatus();
+            }
+        })();
+    </script>
+</body>
+
+</html>

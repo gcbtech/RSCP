@@ -145,13 +145,14 @@
             font-size: 0.875rem;
             cursor: default;
             user-select: none;
+            z-index: 100000;
         }
 
         .exit-controls {
             position: fixed;
             top: 3.5rem;
             right: 1rem;
-            z-index: 10000;
+            z-index: 100000;
             display: none;
         }
 
@@ -179,7 +180,7 @@
             color: #f87171;
         }
 
-        /* Disconnection overlay - blocks all interaction */
+        /* Disconnection overlay - blocks all interaction while auto-reconnecting */
         .disconnect-overlay {
             position: fixed;
             top: 0;
@@ -367,8 +368,12 @@
                 <span id="subtotal">$0.00</span>
             </div>
             <div class="total-row discount-row" id="discountRow" style="display: none;">
-                <span>Discount</span>
+                <span id="discountLabel">Discount</span>
                 <span id="discount">-$0.00</span>
+            </div>
+            <div class="total-row discount-row" id="couponRow" style="display: none;">
+                <span id="couponLabel">🎟️ Coupon</span>
+                <span id="coupon">-$0.00</span>
             </div>
             <div class="total-row" id="taxRow">
                 <span id="taxLabel">Tax</span>
@@ -387,26 +392,27 @@
         </div>
     </div>
 
-    <!-- Stunning Pairing View when screen is unpaired -->
+    <!-- Pairing view when this display is not linked to a register -->
     <div class="pairing-container" id="pairingDisplay" style="display: none;">
         <div class="pairing-card">
             <div class="pairing-title">📺 Link Customer Display</div>
-            <div class="pairing-subtitle">Register this tablet to your staff terminal</div>
-            
+            <div class="pairing-subtitle">Register this screen to a staff register</div>
+
             <div class="pairing-code-box">
                 <div class="pairing-code-digits" id="displayPairingCode">--- ---</div>
             </div>
-            
+
             <div class="pairing-pulse-container">
                 <div class="pairing-pulse-dot"></div>
-                <div class="pairing-pulse-text">Awaiting Register Link</div>
+                <div class="pairing-pulse-text" id="pairingStateText">Awaiting Register Link</div>
             </div>
-            
+
             <p class="pairing-instruction">
                 Type this 6-digit code into your register's pairing menu.<br>
-                This persistent pairing will survive reboots and logouts safely.
+                Pairing is permanent: this display reconnects by itself after
+                being powered off — no morning setup needed.
             </p>
-            
+
             <div class="text-muted small mt-4" style="font-size: 0.7rem; opacity: 0.5;" id="debugTerminalId"></div>
         </div>
     </div>
@@ -420,48 +426,62 @@
         <button class="exit-btn" onclick="unpairAndExit()">🔓 Unpair & Exit</button>
     </div>
 
-    <!-- Disconnection overlay (hidden by default) -->
+    <!-- Auto-reconnect overlay (hidden by default) -->
     <div class="disconnect-overlay" id="disconnectOverlay" style="display: none;">
         <div class="spinner"></div>
         <h2>⚠️ Display Disconnected</h2>
-        <div class="status-text" id="recoveryStatus">Attempting to reconnect...</div>
+        <div class="status-text" id="recoveryStatus">Reconnecting automatically&hellip;</div>
         <div class="retry-count" id="retryCount"></div>
     </div>
 
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script>
-        const csrfToken = '{{ csrf_token() }}';
-        let socket = null;
-        let cartPollInterval = null;
-        let heartbeatInterval = null;
-        let pairingPollInterval = null;
-        let lastCartHash = '';
-        let consecutiveFailures = 0;
-        const MAX_FAILURES_BEFORE_RECOVERY = 3;
-        
-        // Watchdog & Self-Healing states
-        let consecutiveHeartbeatFailures = 0;
-        const MAX_HEARTBEAT_FAILURES = 3;
-        let isDisconnectedMode = false;
-        let recoveryPingInterval = null;
+        'use strict';
 
-        // Retrieve/Generate Unique Customer Terminal ID (stored in localStorage)
-        function getCustomerTerminalId() {
-            let id = localStorage.getItem('rscp_customer_terminal_id');
+        // ============================================================
+        // POS Customer Display (pairing v3)
+        //
+        // One self-scheduling poll loop is the entire sync engine.
+        // Design rules that make overnight power-offs a non-event:
+        //   1. Credentials live in localStorage and are wiped ONLY on an
+        //      authoritative 403 {revoked} from the server (or the staff
+        //      escape button) - never on network errors or 5xx.
+        //   2. Every failure keeps retrying forever with capped backoff;
+        //      the display can boot before the server and still recover.
+        //   3. Waking up (tablet sleep, network back) triggers an
+        //      immediate poll instead of waiting out the backoff.
+        // ============================================================
+
+        const csrfToken = '{{ csrf_token() }}';
+
+        const POLL_MS = 1200;              // active cart poll cadence
+        const BACKOFF_MAX_MS = 5000;       // never wait longer than this to retry
+        const OVERLAY_AFTER_FAILURES = 4;  // show the reconnect overlay after ~5s of failures
+        const PAIRING_STATUS_MS = 2000;    // "am I paired yet?" cadence
+        const IDLE_RELOAD_HOURS = 24;      // kiosk hygiene reload (only when idle + connected)
+
+        const LS_PERIPHERAL_ID = 'rscp_customer_terminal_id';
+        const LS_TOKEN = 'rscp_customer_terminal_token';
+        const LS_REGISTER_NAME = 'rscp_staff_friendly_name';
+
+        let cartVersion = -1;
+        let consecutiveFailures = 0;
+        let pollTimer = null;
+        let pairingTimers = [];
+        let paired = false;
+        const bootTime = Date.now();
+        let lastCartEmpty = true;
+
+        function getPeripheralId() {
+            let id = localStorage.getItem(LS_PERIPHERAL_ID);
             if (!id) {
                 id = 'term_cust_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-                localStorage.setItem('rscp_customer_terminal_id', id);
+                localStorage.setItem(LS_PERIPHERAL_ID, id);
             }
             return id;
         }
 
-        // Get pairing credentials from local storage
-        function getPairingCredentials() {
-            return {
-                token: localStorage.getItem('rscp_customer_terminal_token'),
-                staffTerminalId: localStorage.getItem('rscp_staff_terminal_id'),
-                staffFriendlyName: localStorage.getItem('rscp_staff_friendly_name')
-            };
+        function getToken() {
+            return localStorage.getItem(LS_TOKEN);
         }
 
         function formatPrice(amount) {
@@ -475,10 +495,17 @@
             return div.innerHTML;
         }
 
-        // --- RENDER CART ---
+        function setStatusBadge(cls, text) {
+            const badge = document.getElementById('connectionStatus');
+            badge.className = 'connection-status ' + cls;
+            badge.textContent = text;
+        }
+
+        // --- RENDER CART (consumes compute_cart_totals payload) ---
         function updateCartDisplay(cart) {
             const cartArea = document.getElementById('cartItems');
             const items = cart.items || [];
+            lastCartEmpty = items.length === 0;
 
             if (items.length === 0) {
                 cartArea.innerHTML = `
@@ -488,8 +515,8 @@
                     </div>
                 `;
                 document.getElementById('subtotal').textContent = '$0.00';
-                document.getElementById('discount').textContent = '-$0.00';
                 document.getElementById('discountRow').style.display = 'none';
+                document.getElementById('couponRow').style.display = 'none';
                 document.getElementById('tax').textContent = '$0.00';
                 document.getElementById('taxLabel').textContent = 'Tax';
                 document.getElementById('cardTotal').textContent = '$0.00';
@@ -498,15 +525,15 @@
                 return;
             }
 
-            // Build items HTML
             let html = '';
             items.forEach(item => {
                 const lineTotal = parseFloat(item.line_total) || 0;
+                const hasItemDiscount = item.discount_amount && item.discount_type;
                 html += `
                     <div class="cart-item">
                         <div>
                             <div class="cart-item-name">${escapeHtml(item.name)}</div>
-                            <div class="cart-item-qty">${item.quantity}x @ ${formatPrice(item.unit_price)}</div>
+                            <div class="cart-item-qty">${item.quantity}x @ ${formatPrice(item.unit_price)}${hasItemDiscount ? ' · discounted' : ''}</div>
                         </div>
                         <div class="cart-item-price">${formatPrice(lineTotal)}</div>
                     </div>
@@ -514,13 +541,23 @@
             });
             cartArea.innerHTML = html;
 
-            // Use server-computed totals
             document.getElementById('subtotal').textContent = formatPrice(cart.subtotal);
 
-            // Discount row (order + coupon)
-            const totalDiscount = (cart.order_discount || 0) + (cart.coupon_discount || 0);
-            document.getElementById('discount').textContent = '-' + formatPrice(totalDiscount);
-            document.getElementById('discountRow').style.display = totalDiscount > 0 ? 'flex' : 'none';
+            // Order-level discount
+            const orderDiscount = cart.order_discount || 0;
+            document.getElementById('discount').textContent = '-' + formatPrice(orderDiscount);
+            document.getElementById('discountRow').style.display = orderDiscount > 0 ? 'flex' : 'none';
+
+            // Coupon (shown separately so customers see their code applied)
+            const couponDiscount = cart.coupon_discount || 0;
+            if (couponDiscount > 0) {
+                const code = (cart.applied_coupon && cart.applied_coupon.code) ? ` (${escapeHtml(cart.applied_coupon.code)})` : '';
+                document.getElementById('couponLabel').innerHTML = '🎟️ Coupon' + code;
+                document.getElementById('coupon').textContent = '-' + formatPrice(couponDiscount);
+                document.getElementById('couponRow').style.display = 'flex';
+            } else {
+                document.getElementById('couponRow').style.display = 'none';
+            }
 
             // Tax
             document.getElementById('taxLabel').textContent = 'Tax (' + (cart.tax_rate_pct || 0).toFixed(2) + '%)';
@@ -528,323 +565,237 @@
 
             // Dual pricing: Cash vs Card
             if (cart.cash_discount_enabled && cart.cash_discount_value > 0) {
-                // Show both prices
                 document.getElementById('cardTotalLabel').textContent = '💳 Card';
                 document.getElementById('cardTotal').textContent = formatPrice(cart.card_total);
                 document.getElementById('cashTotalRow').style.display = 'flex';
                 document.getElementById('cashTotal').textContent = formatPrice(cart.cash_total);
             } else {
-                // Just show total
                 document.getElementById('cardTotalLabel').textContent = 'Total';
                 document.getElementById('cardTotal').textContent = formatPrice(cart.card_total);
                 document.getElementById('cashTotalRow').style.display = 'none';
             }
         }
 
-        // --- HEARTBEAT LOOP ---
-        function startHeartbeat(token) {
-            if (heartbeatInterval) clearInterval(heartbeatInterval);
-            
-            function sendHeartbeat() {
-                fetch('/pos/api/customer-display/heartbeat', {
+        // --- OVERLAY ---
+        function showDisconnectOverlay(statusText) {
+            document.getElementById('disconnectOverlay').style.display = 'flex';
+            document.getElementById('recoveryStatus').textContent = statusText || 'Reconnecting automatically…';
+        }
+
+        function hideDisconnectOverlay() {
+            document.getElementById('disconnectOverlay').style.display = 'none';
+            document.getElementById('retryCount').textContent = '';
+        }
+
+        // ============================================================
+        // ACTIVE MODE: versioned cart polling with capped backoff
+        // ============================================================
+
+        function scheduleNextPoll(delayMs) {
+            if (pollTimer) clearTimeout(pollTimer);
+            pollTimer = setTimeout(pollCart, delayMs);
+        }
+
+        async function pollCart() {
+            const token = getToken();
+            if (!token) return;
+
+            try {
+                const res = await fetch(`/pos/api/peripheral/poll?since=${cartVersion}`, {
+                    headers: { 'X-Pairing-Token': token },
+                    cache: 'no-store'
+                });
+
+                if (res.status === 403) {
+                    // Authoritative: this pairing was revoked at the register.
+                    // The ONLY error that drops credentials.
+                    let revoked = false;
+                    try { revoked = (await res.json()).revoked === true; } catch (e) { /* body wasn't JSON */ }
+                    if (revoked) {
+                        console.warn('Pairing revoked by register. Returning to pairing screen.');
+                        hardUnpair();
+                        return;
+                    }
+                    throw new Error('HTTP 403');
+                }
+
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message || 'Poll failed');
+
+                // Recovered (or normal) - reset failure state
+                consecutiveFailures = 0;
+                hideDisconnectOverlay();
+                setStatusBadge('connected', '🟢 Live');
+
+                if (data.changed) {
+                    cartVersion = data.version;
+                    if (data.register_name) {
+                        document.getElementById('merchantName').textContent = data.register_name;
+                        localStorage.setItem(LS_REGISTER_NAME, data.register_name);
+                    }
+                    updateCartDisplay(data.cart || { items: [] });
+                }
+
+                maybeIdleReload();
+                scheduleNextPoll(POLL_MS);
+            } catch (err) {
+                // Transient failure (server rebooting, network blip, tablet
+                // just woke up...): keep credentials, keep retrying forever.
+                consecutiveFailures++;
+                const delay = Math.min(POLL_MS * Math.pow(1.5, consecutiveFailures), BACKOFF_MAX_MS);
+                setStatusBadge('disconnected', '🔄 Reconnecting...');
+                if (consecutiveFailures >= OVERLAY_AFTER_FAILURES) {
+                    showDisconnectOverlay('Connection lost. Reconnecting automatically…');
+                    document.getElementById('retryCount').textContent =
+                        'Attempt ' + consecutiveFailures + ' — retrying every few seconds';
+                }
+                scheduleNextPoll(delay);
+            }
+        }
+
+        // Kiosk hygiene: reload once a day, but only when nothing is
+        // happening (empty cart, connected) so we never interrupt a sale.
+        let lastIdleReloadCheck = Date.now();
+        function maybeIdleReload() {
+            const now = Date.now();
+            if (now - lastIdleReloadCheck < 60 * 60 * 1000) return;
+            lastIdleReloadCheck = now;
+            if (now - bootTime > IDLE_RELOAD_HOURS * 3600 * 1000 && lastCartEmpty) {
+                console.log('Daily maintenance reload');
+                window.location.reload();
+            }
+        }
+
+        function startActiveMode() {
+            document.getElementById('pairingDisplay').style.display = 'none';
+            document.getElementById('activeDisplay').style.display = 'flex';
+            document.getElementById('merchantName').textContent =
+                localStorage.getItem(LS_REGISTER_NAME) || 'Welcome';
+            setStatusBadge('disconnected', '⚪ Connecting...');
+            pollCart();
+        }
+
+        // ============================================================
+        // PAIRING MODE: show a code, wait to be claimed
+        // ============================================================
+
+        function clearPairingTimers() {
+            pairingTimers.forEach(t => clearTimeout(t));
+            pairingTimers = [];
+        }
+
+        async function requestPairingCode(attempt) {
+            attempt = attempt || 0;
+            const peripheralId = getPeripheralId();
+
+            try {
+                const res = await fetch('/pos/api/pairing/request-code', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                         'X-CSRFToken': csrfToken
                     },
-                    body: JSON.stringify({ customer_terminal_token: token })
-                })
-                .then(r => {
-                    if (!r.ok) throw new Error("HTTP error " + r.status);
-                    return r.json();
-                })
-                .then(data => {
-                    if (data && data.success) {
-                        consecutiveHeartbeatFailures = 0;
-                        if (isDisconnectedMode) {
-                            // Server is back online, clear overlay and reload to restore state
-                            isDisconnectedMode = false;
-                            window.location.reload();
-                        }
-                    } else {
-                        console.warn('Heartbeat returned success=false, token may be invalid.');
-                        handleHeartbeatFailure();
-                    }
-                })
-                .catch(err => {
-                    console.error('Error sending display heartbeat:', err);
-                    handleHeartbeatFailure();
+                    body: JSON.stringify({ peripheral_id: peripheralId, role: 'display' })
                 });
+                const data = await res.json();
+                if (!res.ok || !data.success) throw new Error(data.message || 'code request failed');
+
+                const code = data.pairing_code;
+                document.getElementById('displayPairingCode').textContent =
+                    code.slice(0, 3) + ' ' + code.slice(3);
+                document.getElementById('pairingStateText').textContent = 'Awaiting Register Link';
+                setStatusBadge('connected', '🟢 Ready to pair');
+
+                // Refresh the code at ~80% of its TTL so it is never stale on screen
+                const ttlMs = (data.ttl_seconds || 600) * 1000;
+                pairingTimers.push(setTimeout(() => requestPairingCode(0), ttlMs * 0.8));
+            } catch (err) {
+                // Server might still be booting - keep trying, show state
+                console.warn('Pairing code request failed:', err);
+                document.getElementById('displayPairingCode').textContent = '--- ---';
+                document.getElementById('pairingStateText').textContent = 'Connecting to server…';
+                setStatusBadge('disconnected', '🔄 Connecting...');
+                const delay = Math.min(2000 * Math.pow(1.5, attempt), 15000);
+                pairingTimers.push(setTimeout(() => requestPairingCode(attempt + 1), delay));
             }
-            
-            function handleHeartbeatFailure() {
-                consecutiveHeartbeatFailures++;
-                if (consecutiveHeartbeatFailures >= MAX_HEARTBEAT_FAILURES) {
-                    isDisconnectedMode = true;
-                    showDisconnectOverlay('Connection lost. Retrying...');
-                    startRecoveryPingLoop(token);
-                }
-            }
-            
-            sendHeartbeat(); // initial call
-            heartbeatInterval = setInterval(sendHeartbeat, 5000);
         }
 
-        // --- WEB SOCKET SYNC ---
-        function initWebSocket(token, staffTerminalId) {
-            if (socket) {
-                socket.disconnect();
-            }
-
-            if (typeof io === 'undefined') {
-                console.warn('Socket.io client not loaded. Syncing via polling.');
-                startCartPolling(token);
-                return;
-            }
-
+        async function pollPairingStatus() {
+            const peripheralId = getPeripheralId();
             try {
-                socket = io({
-                    transports: ['websocket', 'polling'],
-                    timeout: 5000,
-                    reconnection: true,
-                    reconnectionAttempts: Infinity,
-                    reconnectionDelay: 1000,
-                    reconnectionDelayMax: 5000
-                });
+                const res = await fetch(`/pos/api/pairing/status?peripheral_id=${encodeURIComponent(peripheralId)}`,
+                    { cache: 'no-store' });
+                const data = await res.json();
 
-                socket.on('connect', () => {
-                    console.log('WebSocket linked to persistent session');
-                    const statusBadge = document.getElementById('connectionStatus');
-                    statusBadge.className = 'connection-status connected';
-                    statusBadge.textContent = '🟢 Live';
+                if (data.success && data.paired && data.token) {
+                    // Store credentials, ack so the server wipes its plaintext copy
+                    localStorage.setItem(LS_TOKEN, data.token);
+                    if (data.register_name) localStorage.setItem(LS_REGISTER_NAME, data.register_name);
 
-                    // Join the persistent staff terminal room
-                    socket.emit('join_terminal_room', { terminal_id: staffTerminalId });
-                    
-                    // Stop aggressive cart polling when socket is active
-                    if (cartPollInterval) {
-                        clearInterval(cartPollInterval);
-                        cartPollInterval = null;
-                    }
-                    
-                    // Always pull latest cart immediately on connect/reconnect
-                    fetchCart(token);
-                });
+                    try {
+                        await fetch('/pos/api/pairing/ack', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRFToken': csrfToken
+                            },
+                            body: JSON.stringify({ peripheral_id: peripheralId, token: data.token })
+                        });
+                    } catch (e) { /* non-fatal: ack retried implicitly by re-pairing */ }
 
-                socket.on('cart_update', (data) => {
-                    console.log('Socket cart update, fetching calculated totals...');
-                    fetchCart(token);
-                });
-
-                socket.on('disconnect', () => {
-                    console.log('WebSocket lost connection, falling back to polling');
-                    const statusBadge = document.getElementById('connectionStatus');
-                    statusBadge.className = 'connection-status disconnected';
-                    statusBadge.textContent = '🔄 Reconnecting...';
-                    startCartPolling(token);
-                });
-
-                socket.on('connect_error', () => {
-                    console.warn('WebSocket connection error, using polling');
-                    startCartPolling(token);
-                });
-
-            } catch (e) {
-                console.error('Socket init exception:', e);
-                startCartPolling(token);
-            }
-        }
-
-        // --- HTTP CART RETRIEVAL ---
-        function fetchCart(token) {
-            fetch(`/pos/api/customer-display/cart?customer_terminal_token=${encodeURIComponent(token)}`)
-            .then(res => {
-                if (res.status === 403) {
-                    // Token is invalid/revoked - clear and reload to pairing mode
-                    console.error('Token invalid or pairing revoked.');
-                    unpairAndExit();
-                    return null;
+                    console.log('Paired! Switching to active display.');
+                    clearPairingTimers();
+                    window.location.reload();
+                    return;
                 }
-                return res.json();
-            })
-            .then(data => {
-                if (data && data.success) {
-                    consecutiveFailures = 0;
-                    hideDisconnectOverlay();
-                    
-                    if (data.staff_friendly_name) {
-                        document.getElementById('merchantName').textContent = data.staff_friendly_name;
-                    }
-                    
-                    const cartHash = JSON.stringify(data.cart);
-                    if (cartHash !== lastCartHash) {
-                        lastCartHash = cartHash;
-                        updateCartDisplay(data.cart);
-                    }
-                } else if (data) {
-                    handleFailure();
-                }
-            })
-            .catch(err => {
-                console.error('Error fetching cart:', err);
-                handleFailure();
-            });
-        }
-
-        function handleFailure() {
-            consecutiveFailures++;
-            if (consecutiveFailures >= MAX_FAILURES_BEFORE_RECOVERY) {
-                isDisconnectedMode = true;
-                showDisconnectOverlay('Connection lost. Retrying...');
-                const credentials = getPairingCredentials();
-                if (credentials.token) {
-                    startRecoveryPingLoop(credentials.token);
-                }
+            } catch (err) {
+                // keep polling
             }
+            pairingTimers.push(setTimeout(pollPairingStatus, PAIRING_STATUS_MS));
         }
 
-        function startCartPolling(token) {
-            if (cartPollInterval) clearInterval(cartPollInterval);
-            
-            // Poll every 1.5 seconds as fallback
-            cartPollInterval = setInterval(() => fetchCart(token), 1500);
-            fetchCart(token); // immediate first load
-        }
-
-        // --- SELF-HEALING WATCHDOG RECOVERY LOOP ---
-        function startRecoveryPingLoop(token) {
-            if (recoveryPingInterval) return; // Already running
-            
-            const statusBadge = document.getElementById('connectionStatus');
-            if (statusBadge) {
-                statusBadge.className = 'connection-status disconnected';
-                statusBadge.textContent = '🔄 Reconnecting...';
-            }
-            
-            recoveryPingInterval = setInterval(() => {
-                console.log("Watchdog pinging server for recovery...");
-                fetch(`/pos/api/customer-display/cart?customer_terminal_token=${encodeURIComponent(token)}`)
-                .then(res => {
-                    if (res.ok) {
-                        console.log("Server detected online! Initiating self-healing reload...");
-                        clearInterval(recoveryPingInterval);
-                        recoveryPingInterval = null;
-                        window.location.reload();
-                    }
-                })
-                .catch(err => {
-                    console.log("Watchdog ping failed, server still offline.");
-                });
-            }, 3000);
-        }
-
-        // --- PAIRING MODE LOOP ---
         function startPairingMode() {
-            const customerTerminalId = getCustomerTerminalId();
-            document.getElementById('debugTerminalId').textContent = 'ID: ' + customerTerminalId;
+            paired = false;
             document.getElementById('activeDisplay').style.display = 'none';
             document.getElementById('pairingDisplay').style.display = 'flex';
-
-            // Get standard pairing display code
-            fetch('/pos/api/display/request-code', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': csrfToken
-                },
-                body: JSON.stringify({ customer_terminal_id: customerTerminalId })
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) {
-                    const code = data.pairing_code;
-                    // Format code with space in middle for perfect readability
-                    const formattedCode = code.slice(0, 3) + ' ' + code.slice(3);
-                    document.getElementById('displayPairingCode').textContent = formattedCode;
-                    
-                    // Listen for pairing event on WS
-                    initPairingSocket(customerTerminalId);
-                    
-                    // Poll as backup
-                    startPairingPolling(customerTerminalId);
-                } else {
-                    console.error('Failed to request display pairing code:', data.message);
-                }
-            })
-            .catch(err => console.error('Error requesting pairing code:', err));
+            document.getElementById('debugTerminalId').textContent = 'ID: ' + getPeripheralId();
+            requestPairingCode(0);
+            pollPairingStatus();
         }
 
-        function initPairingSocket(customerTerminalId) {
-            if (typeof io === 'undefined') return;
-            
-            try {
-                if (socket) socket.disconnect();
-                
-                socket = io({
-                    transports: ['websocket', 'polling'],
-                    timeout: 5000,
-                    reconnection: true,
-                    reconnectionAttempts: Infinity,
-                    reconnectionDelay: 1000,
-                    reconnectionDelayMax: 5000
-                });
-                
-                socket.on('connect', () => {
-                    // Join the room for this specific unpaired customer display
-                    socket.emit('join_terminal_room', { terminal_id: customerTerminalId });
-                });
-                
-                socket.on('display_paired', (data) => {
-                    console.log('Successfully paired via socket!', data);
-                    completePairing(data);
-                });
-            } catch (e) {
-                console.error('WebSocket pairing init error:', e);
-            }
-        }
+        // ============================================================
+        // UNPAIR (authoritative revoke or staff escape only)
+        // ============================================================
 
-        function startPairingPolling(customerTerminalId) {
-            if (pairingPollInterval) clearInterval(pairingPollInterval);
-            
-            pairingPollInterval = setInterval(() => {
-                fetch(`/pos/api/display/check-paired?customer_terminal_id=${encodeURIComponent(customerTerminalId)}`)
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success && data.paired) {
-                        console.log('Successfully paired via polling!', data);
-                        completePairing(data);
-                    }
-                })
-                .catch(err => console.error('Error polling pairing status:', err));
-            }, 2000);
-        }
-
-        function completePairing(data) {
-            // Stop pairing listeners
-            if (pairingPollInterval) clearInterval(pairingPollInterval);
-            pairingPollInterval = null;
-            
-            // Save credentials
-            localStorage.setItem('rscp_customer_terminal_token', data.customer_terminal_token);
-            localStorage.setItem('rscp_staff_terminal_id', data.staff_terminal_id);
-            localStorage.setItem('rscp_staff_friendly_name', data.staff_friendly_name);
-            
-            // Reload page to start active display cleanly
+        function hardUnpair() {
+            if (pollTimer) clearTimeout(pollTimer);
+            clearPairingTimers();
+            localStorage.removeItem(LS_TOKEN);
+            localStorage.removeItem(LS_REGISTER_NAME);
+            localStorage.removeItem('rscp_staff_terminal_id'); // legacy key cleanup
             window.location.reload();
         }
 
-        // --- DISCONNECTION OVERLAYS ---
-        function showDisconnectOverlay(statusText) {
-            const overlay = document.getElementById('disconnectOverlay');
-            overlay.style.display = 'flex';
-            document.getElementById('recoveryStatus').textContent = statusText || 'Attempting to reconnect...';
+        function unpairAndExit() {
+            const token = getToken();
+            if (token) {
+                // Best-effort server-side cleanup; local wipe happens regardless
+                fetch('/pos/api/peripheral/unpair', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken,
+                        'X-Pairing-Token': token
+                    },
+                    body: '{}'
+                }).catch(() => {}).finally(hardUnpair);
+            } else {
+                hardUnpair();
+            }
         }
 
-        function hideDisconnectOverlay() {
-            document.getElementById('disconnectOverlay').style.display = 'none';
-        }
-
-        // --- STAFF ESCAPE CONTROLS ---
+        // --- STAFF ESCAPE CONTROLS (triple-click the status badge) ---
         let clickCount = 0;
         let clickTimer = null;
         document.getElementById('connectionStatus').addEventListener('click', function () {
@@ -854,43 +805,35 @@
 
             if (clickCount >= 3) {
                 clickCount = 0;
-                const exitControls = document.getElementById('exitControls');
-                exitControls.classList.toggle('visible');
+                document.getElementById('exitControls').classList.toggle('visible');
             }
         });
 
-        function unpairAndExit() {
-            // Stop all loops
-            if (cartPollInterval) clearInterval(cartPollInterval);
-            if (heartbeatInterval) clearInterval(heartbeatInterval);
-            if (pairingPollInterval) clearInterval(pairingPollInterval);
-            if (socket) socket.disconnect();
-
-            // Clear credentials
-            localStorage.removeItem('rscp_customer_terminal_token');
-            localStorage.removeItem('rscp_staff_terminal_id');
-            localStorage.removeItem('rscp_staff_friendly_name');
-
-            // Force reload to return to pairing mode
-            window.location.reload();
+        // ============================================================
+        // WAKE-UPS: poll immediately when the tablet comes back
+        // ============================================================
+        function wakeUp() {
+            if (!paired) return;
+            console.log('Wake event - polling immediately');
+            consecutiveFailures = 0;
+            if (pollTimer) clearTimeout(pollTimer);
+            pollCart();
         }
 
-        // --- APP INITIALIZATION ---
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') wakeUp();
+        });
+        window.addEventListener('online', wakeUp);
+        window.addEventListener('pageshow', (e) => { if (e.persisted) wakeUp(); });
+
+        // ============================================================
+        // BOOT
+        // ============================================================
         (function initDisplay() {
-            const credentials = getPairingCredentials();
-            
-            if (credentials.token && credentials.staffTerminalId) {
-                // We are paired! Start active display mode
-                document.getElementById('merchantName').textContent = credentials.staffFriendlyName || 'Welcome';
-                document.getElementById('pairingDisplay').style.display = 'none';
-                document.getElementById('activeDisplay').style.display = 'flex';
-                
-                // Initialize heartbeat, socket sync, and active pulling fallback
-                startHeartbeat(credentials.token);
-                initWebSocket(credentials.token, credentials.staffTerminalId);
-                startCartPolling(credentials.token);
+            if (getToken()) {
+                paired = true;
+                startActiveMode();
             } else {
-                // Not paired! Enter pairing screen
                 startPairingMode();
             }
         })();

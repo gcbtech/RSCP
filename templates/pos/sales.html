@@ -679,84 +679,35 @@
                         </div>
                     </div>
 
-                    <!-- Persistent Display Pairing -->
+                    <!-- Pair a Peripheral (display or scanner) -->
                     <div class="card mb-4 border-1 border-primary-subtle">
                         <div class="card-body">
-                            <h6 class="card-title text-primary mb-2 fw-semibold">📺 Pair Customer Display</h6>
-                            <p class="text-muted small mb-3">Enter the 6-digit code shown on the unpaired customer tablet screen to pair it persistently.</p>
-                            
+                            <h6 class="card-title text-primary mb-2 fw-semibold">🔗 Pair a Device</h6>
+                            <p class="text-muted small mb-3">
+                                Enter the 6-digit code shown on the unpaired device — a customer
+                                display (<a href="{{ url_for('pos.customer_display') }}" target="_blank" class="text-decoration-none">/pos/customer-display</a>)
+                                or a handheld scanner (<a href="{{ url_for('pos.scan_page') }}" target="_blank" class="text-decoration-none">/pos/scan</a>).
+                                Pairing is permanent; devices reconnect on their own after being powered off.
+                            </p>
+
                             <div class="d-flex gap-2">
                                 <input type="text" id="posDisplayPairCode" class="form-control text-center fs-4 fw-bold font-monospace border-primary" placeholder="--- ---" maxlength="7" style="letter-spacing: 2px;">
-                                <button type="button" class="btn btn-primary px-4 fw-semibold" onclick="pairPersistentDisplay()">Pair</button>
+                                <button type="button" class="btn btn-primary px-4 fw-semibold" onclick="claimPairingCode()">Pair</button>
                             </div>
                             <div id="persistentPairError" class="alert alert-danger py-1 px-2 mt-2" style="display: none; font-size: 0.85rem;"></div>
                             <div id="persistentPairSuccess" class="alert alert-success py-1 px-2 mt-2" style="display: none; font-size: 0.85rem;"></div>
                         </div>
                     </div>
 
-                    <!-- Legacy Transient Pairing Section -->
-                    <div class="accordion" id="legacyPairingAccordion">
-                        <div class="accordion-item border-0">
-                            <h2 class="accordion-header">
-                                <button class="accordion-button collapsed py-2 px-0 bg-transparent text-muted small shadow-none" type="button" data-bs-toggle="collapse" data-bs-target="#legacyPairingCollapse">
-                                    ⚙️ Advanced / Legacy Session Pairing
-                                </button>
-                            </h2>
-                            <div id="legacyPairingCollapse" class="accordion-collapse collapse" data-bs-parent="#legacyPairingAccordion">
-                                <div class="accordion-body px-0 pt-2 pb-0 d-grid gap-2">
-                                    {% if session.get('pos_pairing') %}
-                                    <div class="card bg-light border-0 mb-1">
-                                        <div class="card-body p-2 text-center">
-                                            <span class="badge bg-success mb-1">🔗 Legacy Paired</span>
-                                            <div class="small text-muted font-monospace mb-2" style="font-size: 0.75rem;">
-                                                Code: {{ session['pos_pairing']['session_code'] }} ({{ session['pos_pairing']['terminal_type'] }})
-                                            </div>
-                                            <button type="button" class="btn btn-warning btn-sm w-100 fw-semibold" onclick="unpairTerminal()">
-                                                🔓 Unpair Legacy Session
-                                            </button>
-                                        </div>
-                                    </div>
-                                    {% endif %}
-                                    <div class="d-flex gap-2">
-                                        <a href="{{ url_for('pos.pairing_page') }}?type=staff" class="btn btn-outline-primary btn-sm flex-fill text-decoration-none">
-                                            👤 Staff Terminal
-                                        </a>
-                                        <a href="{{ url_for('pos.pairing_page') }}?type=customer" class="btn btn-outline-info btn-sm flex-fill text-decoration-none">
-                                            📺 Customer Display
-                                        </a>
-                                    </div>
-                                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="startPairing()">
-                                        Start Legacy Pairing (Generate Code)
-                                    </button>
-                                </div>
+                    <!-- Paired devices -->
+                    <div class="card border-0 bg-light">
+                        <div class="card-body">
+                            <h6 class="card-title text-primary mb-2 fw-semibold">🖧 Paired Devices</h6>
+                            <div id="peripheralList" class="d-grid gap-2">
+                                <div class="text-muted small">Loading&hellip;</div>
                             </div>
                         </div>
                     </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Pairing Code Modal (Renamed from pairingModal) -->
-    <div class="modal fade" id="pairingCodeModal" tabindex="-1" data-bs-backdrop="static">
-        <div class="modal-dialog">
-            <div class="modal-content text-center text-dark">
-                <div class="modal-header">
-                    <h5 class="modal-title">🔗 Terminal Pairing Code</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" onclick="stopPairing()"></button>
-                </div>
-                <div class="modal-body py-4">
-                    <p class="mb-2">Enter this code on the other terminal:</p>
-                    <div id="pairingCode" class="display-3 fw-bold font-monospace text-primary my-3">
-                        ------
-                    </div>
-                    <div class="text-muted small">
-                        Waiting for connection...
-                    </div>
-                </div>
-                <div class="modal-footer justify-content-center gap-2">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" onclick="stopPairing()">Close</button>
-                    <button type="button" class="btn btn-outline-danger" onclick="stopPairing()">Cancel Session</button>
                 </div>
             </div>
         </div>
@@ -796,7 +747,9 @@
                         <form action="{{ url_for('pos.cart_recall', held_id=held.id) }}" method="POST" class="d-inline">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn btn-sm btn-outline-primary me-1">
-                                {{ held.note or 'Order ' ~ held.id }} ({{ held.created_at | local_time }})
+                                {{ held.note or 'Order ' ~ held.id }}
+                                {%- if held.held_by %} · {{ held.held_by }}{% endif %}
+                                ({{ held.created_at | local_time }})
                             </button>
                         </form>
                         {% endfor %}
@@ -992,11 +945,13 @@
             }
         }
 
-        // Zero-Reload Dynamic DOM Synchronization
+        // Zero-Reload Cart Synchronization: fetch just the rendered cart
+        // fragment (not the whole page) and hot-swap it in place. Driven
+        // by the register version poll when a paired scanner changes the cart.
         function syncCartDOM() {
-            console.log('Synchronizing cart DOM via AJAX...');
-            fetch(window.location.href, {
-                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            fetch('/pos/cart/fragment', {
+                headers: { 'X-Terminal-Id': getTerminalId() },
+                cache: 'no-store'
             })
             .then(response => {
                 if (!response.ok) throw new Error('DOM sync failed');
@@ -1007,24 +962,16 @@
                 const doc = parser.parseFromString(html, 'text/html');
                 const newCart = doc.getElementById('posCartContainer');
                 const newFlashes = doc.getElementById('flashMessagesContainer');
-                
+
                 if (newCart) {
                     document.getElementById('posCartContainer').innerHTML = newCart.innerHTML;
                 }
-                if (newFlashes) {
+                if (newFlashes && newFlashes.innerHTML.trim()) {
                     document.getElementById('flashMessagesContainer').innerHTML = newFlashes.innerHTML;
                 }
-                
-                // Update CSRF tokens in case they rotated
-                const newCsrf = doc.querySelector('input[name="csrf_token"]');
-                if (newCsrf) {
-                    document.querySelectorAll('input[name="csrf_token"]').forEach(el => el.value = newCsrf.value);
-                }
-                console.log('Cart DOM successfully synchronized');
             })
             .catch(err => {
-                console.error('DOM sync error, falling back to reload:', err);
-                location.reload();
+                console.error('Cart fragment sync error:', err);
             });
         }
 
@@ -1260,13 +1207,9 @@
         }
     </script>
 
-    <!-- Terminal Pairing Scripts -->
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <!-- Register Pairing & Sync (pairing v3: versioned polling, no sockets) -->
     <script>
-        let pairingSocket = null;
-        let pairingCodeModal = null;
-
-        // Generate unique terminal ID per browser instance (not synced by Chrome)
+        // Persistent register identity (per browser instance, not synced by Chrome)
         function getTerminalId() {
             let id = localStorage.getItem('rscp_terminal_id');
             if (!id) {
@@ -1276,238 +1219,226 @@
             return id;
         }
 
+        function getFriendlyName() {
+            return localStorage.getItem('rscp_staff_friendly_name') || 'Register 1';
+        }
+
+        const REGISTER_POLL_MS = 2000;
+        const PERIPHERAL_REFRESH_MS = 10000;
+        let registerCartVersion = -1;
+
+        // --- HELLO: announce this register (also binds the register id to
+        // the server session so plain form posts hit the same cart) ---
+        function registerHello(name) {
+            return fetch('/pos/api/register/hello', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token() }}'
+                },
+                body: JSON.stringify({
+                    register_id: getTerminalId(),
+                    friendly_name: name || getFriendlyName()
+                })
+            }).catch(err => console.warn('Register hello failed:', err));
+        }
+
+        // --- CART VERSION POLL: pick up changes made by paired scanners ---
+        function userIsInteractingWithCart() {
+            const container = document.getElementById('posCartContainer');
+            const active = document.activeElement;
+            if (active && container && container.contains(active) &&
+                ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName)) return true;
+            if (document.querySelector('.modal.show')) return true;
+            return false;
+        }
+
+        async function pollRegisterCart() {
+            try {
+                const res = await fetch(`/pos/api/register/poll?since=${registerCartVersion}`, {
+                    headers: { 'X-Terminal-Id': getTerminalId() },
+                    cache: 'no-store'
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.success) {
+                        if (registerCartVersion === -1) {
+                            // Baseline: this page's HTML was just rendered server-side
+                            registerCartVersion = data.version;
+                        } else if (data.changed && !userIsInteractingWithCart()) {
+                            registerCartVersion = data.version;
+                            syncCartDOM();
+                        }
+                        // If changed while the user is mid-interaction, the
+                        // version stays stale and we retry next tick.
+                    }
+                }
+            } catch (err) { /* offline; retry next tick */ }
+            setTimeout(pollRegisterCart, REGISTER_POLL_MS);
+        }
+
+        // --- PAIRED DEVICES: status badge + modal list ---
+        function renderPeripherals(peripherals) {
+            const list = document.getElementById('peripheralList');
+            if (list) {
+                if (!peripherals.length) {
+                    list.innerHTML = '<div class="text-muted small">No devices paired to this register yet.</div>';
+                } else {
+                    list.innerHTML = peripherals.map(p => `
+                        <div class="d-flex align-items-center justify-content-between bg-white border rounded p-2">
+                            <div class="d-flex align-items-center gap-2">
+                                <span>${p.role === 'display' ? '📺' : '🤳'}</span>
+                                <div>
+                                    <div class="small fw-semibold">${p.friendly_name}</div>
+                                    <div class="text-muted" style="font-size: 0.7rem;">${p.connected ? '🟢 Connected' : '⚪ Offline'}</div>
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-outline-danger btn-sm" onclick="unpairPeripheral('${p.peripheral_id}')">Unpair</button>
+                        </div>
+                    `).join('');
+                }
+            }
+
+            // Header badge
+            const badge = document.getElementById('persistentDisplayBadge');
+            if (!badge) return;
+            const total = peripherals.length;
+            const connected = peripherals.filter(p => p.connected).length;
+            const offline = total - connected;
+            badge.classList.remove('btn-outline-light', 'btn-outline-success', 'btn-outline-warning', 'btn-outline-danger');
+            if (total === 0) {
+                badge.classList.add('btn-outline-light');
+                badge.innerHTML = `📺 Pair Devices ⚪`;
+            } else if (offline === 0) {
+                badge.classList.add('btn-outline-success');
+                badge.innerHTML = `📺 Devices: ${connected} Connected 🟢`;
+            } else if (connected > 0) {
+                badge.classList.add('btn-outline-warning');
+                badge.innerHTML = `📺 ${connected} Connected, ${offline} Offline ⚠️`;
+            } else {
+                badge.classList.add('btn-outline-danger');
+                badge.innerHTML = `📺 Devices Offline 🔴`;
+            }
+        }
+
+        function refreshPeripherals() {
+            fetch(`/pos/api/register/peripherals?register_id=${encodeURIComponent(getTerminalId())}`)
+                .then(r => r.json())
+                .then(data => { if (data.success) renderPeripherals(data.peripherals || []); })
+                .catch(err => console.warn('Peripheral status error:', err));
+        }
+
+        function unpairPeripheral(peripheralId) {
+            if (!confirm('Unpair this device? Its screen will return to pairing mode.')) return;
+            fetch('/pos/api/register/unpair', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token() }}'
+                },
+                body: JSON.stringify({ peripheral_id: peripheralId, register_id: getTerminalId() })
+            })
+            .then(r => r.json())
+            .then(() => refreshPeripherals())
+            .catch(err => console.error('Unpair error:', err));
+        }
+
+        // --- CLAIM: pair a display or scanner by its 6-digit code ---
+        function claimPairingCode() {
+            const codeInput = document.getElementById('posDisplayPairCode');
+            const errDiv = document.getElementById('persistentPairError');
+            const succDiv = document.getElementById('persistentPairSuccess');
+            if (!codeInput) return;
+
+            const rawCode = codeInput.value.replace(/\D/g, '');
+            if (rawCode.length !== 6) {
+                if (errDiv) {
+                    errDiv.textContent = 'Please enter a valid 6-digit code (e.g. 123 456).';
+                    errDiv.style.display = 'block';
+                }
+                if (succDiv) succDiv.style.display = 'none';
+                return;
+            }
+
+            if (errDiv) errDiv.style.display = 'none';
+            if (succDiv) succDiv.style.display = 'none';
+
+            fetch('/pos/api/register/claim-code', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token() }}'
+                },
+                body: JSON.stringify({
+                    code: rawCode,
+                    register_id: getTerminalId(),
+                    friendly_name: getFriendlyName()
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    if (succDiv) {
+                        succDiv.textContent = data.message || 'Device paired!';
+                        succDiv.style.display = 'block';
+                    }
+                    codeInput.value = '';
+                    refreshPeripherals();
+                    setTimeout(() => { if (succDiv) succDiv.style.display = 'none'; }, 4000);
+                } else {
+                    if (errDiv) {
+                        errDiv.textContent = data.message || 'Failed to pair device.';
+                        errDiv.style.display = 'block';
+                    }
+                }
+            })
+            .catch(err => {
+                console.error('Error claiming pairing code:', err);
+                if (errDiv) {
+                    errDiv.textContent = 'Network error pairing device.';
+                    errDiv.style.display = 'block';
+                }
+            });
+        }
+
+        // --- INIT ---
         document.addEventListener('DOMContentLoaded', () => {
-            pairingCodeModal = document.getElementById('pairingCodeModal') ? new bootstrap.Modal(document.getElementById('pairingCodeModal')) : null;
-            
-            // Initialize persistent customer display integration
-            initPersistentDisplayIntegration();
-        });
-
-        function showPairingMenu() {
-            // Nothing needed here if using data-bs-target, but keeping for future logic
-        }
-
-        function startPairing() {
-            fetch('/pos/terminal/start', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': '{{ csrf_token() }}'
-                },
-                body: JSON.stringify({
-                    terminal_id: getTerminalId()
-                })
-            })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        // Close menu modal if open
-                        const menuModalEl = document.getElementById('pairingMenuModal');
-                        if (menuModalEl) {
-                            const menuModal = bootstrap.Modal.getInstance(menuModalEl);
-                            if (menuModal) menuModal.hide();
-                        }
-
-                        document.getElementById('pairingCode').textContent = data.session_code;
-                        if (pairingCodeModal) pairingCodeModal.show();
-
-                        // Connect to WebSocket for this session
-                        connectPairingSocket(data.session_code);
-
-                        // Update UI to show paired status (without reloading)
-                        const pairingControls = document.getElementById('pairingControls');
-                        pairingControls.innerHTML = `
-                            <span class="badge bg-success me-1" title="Paired terminal">
-                                🔗 ${data.session_code} (main)
-                            </span>
-                            <button type="button" class="btn btn-outline-warning btn-sm" onclick="unpairTerminal()" title="Disconnect">
-                                Unpair
-                            </button>
-                        `;
-                    } else {
-                        alert('Error: ' + data.message);
-                    }
-                })
-                .catch(err => alert('Error starting pairing: ' + err));
-        }
-
-        function unpairTerminal() {
-            if (!confirm('Unpair from this session? You will return to independent mode.')) return;
-
-            fetch('/pos/terminal/unpair', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': '{{ csrf_token() }}'
-                },
-                body: JSON.stringify({
-                    terminal_id: getTerminalId()
-                })
-            })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        location.reload();
-                    } else {
-                        alert('Error: ' + data.message);
-                    }
-                })
-                .catch(err => alert('Error unpairing: ' + err));
-        }
-
-        function stopPairing() {
-            unpairTerminal();
-            if (pairingCodeModal) pairingCodeModal.hide();
-        }
-
-        function connectPairingSocket(sessionCode) {
-            // Check if Socket.IO is available
-            if (typeof io === 'undefined') {
-                console.warn('Socket.IO not loaded, real-time updates disabled');
-                return;
-            }
-
-            if (pairingSocket) {
-                pairingSocket.disconnect();
-            }
-
-            // Check if Socket.IO is available
-            if (typeof io === 'undefined') {
-                console.warn('Socket.IO not available, using polling for sync');
-                startSalesPolling(sessionCode);
-                return;
-            }
-
-            pairingSocket = io({
-                transports: ['websocket', 'polling'],
-                timeout: 5000
-            });
-
-            pairingSocket.on('connect', () => {
-                console.log('Pairing socket connected');
-                pairingSocket.emit('join_session', { session_code: sessionCode });
-
-                // Stop polling if running
-                if (salesPollingInterval) {
-                    clearInterval(salesPollingInterval);
-                    salesPollingInterval = null;
-                }
-            });
-
-            pairingSocket.on('cart_update', (data) => {
-                console.log('Cart update received from paired terminal');
-                if (data && data.sender === getTerminalId()) {
-                    console.log('Ignoring self-broadcast');
-                    return;
-                }
-                syncCartDOM();
-            });
-
-            pairingSocket.on('session_closed', (data) => {
-                alert('Pairing session ended: ' + (data.reason || 'Session closed'));
-                location.reload();
-            });
-
-            pairingSocket.on('connect_error', (err) => {
-                console.log('WebSocket error, falling back to polling');
-                startSalesPolling(sessionCode);
-            });
-
-            // Fallback to polling if WebSocket doesn't connect in 3 seconds
-            setTimeout(() => {
-                if (!pairingSocket.connected) {
-                    console.log('WebSocket timeout, using polling');
-                    startSalesPolling(sessionCode);
-                }
-            }, 3000);
-        }
-
-        // Polling fallback for sales page
-        let salesPollingInterval = null;
-        let lastSalesCartHash = '';
-
-        function startSalesPolling(sessionCode) {
-            if (salesPollingInterval) return; // Already polling
-
-            console.log('Starting sales polling for session:', sessionCode);
-
-            function pollSalesCart() {
-                fetch('/pos/api/shared-cart/' + sessionCode, {
-                    credentials: 'include'
-                })
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success) {
-                            const cartHash = JSON.stringify(data.cart);
-                            if (lastSalesCartHash && cartHash !== lastSalesCartHash) {
-                                // Cart changed - sync DOM
-                                console.log('Cart changed from another terminal, syncing DOM');
-                                syncCartDOM();
-                            }
-                            lastSalesCartHash = cartHash;
-                        }
-                    })
-                    .catch(err => console.error('Sales poll error:', err));
-            }
-
-            // Poll every 2 seconds (less aggressive than customer display)
-            salesPollingInterval = setInterval(pollSalesCart, 2000);
-            pollSalesCart(); // Initial fetch to set baseline
-        }
-
-        // If already paired, connect to WebSocket
-        {% if session.get('pos_pairing') %}
-        document.addEventListener('DOMContentLoaded', function () {
-            connectPairingSocket('{{ session["pos_pairing"]["session_code"] }}');
-        });
-        {% endif %}
-
-        // --- PERSISTENT CUSTOMER DISPLAY INTEGRATION ---
-        function initPersistentDisplayIntegration() {
             const friendlyNameInput = document.getElementById('staffFriendlyNameInput');
             const posDisplayPairCode = document.getElementById('posDisplayPairCode');
             const pairingMenuModalEl = document.getElementById('pairingMenuModal');
 
-            // 1. Initialize Register Friendly Name
-            const friendlyName = localStorage.getItem('rscp_staff_friendly_name') || 'Register 1';
+            // Register friendly name: load, debounce-save, propagate
             if (friendlyNameInput) {
-                friendlyNameInput.value = friendlyName;
-                
-                // Debounced listener to sync name to DB/localStorage on typing
-                let friendlyNameDebounce;
+                friendlyNameInput.value = getFriendlyName();
+                let nameDebounce;
                 friendlyNameInput.addEventListener('input', () => {
-                    clearTimeout(friendlyNameDebounce);
-                    friendlyNameDebounce = setTimeout(() => {
+                    clearTimeout(nameDebounce);
+                    nameDebounce = setTimeout(() => {
                         const newName = friendlyNameInput.value.trim() || 'Register 1';
                         localStorage.setItem('rscp_staff_friendly_name', newName);
-                        console.log('Friendly name saved:', newName);
-                        // Trigger immediate heartbeat to update database
-                        sendStaffHeartbeat(newName);
+                        registerHello(newName);
                     }, 500);
                 });
             }
 
-            // 2. Format pairing code input as "123 456" dynamically
+            // Pairing code input: "123 456" formatting + Enter to pair
             if (posDisplayPairCode) {
                 posDisplayPairCode.addEventListener('input', () => {
-                    let val = posDisplayPairCode.value.replace(/\D/g, ''); // Numbers only
-                    if (val.length > 3) {
-                        val = val.substring(0, 3) + ' ' + val.substring(3, 6);
-                    }
+                    let val = posDisplayPairCode.value.replace(/\D/g, '');
+                    if (val.length > 3) val = val.substring(0, 3) + ' ' + val.substring(3, 6);
                     posDisplayPairCode.value = val;
                 });
-                // Support Enter to pair
                 posDisplayPairCode.addEventListener('keydown', (e) => {
                     if (e.key === 'Enter') {
                         e.preventDefault();
-                        pairPersistentDisplay();
+                        claimPairingCode();
                     }
                 });
             }
 
-            // 3. Modal show/hide focus and clear behavior
             if (pairingMenuModalEl) {
                 pairingMenuModalEl.addEventListener('shown.bs.modal', () => {
+                    refreshPeripherals();
                     if (posDisplayPairCode) posDisplayPairCode.focus();
                 });
                 pairingMenuModalEl.addEventListener('hidden.bs.modal', () => {
@@ -1519,148 +1450,12 @@
                 });
             }
 
-            // 4. Send initial heartbeat and start 5-second loop
-            sendStaffHeartbeat(friendlyName);
-            setInterval(() => sendStaffHeartbeat(), 5000);
-
-            // 5. Run initial display status check and start 5-second loop
-            updateDisplayStatusBadge();
-            setInterval(updateDisplayStatusBadge, 5000);
-        }
-
-        function sendStaffHeartbeat(name) {
-            const currentName = name || localStorage.getItem('rscp_staff_friendly_name') || 'Register 1';
-            fetch('/pos/api/terminal/heartbeat', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': '{{ csrf_token() }}'
-                },
-                body: JSON.stringify({
-                    terminal_id: getTerminalId(),
-                    friendly_name: currentName
-                })
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (!data.success) {
-                    console.error('Failed to send staff heartbeat:', data.message);
-                }
-            })
-            .catch(err => console.error('Error sending staff heartbeat:', err));
-        }
-
-        function updateDisplayStatusBadge() {
-            const terminalId = getTerminalId();
-            fetch(`/pos/terminal/status?terminal_id=${encodeURIComponent(terminalId)}`)
-            .then(r => r.json())
-            .then(data => {
-                const badge = document.getElementById('persistentDisplayBadge');
-                if (!badge) return;
-                
-                // Extract customer displays list
-                const displays = data.customer_displays || [];
-                
-                // Count connected vs offline
-                const totalDisplays = displays.length;
-                const connectedCount = displays.filter(d => d.connected).length;
-                const offlineCount = totalDisplays - connectedCount;
-                
-                // Remove all potential status classes first
-                badge.classList.remove('btn-outline-light', 'btn-outline-success', 'btn-outline-warning', 'btn-outline-danger');
-                
-                if (totalDisplays === 0) {
-                    badge.classList.add('btn-outline-light');
-                    badge.innerHTML = `📺 Customer Display ⚪`;
-                } else if (offlineCount === 0) {
-                    badge.classList.add('btn-outline-success');
-                    badge.innerHTML = `📺 Displays: ${connectedCount} Connected 🟢`;
-                } else if (connectedCount > 0) {
-                    badge.classList.add('btn-outline-warning');
-                    badge.innerHTML = `📺 ${connectedCount} Connected, ${offlineCount} Offline ⚠️`;
-                } else {
-                    badge.classList.add('btn-outline-danger');
-                    badge.innerHTML = `📺 Displays Offline 🔴`;
-                }
-            })
-            .catch(err => {
-                console.error('Error fetching display status:', err);
-            });
-        }
-
-        function pairPersistentDisplay() {
-            const codeInput = document.getElementById('posDisplayPairCode');
-            const errDiv = document.getElementById('persistentPairError');
-            const succDiv = document.getElementById('persistentPairSuccess');
-            
-            if (!codeInput) return;
-            
-            const rawCode = codeInput.value.trim().replace(' ', '');
-            if (rawCode.length !== 6 || !/^\d+$/.test(rawCode)) {
-                if (errDiv) {
-                    errDiv.textContent = 'Please enter a valid 6-digit code (e.g. 123 456).';
-                    errDiv.style.display = 'block';
-                }
-                if (succDiv) succDiv.style.display = 'none';
-                return;
-            }
-            
-            if (errDiv) errDiv.style.display = 'none';
-            if (succDiv) succDiv.style.display = 'none';
-            
-            const friendlyName = localStorage.getItem('rscp_staff_friendly_name') || 'Register 1';
-            
-            fetch('/pos/api/register/pair-display', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': '{{ csrf_token() }}'
-                },
-                body: JSON.stringify({
-                    pairing_code: rawCode,
-                    staff_terminal_id: getTerminalId(),
-                    staff_friendly_name: friendlyName
-                })
-            })
-            .then(r => r.json())
-            .then(data => {
-                if (data.success) {
-                    if (succDiv) {
-                        succDiv.textContent = data.message || 'Successfully paired customer display!';
-                        succDiv.style.display = 'block';
-                    }
-                    if (errDiv) errDiv.style.display = 'none';
-                    
-                    // Clear the code input
-                    codeInput.value = '';
-                    
-                    // Update status badge immediately
-                    updateDisplayStatusBadge();
-                    
-                    // Close the modal after 1.5 seconds
-                    setTimeout(() => {
-                        const modalEl = document.getElementById('pairingMenuModal');
-                        if (modalEl) {
-                            const modal = bootstrap.Modal.getInstance(modalEl);
-                            if (modal) modal.hide();
-                        }
-                        if (succDiv) succDiv.style.display = 'none';
-                    }, 1500);
-                } else {
-                    if (errDiv) {
-                        errDiv.textContent = data.message || 'Failed to pair display.';
-                        errDiv.style.display = 'block';
-                    }
-                }
-            })
-            .catch(err => {
-                console.error('Error pairing persistent display:', err);
-                if (errDiv) {
-                    errDiv.textContent = 'Network error pairing customer display.';
-                    errDiv.style.display = 'block';
-                }
-            });
-        }
+            // Announce this register, then start the sync + status loops
+            registerHello();
+            pollRegisterCart();
+            refreshPeripherals();
+            setInterval(refreshPeripherals, PERIPHERAL_REFRESH_MS);
+        });
 
         // --- AUTO-PRINT & REPRINT FUNCTIONALITY ---
         function printOrder(orderNumber) {
