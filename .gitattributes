@@ -1,0 +1,41 @@
+# Normalize all text files to LF in the repository.
+# Working trees may check out platform-native endings, but what git
+# stores (and what GitHub zips / the Linux container see) is always LF.
+* text=auto
+
+# Explicit text types
+*.py    text
+*.html  text
+*.md    text
+*.txt   text
+*.css   text
+*.js    text
+*.json  text
+*.cfg   text
+*.ini   text
+*.toml  text
+*.yml   text
+*.yaml  text
+
+# Shell/service files must stay LF to run on Linux
+*.sh        text eol=lf
+*.service   text eol=lf
+*.example   text eol=lf
+
+# Windows scripts keep CRLF
+*.bat   text eol=crlf
+*.ps1   text eol=crlf
+
+# Binaries: never touch
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.webp   binary
+*.pdf    binary
+*.db     binary
+*.sqlite binary
+*.zip    binary
+*.woff   binary
+*.woff2  binary
