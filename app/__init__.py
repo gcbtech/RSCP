@@ -263,32 +263,40 @@ def create_app(test_config=None):
         """Global authentication check - all routes require login except whitelist."""
         try:
             from flask_login import current_user, logout_user
+            from flask import redirect, url_for, flash
             import time
-            
-            # Whitelist: Routes that don't require authentication
-            public_paths = [
-                '/',  # Index will handle its own redirect
-                '/login',
-                '/logout',
-                '/setup',
-                '/static/',
-                '/favicon.ico',
-                '/api/public/',  # Public storefront API (uses API key auth)
-                # POS customer displays are unattended kiosks: the page is
-                # public and its API is authenticated by pairing token, not
-                # by a login session (sessions expiring overnight must never
-                # take a display down).
+
+            # Public paths that must match EXACTLY. The index page renders or
+            # redirects for itself. (Historically '/' was matched with
+            # startswith, which — since every path starts with '/' — silently
+            # disabled this entire guard.)
+            public_exact = {'/', '/favicon.ico'}
+
+            # Public path PREFIXES: truly public pages, plus endpoints that
+            # authenticate themselves (API key / pairing token) and therefore
+            # must not be bounced to the login page by the session guard.
+            #   /login*, /logout, /setup     - auth + first-run wizard
+            #   /static/                     - assets
+            #   /api/public/                 - storefront API (API key auth)
+            #   /api/federation/             - peer federation (API key auth;
+            #                                  its /admin/* routes still enforce
+            #                                  @login_required themselves)
+            #   /pos/customer-display + /pos/api/{pairing,peripheral,
+            #     customer-display}/         - unattended POS displays, which
+            #                                  authenticate by pairing token so
+            #                                  an expired staff session can
+            #                                  never take a display down
+            public_prefixes = (
+                '/login', '/logout', '/setup', '/static/',
+                '/api/public/', '/api/federation/',
                 '/pos/customer-display',
-                '/pos/api/pairing/',      # request-code / status / ack
-                '/pos/api/peripheral/',   # token-authenticated poll + unpair
-                '/pos/api/customer-display/',  # back-compat shim for pre-v3 display pages
-            ]
-            
-            # Check if current path is public
-            for public_path in public_paths:
-                if request.path == public_path or request.path.startswith(public_path):
-                    return None
-            
+                '/pos/api/pairing/', '/pos/api/peripheral/',
+                '/pos/api/customer-display/',
+            )
+
+            if request.path in public_exact or request.path.startswith(public_prefixes):
+                return None
+
             # Check if user is authenticated
             if not current_user.is_authenticated:
                 # Redirect to login with 'next' parameter to return after login
