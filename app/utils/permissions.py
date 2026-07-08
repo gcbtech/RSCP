@@ -104,7 +104,7 @@ def require_permission(permission):
         def decorated_function(*args, **kwargs):
             if not current_user.is_authenticated:
                 flash('Please log in to access this page.')
-                return redirect(url_for('main.login'))
+                return redirect(url_for('auth.login'))
             
             if not has_permission(current_user, permission):
                 flash('You do not have permission to access this page.')
@@ -126,7 +126,7 @@ def require_role(role):
         def decorated_function(*args, **kwargs):
             if not current_user.is_authenticated:
                 flash('Please log in to access this page.')
-                return redirect(url_for('main.login'))
+                return redirect(url_for('auth.login'))
             
             if not has_role(current_user, role):
                 flash(f'You need the {role} role to access this page.')
@@ -146,7 +146,7 @@ def require_any_role(*roles):
         def decorated_function(*args, **kwargs):
             if not current_user.is_authenticated:
                 flash('Please log in to access this page.')
-                return redirect(url_for('main.login'))
+                return redirect(url_for('auth.login'))
             
             user_roles = get_user_roles(current_user)
             if not any(r in user_roles for r in roles):

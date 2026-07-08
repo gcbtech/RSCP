@@ -175,19 +175,20 @@ def create_app(test_config=None):
     from app.routes.notifications import notifications_bp
     app.register_blueprint(notifications_bp)
     
-    # Initialize SocketIO for POS terminal pairing
+    # Rate-limit the public POS pairing endpoints (6-digit code guessing).
+    # Applied here, after blueprint registration, so the view functions exist.
     try:
-        from app.services.websocket import init_socketio
-        socketio = init_socketio(app)
-        app.socketio = socketio
-        logging.info("SocketIO initialized for terminal pairing")
-    except ImportError as e:
-        logging.warning(f"SocketIO not available (flask-socketio not installed): {e}")
-        app.socketio = None
+        for endpoint, limit in (
+            ('pos.pairing_request_code', '20 per minute'),
+            ('pos.register_claim_code', '15 per minute'),
+        ):
+            view = app.view_functions.get(endpoint)
+            if view:
+                app.view_functions[endpoint] = limiter.limit(limit)(view)
     except Exception as e:
-        logging.warning(f"SocketIO initialization failed: {e}")
-        app.socketio = None
-    
+        logging.warning(f"Could not apply pairing rate limits: {e}")
+
+
     # Global Error Handler
     from app.utils.errors import RscpError
     from flask import render_template
@@ -268,11 +269,19 @@ def create_app(test_config=None):
             public_paths = [
                 '/',  # Index will handle its own redirect
                 '/login',
-                '/logout', 
+                '/logout',
                 '/setup',
                 '/static/',
                 '/favicon.ico',
                 '/api/public/',  # Public storefront API (uses API key auth)
+                # POS customer displays are unattended kiosks: the page is
+                # public and its API is authenticated by pairing token, not
+                # by a login session (sessions expiring overnight must never
+                # take a display down).
+                '/pos/customer-display',
+                '/pos/api/pairing/',      # request-code / status / ack
+                '/pos/api/peripheral/',   # token-authenticated poll + unpair
+                '/pos/api/customer-display/',  # back-compat shim for pre-v3 display pages
             ]
             
             # Check if current path is public

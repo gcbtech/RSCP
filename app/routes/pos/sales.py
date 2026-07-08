@@ -12,7 +12,7 @@ from app.routes.pos import pos_bp
 from app.routes.pos.core import (
     get_cart, save_cart, clear_cart, get_inventory_item, get_tax_rate,
     calculate_tax, calculate_line_total, require_manager_for_void, allow_hold_orders,
-    calculate_percentage
+    calculate_percentage, compute_cart_totals
 )
 from app.services.db import get_db_connection, get_request_db
 
@@ -28,24 +28,10 @@ def sales():
         return redirect(url_for('pos.pos_unlock'))
     
     cart = get_cart()
-    tax_rate = get_tax_rate()
-    
-    # Calculate totals
-    subtotal = sum(item.get('line_total', 0) for item in cart['items'])
-    
-    # Apply order-level discount
-    order_discount = 0
-    if cart.get('discount_amount') and cart.get('discount_type'):
-        if cart['discount_type'] == 'percent':
-            order_discount = calculate_percentage(subtotal, cart['discount_amount'])
-        else:
-            order_discount = cart['discount_amount']
-    
-    discounted_subtotal = max(0, subtotal - order_discount)
-    tax_amount = calculate_tax(discounted_subtotal)
-    total = discounted_subtotal + tax_amount
-    
-    # Check for held orders
+    totals = compute_cart_totals(cart)
+
+    # Check for held orders (store-wide so a cart held on a handheld
+    # scanner can be recalled at any register)
     held_orders = []
     if allow_hold_orders():
         try:
@@ -56,20 +42,21 @@ def sales():
             ).fetchone()
             if table_exists:
                 held_orders = conn.execute('''
-                    SELECT id, note, created_at FROM pos_held_orders
-                    WHERE operator_id = ?
-                    ORDER BY created_at DESC
-                ''', (current_user.id,)).fetchall()
+                    SELECT h.id, h.note, h.created_at, u.username AS held_by
+                    FROM pos_held_orders h
+                    LEFT JOIN users u ON u.id = h.operator_id
+                    ORDER BY h.created_at DESC
+                ''').fetchall()
         except Exception as e:
             logger.warning(f"Could not load held orders: {e}")
-    
+
     return render_template('pos/sales.html',
                            cart=cart,
-                           subtotal=round(subtotal, 2),
-                           order_discount=round(order_discount, 2),
-                           tax_rate=tax_rate * 100,  # Display as percentage
-                           tax_amount=round(tax_amount, 2),
-                           total=round(total, 2),
+                           subtotal=totals['subtotal'],
+                           order_discount=totals['order_discount'],
+                           tax_rate=totals['tax_rate_pct'],
+                           tax_amount=totals['tax_amount'],
+                           total=totals['card_total'],
                            held_orders=held_orders,
                            allow_hold=allow_hold_orders(),
                            require_manager_void=require_manager_for_void(),
@@ -78,28 +65,43 @@ def sales():
 
 def _render_cart_ajax(cart):
     """Helper to render only the cart fragment for AJAX updates."""
-    tax_rate = get_tax_rate()
-    subtotal = sum(item.get('line_total', 0) for item in cart['items'])
-    
-    order_discount = 0
-    if cart.get('discount_amount') and cart.get('discount_type'):
-        if cart['discount_type'] == 'percent':
-            order_discount = calculate_percentage(subtotal, cart['discount_amount'])
-        else:
-            order_discount = cart['discount_amount']
-            
-    discounted_subtotal = max(0, subtotal - order_discount)
-    tax_amount = calculate_tax(discounted_subtotal)
-    total = discounted_subtotal + tax_amount
-    
+    totals = compute_cart_totals(cart)
     return render_template('pos/_cart_fragment.html',
                            cart=cart,
-                           subtotal=round(subtotal, 2),
-                           order_discount=round(order_discount, 2),
-                           tax_rate=tax_rate * 100,
-                           tax_amount=round(tax_amount, 2),
-                           total=round(total, 2),
+                           subtotal=totals['subtotal'],
+                           order_discount=totals['order_discount'],
+                           tax_rate=totals['tax_rate_pct'],
+                           tax_amount=totals['tax_amount'],
+                           total=totals['card_total'],
                            allow_hold=allow_hold_orders())
+
+
+def _wants_json():
+    """Scanner clients ask for JSON instead of redirects/fragment HTML."""
+    return request.headers.get('X-Response-Format') == 'json'
+
+
+def _cart_json(cart, success=True, error=None, status=200):
+    """JSON cart state for scanner clients: totals + drained flash messages."""
+    from flask import get_flashed_messages
+    payload = compute_cart_totals(cart)
+    payload['success'] = success
+    if error:
+        payload['error'] = error
+    # Drain flashes (stock warnings etc.) into the JSON response so they
+    # surface on the scanner instead of piling up in its session.
+    payload['messages'] = [
+        {'category': cat, 'text': msg}
+        for cat, msg in get_flashed_messages(with_categories=True)
+    ]
+    return jsonify(payload), status
+
+
+@pos_bp.route('/cart/fragment')
+@login_required
+def cart_fragment():
+    """Rendered cart fragment for the register page's poll-driven refresh."""
+    return _render_cart_ajax(get_cart())
 
 
 @pos_bp.route('/cart/add', methods=['POST'])
@@ -111,14 +113,18 @@ def cart_add():
     
     if not sku:
         flash('Please enter a SKU or scan an item.')
+        if _wants_json():
+            return _cart_json(get_cart(), success=False, error='missing_sku', status=400)
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return _render_cart_ajax(get_cart())
         return redirect(url_for('pos.sales'))
-    
+
     # Look up the item
     item = get_inventory_item(sku)
     if not item:
         flash(f'Item not found: {sku}. Use "Add Custom Item" for non-inventory items.', 'warning')
+        if _wants_json():
+            return _cart_json(get_cart(), success=False, error='not_found', status=404)
         if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
             return _render_cart_ajax(get_cart())
         return redirect(url_for('pos.sales'))
@@ -172,10 +178,12 @@ def cart_add():
         })
     
     save_cart(cart)
-    
+
+    if _wants_json():
+        return _cart_json(cart)
     if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
         return _render_cart_ajax(cart)
-        
+
     return redirect(url_for('pos.sales'))
 
 
@@ -228,19 +236,23 @@ def cart_add_custom():
 def cart_remove(index):
     """Remove an item from the cart."""
     cart = get_cart()
-    
+
     # Check if manager auth required
     if require_manager_for_void():
         # Check for manager session auth
         if not session.get('pos_manager_auth'):
             flash('Manager authentication required to void items.')
+            if _wants_json():
+                return _cart_json(cart, success=False, error='manager_required', status=403)
             return redirect(url_for('pos.sales'))
-    
+
     if 0 <= index < len(cart['items']):
         removed = cart['items'].pop(index)
         flash(f'Removed: {removed["name"]}')
         save_cart(cart)
-    
+
+    if _wants_json():
+        return _cart_json(cart)
     return redirect(url_for('pos.sales'))
 
 
@@ -272,9 +284,11 @@ def cart_update(index):
             item.get('discount_amount', 0),
             item.get('discount_type')
         )
-        
+
         save_cart(cart)
-    
+
+    if _wants_json():
+        return _cart_json(cart)
     return redirect(url_for('pos.sales'))
 
 
@@ -352,24 +366,30 @@ def cart_clear():
     """Clear the entire cart."""
     clear_cart()
     flash('Cart cleared.')
+    if _wants_json():
+        return _cart_json(get_cart())
     return redirect(url_for('pos.sales'))
 
 
 @pos_bp.route('/cart/hold', methods=['POST'])
 @login_required
 def cart_hold():
-    """Hold the current cart for later."""
+    """Hold the current cart for later recall at any register."""
     if not allow_hold_orders():
         flash('Hold orders feature is disabled.')
+        if _wants_json():
+            return _cart_json(get_cart(), success=False, error='holds_disabled', status=400)
         return redirect(url_for('pos.sales'))
-    
+
     cart = get_cart()
     if not cart['items']:
         flash('Cannot hold an empty cart.')
+        if _wants_json():
+            return _cart_json(cart, success=False, error='empty_cart', status=400)
         return redirect(url_for('pos.sales'))
-    
+
     note = request.form.get('note', '')
-    
+
     conn = get_db_connection()
     try:
         conn.execute('''
@@ -384,7 +404,9 @@ def cart_hold():
         flash('Error holding cart.')
     finally:
         conn.close()
-    
+
+    if _wants_json():
+        return _cart_json(get_cart())
     return redirect(url_for('pos.sales'))
 
 
@@ -394,10 +416,12 @@ def cart_recall(held_id):
     """Recall a held cart."""
     conn = get_db_connection()
     try:
+        # Store-wide: any register can recall a hold, including ones
+        # created by a different operator on a handheld scanner.
         result = conn.execute('''
             SELECT cart_data FROM pos_held_orders
-            WHERE id = ? AND operator_id = ?
-        ''', (held_id, current_user.id)).fetchone()
+            WHERE id = ?
+        ''', (held_id,)).fetchone()
         
         if result:
             cart = json.loads(result['cart_data'])

@@ -302,6 +302,71 @@ def _create_inventory_tables(conn):
         logger.error(f"Error creating inventory tables: {e}")
 
 
+def _migrate_legacy_pairing_tables(conn):
+    """One-time migration from the two legacy POS pairing systems
+    (session-code shared carts + plaintext-token display pairings) to the
+    v3 register/peripheral model, then drops the legacy tables.
+
+    Existing customer display pairings are preserved: tokens are re-stored
+    as SHA-256 hashes, and the raw token each display already holds in its
+    localStorage keeps working — displays do NOT need re-pairing after
+    this upgrade.
+
+    Idempotent: after the legacy tables are dropped this becomes a no-op.
+    """
+    import hashlib
+
+    def table_exists(name):
+        return conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone() is not None
+
+    try:
+        # Registers: carry over friendly names and any live cart
+        if table_exists('pos_active_terminals'):
+            for row in conn.execute(
+                'SELECT terminal_id, friendly_name, cart_data FROM pos_active_terminals'
+            ).fetchall():
+                conn.execute(
+                    '''INSERT OR IGNORE INTO pos_registers (register_id, friendly_name, cart_json)
+                       VALUES (?, ?, ?)''',
+                    (row['terminal_id'], row['friendly_name'] or 'Register',
+                     row['cart_data'] or '{"items": []}')
+                )
+
+        # Display pairings: hash tokens at rest; device-held tokens stay valid
+        if table_exists('pos_customer_display_pairings'):
+            for row in conn.execute(
+                '''SELECT customer_terminal_id, customer_terminal_token,
+                          staff_terminal_id, staff_friendly_name
+                   FROM pos_customer_display_pairings'''
+            ).fetchall():
+                token_hash = hashlib.sha256(
+                    row['customer_terminal_token'].encode('utf-8')
+                ).hexdigest()
+                conn.execute(
+                    '''INSERT OR IGNORE INTO pos_peripherals
+                       (peripheral_id, register_id, role, token_hash, friendly_name)
+                       VALUES (?, ?, 'display', ?, 'Customer Display')''',
+                    (row['customer_terminal_id'], row['staff_terminal_id'], token_hash)
+                )
+                # Ensure the paired register exists even if it never heartbeated
+                conn.execute(
+                    'INSERT OR IGNORE INTO pos_registers (register_id, friendly_name) VALUES (?, ?)',
+                    (row['staff_terminal_id'], row['staff_friendly_name'] or 'Register')
+                )
+
+        for legacy in ('pos_customer_display_pairings', 'pos_display_pairing_codes',
+                       'pos_paired_terminals', 'pos_terminal_sessions',
+                       'pos_active_terminals'):
+            conn.execute(f'DROP TABLE IF EXISTS {legacy}')
+
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Legacy pairing migration error: {e}")
+
+
 def _create_pos_tables(conn):
     """Create POS module tables if they don't exist."""
     try:
@@ -432,77 +497,59 @@ def _create_pos_tables(conn):
             )
         ''')
         
-        # POS Terminal Sessions Table (for paired terminals sharing a cart)
+        # =====================================================
+        # POS Terminal Pairing v3 (register-hub architecture)
+        # =====================================================
+        # A register (the browser running /pos/) owns the authoritative
+        # cart. Peripherals (customer displays and staff scanners) pair
+        # to one register with a role and a persistent bearer token
+        # (stored hashed) so they reconnect unattended after power-off.
+
         conn.execute('''
-            CREATE TABLE IF NOT EXISTS pos_terminal_sessions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_code TEXT UNIQUE NOT NULL,
-                cart_data TEXT DEFAULT '{"items": []}',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_term_sess_code ON pos_terminal_sessions(session_code)')
-        
-        # POS Paired Terminals Table (terminals connected to a session)
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS pos_paired_terminals (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_code TEXT NOT NULL,
-                terminal_type TEXT NOT NULL,
-                flask_session_id TEXT,
-                user_id INTEGER,
-                connected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (session_code) REFERENCES pos_terminal_sessions(session_code) ON DELETE CASCADE,
-                FOREIGN KEY (user_id) REFERENCES users(id)
-            )
-        ''')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_paired_term_code ON pos_paired_terminals(session_code)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_paired_term_session ON pos_paired_terminals(flask_session_id)')
-        
-        # POS Customer Display Pairings (persistent terminal pairings)
-        conn.execute('''
-            CREATE TABLE IF NOT EXISTS pos_customer_display_pairings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                customer_terminal_id TEXT UNIQUE NOT NULL,
-                customer_terminal_token TEXT UNIQUE NOT NULL,
-                staff_terminal_id TEXT NOT NULL,
-                staff_friendly_name TEXT,
-                customer_last_seen TIMESTAMP,
+            CREATE TABLE IF NOT EXISTS pos_registers (
+                register_id TEXT PRIMARY KEY,
+                friendly_name TEXT NOT NULL DEFAULT 'Register',
+                cart_json TEXT NOT NULL DEFAULT '{"items": []}',
+                cart_version INTEGER NOT NULL DEFAULT 0,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        
-        # Migration: add staff_friendly_name column to pos_customer_display_pairings if it doesn't exist
-        _safe_add_column(conn, 'pos_customer_display_pairings', 'staff_friendly_name', 'TEXT')
-            
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_cust_disp_cust_id ON pos_customer_display_pairings(customer_terminal_id)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_cust_disp_token ON pos_customer_display_pairings(customer_terminal_token)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_cust_disp_staff_id ON pos_customer_display_pairings(staff_terminal_id)')
 
-        # POS Active Terminals Table (active registers and custom friendly names)
         conn.execute('''
-            CREATE TABLE IF NOT EXISTS pos_active_terminals (
-                terminal_id TEXT PRIMARY KEY,
-                friendly_name TEXT NOT NULL,
-                cart_data TEXT,
-                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            CREATE TABLE IF NOT EXISTS pos_peripherals (
+                peripheral_id TEXT PRIMARY KEY,
+                register_id TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('display', 'scanner')),
+                token_hash TEXT UNIQUE NOT NULL,
+                pending_token TEXT,
+                friendly_name TEXT,
+                paired_by INTEGER,
+                paired_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen TIMESTAMP,
+                FOREIGN KEY (paired_by) REFERENCES users(id)
             )
         ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_periph_register ON pos_peripherals(register_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_periph_token ON pos_peripherals(token_hash)')
 
-        # Migration: add cart_data column to pos_active_terminals if it doesn't exist
-        _safe_add_column(conn, 'pos_active_terminals', 'cart_data', 'TEXT')
-
-        # POS Display Pairing Codes (temporary pairing codes for customer displays)
+        # Short-lived 6-digit codes shown on an unpaired peripheral,
+        # claimed from a register. TTL enforced on read/insert.
         conn.execute('''
-            CREATE TABLE IF NOT EXISTS pos_display_pairing_codes (
-                pairing_code TEXT PRIMARY KEY,
-                customer_terminal_id TEXT UNIQUE NOT NULL,
+            CREATE TABLE IF NOT EXISTS pos_pairing_codes (
+                code TEXT PRIMARY KEY,
+                peripheral_id TEXT UNIQUE NOT NULL,
+                requested_role TEXT NOT NULL DEFAULT 'display'
+                    CHECK (requested_role IN ('display', 'scanner')),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
 
         conn.commit()
+
+        # One-time carry-over from the legacy pairing systems, then drop them.
+        _migrate_legacy_pairing_tables(conn)
+
         logger.info("POS tables and terminal pairing schemas initialized.")
         
         # ========================================

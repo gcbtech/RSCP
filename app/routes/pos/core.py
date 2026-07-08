@@ -150,330 +150,176 @@ def generate_order_number(terminal_id='POS-1'):
             conn.close()
 
 
+class ScannerTokenInvalid(Exception):
+    """Raised when a request presents an unknown or revoked pairing token.
+
+    Converted to a 401 JSON response by the blueprint errorhandler so a
+    revoked scanner drops to its pairing screen instead of silently
+    writing to a session-local cart.
+    """
+
+
+@pos_bp.errorhandler(ScannerTokenInvalid)
+def _handle_scanner_token_invalid(e):
+    from flask import jsonify
+    return jsonify({
+        'success': False,
+        'revoked': True,
+        'message': 'Pairing revoked. Re-pair this device to a register.'
+    }), 401
+
+
+def resolve_register_id():
+    """Determine which register's cart this request targets.
+
+    Priority:
+      1. X-Pairing-Token header - a paired staff scanner acting on its
+         register's cart (raises ScannerTokenInvalid if revoked/unknown)
+      2. X-Terminal-Id header - the register page's own AJAX calls
+      3. session['terminal_id'] - register form posts (populated by
+         /pos/api/register/hello when the sales page loads)
+
+    Returns None when the request has no register identity yet (a fresh
+    browser before the sales page JS has said hello); callers fall back
+    to a per-session cart.
+    """
+    token = request.headers.get('X-Pairing-Token') if request else None
+    if token:
+        from app.services import pos_registers
+        peripheral = pos_registers.resolve_peripheral(get_request_db(), token)
+        if not peripheral or peripheral['role'] != 'scanner':
+            raise ScannerTokenInvalid()
+        return peripheral['register_id']
+
+    terminal_id = request.headers.get('X-Terminal-Id') if request else None
+    return terminal_id or session.get('terminal_id') or None
+
+
 def get_cart():
+    """Get the current cart.
+
+    The authoritative cart lives on the register (pos_registers row,
+    resolved via resolve_register_id). Requests with no register identity
+    fall back to a session-local cart so a bare browser still works.
     """
-    Get the current cart.
-    If terminal is paired, loads from shared database storage.
-    Otherwise, uses session storage.
-    """
-    import json
-    from flask import request
-    
-    try:
-        # Check if terminal is paired
-        pairing = session.get('pos_pairing')
-        
-        # Safe fallback: if pairing is not in session but terminal_id is present, check DB
-        terminal_id = None
+    from app.services import pos_registers
+
+    register_id = resolve_register_id()
+    if register_id:
         try:
-            if request:
-                terminal_id = request.headers.get('X-Terminal-Id')
-        except Exception:
-            pass
-        if not terminal_id:
-            terminal_id = session.get('terminal_id')
-            
-        if (not pairing or not pairing.get('session_code')) and terminal_id:
-            try:
-                from app.services.db import get_request_db
-                conn = get_request_db()
-                pt_row = conn.execute(
-                    'SELECT session_code, terminal_type FROM pos_paired_terminals WHERE flask_session_id = ?',
-                    (terminal_id,)
-                ).fetchone()
-                if pt_row:
-                    pairing = {
-                        'session_code': pt_row['session_code'],
-                        'terminal_type': pt_row['terminal_type']
-                    }
-                    session['pos_pairing'] = pairing
-                    session.modified = True
-                    logger.info(f"Restored pairing from database for terminal_id {terminal_id}: {pairing}")
-            except Exception as e:
-                logger.error(f"Error restoring pairing from db: {e}")
-        
-        if pairing and pairing.get('session_code'):
-            # Load from shared storage
-            session_code = pairing['session_code']
-            try:
-                from app.services.db import get_request_db
-                conn = get_request_db()
-                row = conn.execute(
-                    'SELECT cart_data FROM pos_terminal_sessions WHERE session_code = ?',
-                    (session_code,)
-                ).fetchone()
-                
-                if row and row['cart_data']:
-                    cart = json.loads(row['cart_data'])
-                    # Ensure required keys
-                    cart.setdefault('items', [])
-                    cart.setdefault('discount_amount', 0)
-                    cart.setdefault('discount_type', None)
-                    cart.setdefault('discount_reason', '')
-                    return cart
-            except Exception as e:
-                logger.error(f"Error loading shared cart: {e}")
-                # Fall through to session cart
-        
-        # Not paired or error - use session cart
-        cart = session.get('pos_cart')
-        
-        # Initialize if missing or invalid type
-        if cart is None or not isinstance(cart, dict):
-            cart = {
-                'items': [],
-                'discount_amount': 0,
-                'discount_type': None,
-                'discount_reason': '',
-            }
-            session['pos_cart'] = cart
+            cart, _version = pos_registers.load_register_cart(get_request_db(), register_id)
             return cart
-            
-        # Repair: Ensure critical keys exist
-        modified = False
-        if 'items' not in cart:
-            cart['items'] = []
-            modified = True
-        
-        # Ensure discount keys
-        if 'discount_amount' not in cart:
-            cart['discount_amount'] = 0
-            modified = True
-            
-        if 'discount_type' not in cart:
-            cart['discount_type'] = None
-            modified = True
-            
-        if modified:
-            session.modified = True
-            
+        except Exception as e:
+            logger.error(f"Error loading register cart for {register_id}: {e}")
+            # Fall through to the session cart rather than 500 mid-sale
+
+    cart = session.get('pos_cart')
+    if cart is None or not isinstance(cart, dict):
+        cart = pos_registers.empty_cart()
+        session['pos_cart'] = cart
         return cart
-    except Exception as e:
-        logger.error(f"Error in get_cart: {e}")
-        # Emergency fallback to prevent 500
-        return {'items': [], 'discount_amount': 0, 'discount_type': None}
+
+    modified = False
+    for key, default in (('items', []), ('discount_amount', 0),
+                         ('discount_type', None), ('discount_reason', '')):
+        if key not in cart:
+            cart[key] = default
+            modified = True
+    if modified:
+        session.modified = True
+    return cart
 
 
 def save_cart(cart):
+    """Save the cart to its single authoritative home.
+
+    Register-identified requests write the register row, bumping
+    cart_version — which paired displays and scanners poll — so one save
+    is the whole synchronization story. Otherwise the session cart is used.
     """
-    Save the cart.
-    If terminal is paired, saves to shared storage and broadcasts via WebSocket.
-    Otherwise, uses session storage.
-    """
-    import json
-    from flask import request, session
-    
-    # 1. Try to get terminal_id (local storage ID)
-    terminal_id = None
-    try:
-        if request:
-            terminal_id = request.headers.get('X-Terminal-Id')
-    except Exception:
-        pass
-    if not terminal_id:
-        terminal_id = session.get('terminal_id')
-        
-    # Restore pairing from database if session is missing but terminal_id is present
-    pairing = session.get('pos_pairing')
-    if (not pairing or not pairing.get('session_code')) and terminal_id:
+    from app.services import pos_registers
+
+    register_id = resolve_register_id()
+    if register_id:
         try:
-            from app.services.db import get_db_connection
-            conn = get_db_connection()
-            pt_row = conn.execute(
-                'SELECT session_code, terminal_type FROM pos_paired_terminals WHERE flask_session_id = ?',
-                (terminal_id,)
-            ).fetchone()
-            if pt_row:
-                pairing = {
-                    'session_code': pt_row['session_code'],
-                    'terminal_type': pt_row['terminal_type']
-                }
-                session['pos_pairing'] = pairing
-                session.modified = True
-                logger.info(f"Restored pairing in save_cart for terminal_id {terminal_id}: {pairing}")
-            conn.close()
+            pos_registers.save_register_cart(get_request_db(), register_id, cart)
+            return
         except Exception as e:
-            logger.error(f"Error restoring pairing in save_cart from db: {e}")
-            
-    session_code = pairing.get('session_code') if pairing else None
-    
-    # 2. Always save to session (for fallback/unpair scenarios)
+            logger.error(f"Error saving register cart for {register_id}: {e}")
+
     session['pos_cart'] = cart
     session.modified = True
-    
-    # 3. If we have a terminal_id or session_code, persist cart to database
-    if terminal_id or session_code:
-        close_conn = False
-        try:
-            from flask import has_app_context
-            if has_app_context():
-                conn = get_request_db()
-            else:
-                conn = get_db_connection()
-                close_conn = True
-        except ImportError:
-            conn = get_db_connection()
-            close_conn = True
-
-        try:
-            if terminal_id:
-                # Insert or update cart_data for this terminal
-                conn.execute(
-                    """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
-                       VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
-                       ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
-                    (terminal_id, json.dumps(cart))
-                )
-                conn.commit()
-
-            # 4. Handle legacy session sharing if active
-            if session_code:
-                conn.execute(
-                    'UPDATE pos_terminal_sessions SET cart_data = ?, last_activity = CURRENT_TIMESTAMP WHERE session_code = ?',
-                    (json.dumps(cart), session_code)
-                )
-                
-                # Find primary/main terminal ID in this legacy session
-                main_row = conn.execute(
-                    "SELECT flask_session_id FROM pos_paired_terminals WHERE session_code = ? AND terminal_type = 'main'",
-                    (session_code,)
-                ).fetchone()
-                
-                if main_row and main_row['flask_session_id']:
-                    primary_terminal_id = main_row['flask_session_id']
-                    if primary_terminal_id != terminal_id:
-                        conn.execute(
-                            """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
-                               VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
-                               ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
-                            (primary_terminal_id, json.dumps(cart))
-                        )
-                
-                conn.commit()
-        except Exception as e:
-            logger.error(f"Error saving cart to db: {e}")
-        finally:
-            if close_conn:
-                conn.close()
-            
-    # 5. Broadcast to WebSockets
-    try:
-        from app.services.websocket import broadcast_cart_update
-        # Always broadcast to the persistent customer display room if terminal_id is present
-        # And to the legacy session room if session_code is present
-        broadcast_cart_update(session_code, cart, terminal_id)
-    except Exception as e:
-        logger.warning(f"Could not broadcast cart update: {e}")
 
 
 def clear_cart():
-    """
-    Clear the current cart.
-    If paired, clears shared storage and broadcasts.
-    """
-    import json
-    from flask import request, session
-    
-    empty_cart = {'items': [], 'discount_amount': 0, 'discount_type': None, 'discount_reason': ''}
-    
-    # 1. Try to get terminal_id (local storage ID)
-    terminal_id = None
-    try:
-        if request:
-            terminal_id = request.headers.get('X-Terminal-Id')
-    except Exception:
-        pass
-    if not terminal_id:
-        terminal_id = session.get('terminal_id')
-        
-    # Restore pairing from database if session is missing but terminal_id is present
-    pairing = session.get('pos_pairing')
-    if (not pairing or not pairing.get('session_code')) and terminal_id:
-        try:
-            from app.services.db import get_db_connection
-            conn = get_db_connection()
-            pt_row = conn.execute(
-                'SELECT session_code, terminal_type FROM pos_paired_terminals WHERE flask_session_id = ?',
-                (terminal_id,)
-            ).fetchone()
-            if pt_row:
-                pairing = {
-                    'session_code': pt_row['session_code'],
-                    'terminal_type': pt_row['terminal_type']
-                }
-                session['pos_pairing'] = pairing
-                session.modified = True
-                logger.info(f"Restored pairing in clear_cart for terminal_id {terminal_id}: {pairing}")
-            conn.close()
-        except Exception as e:
-            logger.error(f"Error restoring pairing in clear_cart from db: {e}")
-            
-    session_code = pairing.get('session_code') if pairing else None
-    
-    # 2. Always clear session cart
+    """Clear the current cart (bumps the version so peripherals refresh)."""
+    from app.services import pos_registers
+
+    save_cart(pos_registers.empty_cart())
     session.pop('pos_cart', None)
     session.modified = True
-    
-    # 3. If we have a terminal_id or session_code, clear database cart
-    if terminal_id or session_code:
-        close_conn = False
-        try:
-            from flask import has_app_context
-            if has_app_context():
-                conn = get_request_db()
-            else:
-                conn = get_db_connection()
-                close_conn = True
-        except ImportError:
-            conn = get_db_connection()
-            close_conn = True
 
-        try:
-            if terminal_id:
-                conn.execute(
-                    """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
-                       VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
-                       ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
-                    (terminal_id, json.dumps(empty_cart))
-                )
-                conn.commit()
 
-            # 4. Handle legacy session sharing if active
-            if session_code:
-                conn.execute(
-                    'UPDATE pos_terminal_sessions SET cart_data = ?, last_activity = CURRENT_TIMESTAMP WHERE session_code = ?',
-                    (json.dumps(empty_cart), session_code)
-                )
-                
-                # Find primary/main terminal ID in this legacy session
-                main_row = conn.execute(
-                    "SELECT flask_session_id FROM pos_paired_terminals WHERE session_code = ? AND terminal_type = 'main'",
-                    (session_code,)
-                ).fetchone()
-                
-                if main_row and main_row['flask_session_id']:
-                    primary_terminal_id = main_row['flask_session_id']
-                    if primary_terminal_id != terminal_id:
-                        conn.execute(
-                            """INSERT INTO pos_active_terminals (terminal_id, friendly_name, cart_data, last_seen) 
-                               VALUES (?, 'Register', ?, CURRENT_TIMESTAMP) 
-                               ON CONFLICT(terminal_id) DO UPDATE SET cart_data = excluded.cart_data, last_seen = excluded.last_seen""",
-                            (primary_terminal_id, json.dumps(empty_cart))
-                        )
-                
-                conn.commit()
-        except Exception as e:
-            logger.error(f"Error clearing cart in db: {e}")
-        finally:
-            if close_conn:
-                conn.close()
-            
-    # 5. Broadcast clear to WebSockets
+def compute_cart_totals(cart):
+    """Single source of truth for cart math.
+
+    Used by the sales page, the cart fragment, /api/cart, peripheral
+    polling (customer displays and scanners), and checkout parity so
+    every screen shows identical numbers — including dual cash/card
+    pricing when a cash discount is configured.
+    """
+    items = cart.get('items', []) or []
+    subtotal = round_money(sum(item.get('line_total', 0) for item in items))
+
+    order_discount = 0.0
+    if cart.get('discount_amount') and cart.get('discount_type'):
+        if cart['discount_type'] == 'percent':
+            order_discount = calculate_percentage(subtotal, cart['discount_amount'])
+        else:
+            try:
+                order_discount = round_money(min(float(cart['discount_amount']), subtotal))
+            except (TypeError, ValueError):
+                order_discount = 0.0
+
     try:
-        from app.services.websocket import broadcast_cart_update
-        broadcast_cart_update(session_code, empty_cart, terminal_id)
-    except Exception as e:
-        logger.warning(f"Could not broadcast cart clear: {e}")
+        coupon_discount = float((cart.get('applied_coupon') or {}).get('discount', 0) or 0)
+    except (TypeError, ValueError):
+        coupon_discount = 0.0
+
+    discounted_subtotal = max(0.0, subtotal - order_discount - coupon_discount)
+    tax_rate = get_tax_rate()
+    tax_amount = calculate_tax(discounted_subtotal)
+    card_total = round_money(discounted_subtotal + tax_amount)
+
+    cash_discount_enabled = get_pos_setting('CASH_DISCOUNT_ENABLED', 'false') == 'true'
+    cash_discount_value = 0.0
+    if cash_discount_enabled:
+        try:
+            cd_amount = float(get_pos_setting('CASH_DISCOUNT_AMOUNT', '0') or 0)
+        except (TypeError, ValueError):
+            cd_amount = 0.0
+        cd_type = get_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
+        if cd_amount > 0:
+            if cd_type == 'percent':
+                cash_discount_value = calculate_percentage(discounted_subtotal, cd_amount)
+            else:
+                cash_discount_value = round_money(min(cd_amount, discounted_subtotal))
+    cash_total = round_money(card_total - cash_discount_value)
+
+    return {
+        'items': items,
+        'item_count': len(items),
+        'subtotal': subtotal,
+        'order_discount': round_money(order_discount),
+        'coupon_discount': round_money(coupon_discount),
+        'applied_coupon': cart.get('applied_coupon'),
+        'tax_rate_pct': round(tax_rate * 100, 2),
+        'tax_amount': tax_amount,
+        'card_total': card_total,
+        'cash_discount_enabled': cash_discount_enabled,
+        'cash_discount_value': cash_discount_value,
+        'cash_total': cash_total,
+    }
 
 
 from app.routes.inventory import get_inventory_item
@@ -541,7 +387,7 @@ def check_pos_enabled():
     # Enforce global authentication for POS module (except exceptions above)
     from flask import current_app
     if not current_app.config.get('TESTING') and not current_user.is_authenticated:
-        return redirect(url_for('main.login', next=request.url))
+        return redirect(url_for('auth.login', next=request.url))
     
     if not current_app.config.get('TESTING') and not is_pos_enabled():
         flash("POS module is not enabled.")
@@ -553,21 +399,6 @@ def check_pos_enabled():
         if not has_permission(current_user, 'pos.view'):
             flash("You don't have access to the POS module.")
             return redirect(url_for('main.index'))
-    
-    # Guard: customer terminals can only access customer-safe endpoints
-    pairing = session.get('pos_pairing')
-    if pairing and pairing.get('terminal_type') == 'customer':
-        # Endpoints that customer terminals are allowed to access
-        allowed_endpoints = {
-            'pos.customer_display',
-            'pos.pairing_page',
-            'pos.pair_terminal',
-            'pos.unpair_terminal',
-            'pos.terminal_status',
-            'pos.api_shared_cart',
-        }
-        if request.endpoint and request.endpoint not in allowed_endpoints:
-            return redirect(url_for('pos.customer_display'))
 
 
 @pos_bp.route('/debug')
