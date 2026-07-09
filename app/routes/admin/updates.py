@@ -4,6 +4,7 @@ Handles version checking and GitHub-based updates.
 """
 import os
 import sys
+import re
 import logging
 import shutil
 import tempfile
@@ -398,27 +399,67 @@ def _purge_pycache():
     return removed
 
 
+def _requirement_dist_names(req_path):
+    """Distribution names from a requirements file, with version specifiers,
+    extras, env markers and comments stripped. 'Flask>=2.3.0' -> 'Flask'."""
+    names = []
+    try:
+        with open(req_path, encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#') or line.startswith('-'):
+                    continue
+                line = line.split(';', 1)[0].split('#', 1)[0].strip()   # markers, comments
+                name = re.split(r'[<>=!~\[\(; ]', line, 1)[0].strip()   # specifier/extras
+                if name:
+                    names.append(name)
+    except Exception as e:
+        logger.warning(f"Could not parse {req_path}: {e}")
+    return names
+
+
+def _missing_requirements(req_path):
+    """Requirement dist names that are NOT installed at all. A package that is
+    installed at ANY version counts as satisfied — we deliberately do NOT treat
+    a below-minimum version as missing, because upgrading in place is what
+    breaks a working system Python."""
+    import importlib.metadata as md
+    missing = []
+    for name in _requirement_dist_names(req_path):
+        try:
+            md.version(name)
+        except md.PackageNotFoundError:
+            missing.append(name)
+        except Exception:
+            pass  # ambiguous — assume present, never force an install
+    return missing
+
+
 def _install_dependencies(base_dir=None):
-    """Install requirements. Returns (ok, message).
+    """Install ONLY genuinely-missing requirements; never upgrade installed ones.
 
-    Uses the venv pip when present, otherwise the running interpreter — so
-    system-Python deployments (no venv) actually get their deps installed
-    instead of silently skipping the step. The return code IS checked.
-
-    On Debian/PEP 668 "externally-managed" system Pythons (our LXC), a plain
-    system pip install is refused; we retry with --break-system-packages,
-    which is what an admin does by hand there. A genuinely bad/unresolvable
-    requirement still fails (and aborts the update before restart).
+    Upgrading in place is what bricked a production update: `pip install -r
+    requirements.txt` on a Debian system Python pulled Flask 2.2 -> 3.x and
+    Werkzeug 2.2 -> 3.x, which the app cannot boot against, so it crash-looped
+    and never came back. Most updates change no dependencies, so if every
+    requirement is already installed we skip pip entirely and touch nothing.
+    Only a genuinely NEW dependency triggers an install — of just that package.
     """
     base = base_dir or BASE_DIR
     req = os.path.join(base, 'requirements.txt')
     if not os.path.exists(req):
         return True, 'no requirements.txt'
+
+    missing = _missing_requirements(req)
+    if not missing:
+        return True, 'all requirements already satisfied (no changes)'
+
+    logger.info(f"Installing new dependencies: {', '.join(missing)}")
     venv_pip = os.path.join(base, 'venv', 'bin', 'pip')
     if os.path.exists(venv_pip):
-        base_cmd = [venv_pip, 'install', '-r', 'requirements.txt', '-q']
+        base_cmd = [venv_pip, 'install', '-q'] + missing
     else:
-        base_cmd = [sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt', '-q']
+        base_cmd = [sys.executable, '-m', 'pip', 'install', '-q'] + missing
 
     def _run(cmd):
         return subprocess.run(cmd, cwd=base, capture_output=True, timeout=300, text=True)
@@ -426,13 +467,13 @@ def _install_dependencies(base_dir=None):
     try:
         result = _run(base_cmd)
         if result.returncode == 0:
-            return True, 'ok'
+            return True, f'installed new: {", ".join(missing)}'
         combined = (result.stderr or '') + (result.stdout or '')
         if 'externally-managed-environment' in combined or 'externally managed' in combined:
             # PEP 668 refusal on a no-venv system Python — retry allowing it.
             result2 = _run(base_cmd + ['--break-system-packages'])
             if result2.returncode == 0:
-                return True, 'ok (system site-packages)'
+                return True, f'installed new (system): {", ".join(missing)}'
             return False, ((result2.stderr or '') + (result2.stdout or '') or 'pip failed')[-600:]
         return False, (combined or 'pip returned non-zero')[-600:]
     except Exception as e:
