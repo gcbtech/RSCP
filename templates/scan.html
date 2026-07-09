@@ -450,6 +450,13 @@
         if (u) { document.getElementById('userInput').value = u; document.getElementById('userDisplay').innerText = u; }
 
         function renderHistory() {
+            // Respect the HISTORY: OFF toggle. renderHistory() is called after
+            // every scan, so without this guard a hidden history reappears on
+            // the next scan.
+            if (localStorage.getItem('rscp_hide_history') === 'true') {
+                document.getElementById('sessionHistory').style.display = 'none';
+                return;
+            }
             const hist = JSON.parse(sessionStorage.getItem('rscp_session') || "[]");
             if (hist.length > 0) {
                 document.getElementById('sessionHistory').style.display = 'block';

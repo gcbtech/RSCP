@@ -469,14 +469,14 @@
                 <ul class="pagination pagination-sm mb-0">
                     {% if page > 1 %}
                     <li class="page-item">
-                        <a class="page-link" href="?page={{ page - 1 }}&sort={{ sort_by }}&order={{ order }}">« Prev</a>
+                        <a class="page-link" href="?page={{ page - 1 }}&sort={{ sort_by }}&order={{ order }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}{% if show_legacy %}&show_legacy=1{% endif %}">« Prev</a>
                     </li>
                     {% else %}
                     <li class="page-item disabled"><span class="page-link">« Prev</span></li>
                     {% endif %}
                     <li class="page-item disabled"><span class="page-link">{{ page }} / {{ total_pages }}</span></li>
                     {% if page < total_pages %} <li class="page-item">
-                        <a class="page-link" href="?page={{ page + 1 }}&sort={{ sort_by }}&order={{ order }}">Next »</a>
+                        <a class="page-link" href="?page={{ page + 1 }}&sort={{ sort_by }}&order={{ order }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}{% if show_legacy %}&show_legacy=1{% endif %}">Next »</a>
                         </li>
                         {% else %}
                         <li class="page-item disabled"><span class="page-link">Next »</span></li>
@@ -555,7 +555,7 @@
                 <ul class="pagination mb-0">
                     {% if page > 1 %}
                     <li class="page-item">
-                        <a class="page-link" href="?page={{ page - 1 }}&sort={{ sort_by }}&order={{ order }}">« Prev</a>
+                        <a class="page-link" href="?page={{ page - 1 }}&sort={{ sort_by }}&order={{ order }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}{% if show_legacy %}&show_legacy=1{% endif %}">« Prev</a>
                     </li>
                     {% else %}
                     <li class="page-item disabled"><span class="page-link">« Prev</span></li>
@@ -565,7 +565,7 @@
                     </li>
 
                     {% if page < total_pages %} <li class="page-item">
-                        <a class="page-link" href="?page={{ page + 1 }}&sort={{ sort_by }}&order={{ order }}">Next »</a>
+                        <a class="page-link" href="?page={{ page + 1 }}&sort={{ sort_by }}&order={{ order }}{% if search_query %}&q={{ search_query|urlencode }}{% endif %}{% if show_legacy %}&show_legacy=1{% endif %}">Next »</a>
                         </li>
                         {% else %}
                         <li class="page-item disabled"><span class="page-link">Next »</span></li>

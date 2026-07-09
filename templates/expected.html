@@ -29,7 +29,17 @@
                     <div class="d-flex w-100 justify-content-between">
                         <h5 class="mb-1">{{ item.name }}</h5>
                     </div>
+                    {% if shipper == 'UPS' %}
+                    <a class="mb-1 d-inline-block text-decoration-none" style="font-family: monospace;" target="_blank" title="Track on UPS" href="https://www.ups.com/track?track=yes&trackNums={{ item.tracking }}">{{ item.tracking }}</a>
+                    {% elif shipper == 'FedEx' %}
+                    <a class="mb-1 d-inline-block text-decoration-none" style="font-family: monospace;" target="_blank" title="Track on FedEx" href="https://www.fedex.com/fedextrack/?trknbr={{ item.tracking }}">{{ item.tracking }}</a>
+                    {% elif shipper == 'USPS' %}
+                    <a class="mb-1 d-inline-block text-decoration-none" style="font-family: monospace;" target="_blank" title="Track on USPS" href="https://tools.usps.com/go/TrackConfirmAction?tLabels={{ item.tracking }}">{{ item.tracking }}</a>
+                    {% elif shipper == 'Canada Post' %}
+                    <a class="mb-1 d-inline-block text-decoration-none" style="font-family: monospace;" target="_blank" title="Track on Canada Post" href="https://canadapost-postescanada.ca/track-reperage/en#/search?searchFor={{ item.tracking }}">{{ item.tracking }}</a>
+                    {% else %}
                     <p class="mb-1 text-primary" style="font-family: monospace;">{{ item.tracking }}</p>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
