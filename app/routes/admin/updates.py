@@ -77,6 +77,14 @@ MAX_BACKUPS = 5
 ORPHAN_SCAN_DIRS = ('app', 'templates')
 ORPHAN_EXTENSIONS = {'.py', '.html', '.js', '.css', '.map'}
 
+# Tier 3 (atomic releases). When BASE_DIR is a symlink to a release dir, the
+# updater builds a new release and atomically repoints the symlink instead of
+# copying over the live tree. These shared items live once in <root>/shared and
+# are symlinked into every release so they survive swaps and rollbacks.
+SHARED_LINK_FILES = ('config.json', 'rscp.db', 'rscp.db-wal', 'rscp.db-shm')
+SHARED_LINK_DIRS = (os.path.join('static', 'uploads'),)
+MAX_RELEASES = 5
+
 
 def get_current_version():
     """Get current installed version."""
@@ -261,10 +269,12 @@ def _create_backup(old_version):
             src.close()
 
     # 2. Code snapshot (small once bulky/user dirs are excluded), so rollback
-    #    doesn't depend on git or network.
-    with tarfile.open(os.path.join(backup_dir, 'code.tar.gz'), 'w:gz') as tar:
-        tar.add(BASE_DIR, arcname='.',
-                filter=lambda ti: None if _should_exclude_from_backup(ti.name) else ti)
+    #    doesn't depend on git or network. Skipped in release layout — there
+    #    the previous release dir already IS the code backup.
+    if not _is_release_layout():
+        with tarfile.open(os.path.join(backup_dir, 'code.tar.gz'), 'w:gz') as tar:
+            tar.add(BASE_DIR, arcname='.',
+                    filter=lambda ti: None if _should_exclude_from_backup(ti.name) else ti)
 
     # 3. Manifest for humans and for rollback tooling later.
     try:
@@ -388,7 +398,7 @@ def _purge_pycache():
     return removed
 
 
-def _install_dependencies():
+def _install_dependencies(base_dir=None):
     """Install requirements. Returns (ok, message).
 
     Uses the venv pip when present, otherwise the running interpreter — so
@@ -400,17 +410,18 @@ def _install_dependencies():
     which is what an admin does by hand there. A genuinely bad/unresolvable
     requirement still fails (and aborts the update before restart).
     """
-    req = os.path.join(BASE_DIR, 'requirements.txt')
+    base = base_dir or BASE_DIR
+    req = os.path.join(base, 'requirements.txt')
     if not os.path.exists(req):
         return True, 'no requirements.txt'
-    venv_pip = os.path.join(BASE_DIR, 'venv', 'bin', 'pip')
+    venv_pip = os.path.join(base, 'venv', 'bin', 'pip')
     if os.path.exists(venv_pip):
         base_cmd = [venv_pip, 'install', '-r', 'requirements.txt', '-q']
     else:
         base_cmd = [sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt', '-q']
 
     def _run(cmd):
-        return subprocess.run(cmd, cwd=BASE_DIR, capture_output=True, timeout=300, text=True)
+        return subprocess.run(cmd, cwd=base, capture_output=True, timeout=300, text=True)
 
     try:
         result = _run(base_cmd)
@@ -463,6 +474,171 @@ def _restart_service():
     os.kill(os.getpid(), signal.SIGTERM)
 
 
+# =============================================================================
+# Tier 3 — atomic release helpers (active only when BASE_DIR is a symlink)
+# =============================================================================
+
+def _is_release_layout():
+    """True when the app dir is a symlink to a release (post-migration)."""
+    try:
+        return os.path.islink(BASE_DIR)
+    except Exception:
+        return False
+
+
+def _release_paths():
+    """Return (releases_root, shared_dir) derived from the active release."""
+    active = os.path.realpath(BASE_DIR)
+    releases_root = os.path.dirname(active)
+    rscp_root = os.path.dirname(releases_root)
+    return releases_root, os.path.join(rscp_root, 'shared')
+
+
+def _link_shared_into(release_dir, shared_dir):
+    """Point config/db/uploads inside a freshly built release at the single
+    shared copy, so state survives release swaps and rollbacks."""
+    def _clear(path):
+        if os.path.islink(path):
+            os.remove(path)
+        elif os.path.isdir(path):
+            shutil.rmtree(path)
+        elif os.path.exists(path):
+            os.remove(path)
+
+    for name in SHARED_LINK_FILES:
+        target = os.path.join(shared_dir, name)
+        link = os.path.join(release_dir, name)
+        _clear(link)
+        if os.path.exists(target):
+            os.symlink(target, link)
+
+    for rel in SHARED_LINK_DIRS:
+        target = os.path.join(shared_dir, rel)
+        link = os.path.join(release_dir, rel)
+        _clear(link)
+        os.makedirs(os.path.dirname(link), exist_ok=True)
+        if os.path.exists(target):
+            os.symlink(target, link)
+
+
+def _atomic_point(target, link_path):
+    """Atomically make link_path a symlink to target, replacing any existing
+    symlink. os.replace() over a symlink is an atomic rename — no window where
+    the app path is missing."""
+    tmp = link_path + '.swap'
+    if os.path.islink(tmp) or os.path.exists(tmp):
+        os.remove(tmp)
+    os.symlink(target, tmp)
+    os.replace(tmp, link_path)
+
+
+def _prune_releases(keep=MAX_RELEASES):
+    """Keep the newest `keep` releases plus the active one; delete the rest."""
+    releases_root, _ = _release_paths()
+    active = os.path.realpath(BASE_DIR)
+    if not os.path.isdir(releases_root):
+        return
+    dirs = [os.path.join(releases_root, d) for d in os.listdir(releases_root)
+            if os.path.isdir(os.path.join(releases_root, d))]
+    dirs.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    keep_set = set(dirs[:keep])
+    for d in dirs:
+        if d in keep_set or os.path.realpath(d) == active:
+            continue
+        try:
+            shutil.rmtree(d)
+        except Exception as e:
+            logger.warning(f"Could not prune release {d}: {e}")
+
+
+def rollback_to_previous():
+    """Repoint the app symlink to the previous release. Returns (ok, message).
+    Instant for code; note the shared DB is NOT reverted (restore a DB backup
+    too if a destructive migration ran)."""
+    if not _is_release_layout():
+        return False, "Not in release layout; rollback is unavailable."
+    releases_root, _ = _release_paths()
+    active = os.path.realpath(BASE_DIR)
+    others = [os.path.join(releases_root, d) for d in os.listdir(releases_root)
+              if os.path.isdir(os.path.join(releases_root, d))
+              and os.path.realpath(os.path.join(releases_root, d)) != active]
+    if not others:
+        return False, "No previous release to roll back to."
+    others.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    prev = others[0]
+    _atomic_point(prev, BASE_DIR)
+    logger.info(f"Rolled back active release to {prev}")
+    return True, f"Rolled back to {os.path.basename(prev)}."
+
+
+def _apply_flat_update(source_dir, old_version, new_version, backup_dir):
+    """Flat layout (pre-migration): copy new files over the live tree, remove
+    orphans, purge bytecode, install deps. Raises before restart on failure;
+    a partial copy is auto-restored from the backup."""
+    # Apply files, collecting any failures
+    set_update_status("updating", f"Installing files (v{old_version} → v{new_version})...")
+    files_updated, failures = _apply_update(source_dir)
+    if failures:
+        detail = '; '.join(f"{p}: {e}" for p, e in failures[:5])
+        restored = False
+        try:
+            restored = _restore_code(backup_dir)
+        except Exception as re:
+            logger.error(f"Auto-restore failed: {re}")
+        raise Exception(
+            f"{len(failures)} file(s) failed to copy ({detail}). "
+            f"{'Previous version auto-restored; ' if restored else 'AUTO-RESTORE FAILED — '}"
+            f"service NOT restarted. Backup: {backup_dir}")
+    logger.info(f"Updated {files_updated} files")
+
+    # Remove obsolete files, clear bytecode
+    set_update_status("updating", "Removing obsolete files...")
+    orphans = _remove_orphans(source_dir)
+    if orphans:
+        logger.info(f"Removed {len(orphans)} obsolete file(s): {', '.join(orphans[:10])}")
+    set_update_status("updating", "Clearing cached bytecode...")
+    _purge_pycache()
+
+    # Dependencies — abort before restart if they fail
+    set_update_status("updating", "Checking dependencies...")
+    dep_ok, dep_msg = _install_dependencies()
+    if not dep_ok:
+        raise Exception(
+            f"Dependency install failed: {dep_msg} — service NOT restarted "
+            f"to avoid a broken boot. Backup: {backup_dir}")
+
+
+def _apply_release_update(source_dir, old_version, new_version, backup_dir):
+    """Release layout: build a brand-new release dir, link shared state in,
+    install deps, then ATOMICALLY repoint the app symlink. Nothing live is
+    touched until the final atomic swap, so any earlier failure leaves the
+    current release active and just discards the half-built one."""
+    releases_root, shared_dir = _release_paths()
+    ts = time.strftime('%Y%m%d-%H%M%S')
+    new_release = os.path.join(releases_root, f'{ts}_v{new_version or "unknown"}')
+
+    set_update_status("updating", f"Building release {os.path.basename(new_release)}...")
+    shutil.copytree(source_dir, new_release)
+
+    # Point config/db/uploads at the shared copies
+    _link_shared_into(new_release, shared_dir)
+
+    # Dependencies installed against the NEW release; on failure discard it
+    set_update_status("updating", "Checking dependencies...")
+    dep_ok, dep_msg = _install_dependencies(base_dir=new_release)
+    if not dep_ok:
+        shutil.rmtree(new_release, ignore_errors=True)
+        raise Exception(
+            f"Dependency install failed: {dep_msg} — new release discarded, "
+            f"current release still active (nothing changed). Backup: {backup_dir}")
+
+    # Atomic activation — the single moment the live app changes
+    set_update_status("updating", "Activating new release...")
+    _atomic_point(new_release, BASE_DIR)
+    logger.info(f"Activated release {new_release}")
+    _prune_releases(MAX_RELEASES)
+
+
 def run_update_in_background(branch_name, branch_info):
     """Download, validate, back up, apply, and restart — in that order, so the
     service is only ever restarted after a fully successful, validated update.
@@ -505,45 +681,17 @@ def run_update_in_background(branch_name, branch_info):
                         f"Downloaded update looks incomplete (missing: {', '.join(missing)}). "
                         f"Aborted — your installation was not modified.")
 
-                # 4. Back up DB + code (the safety net). If this fails we stop.
+                # 4. Back up (the safety net). DB always; code tar only in the
+                #    flat layout. If this fails we stop.
                 set_update_status("updating", "Backing up database and current version...")
                 backup_dir = _create_backup(old_version)
                 logger.info(f"Pre-update backup created at {backup_dir}")
 
-                # 5. Apply files, collecting any failures
-                set_update_status("updating", f"Installing files (v{old_version} → v{new_version})...")
-                files_updated, failures = _apply_update(source_dir)
-                if failures:
-                    detail = '; '.join(f"{p}: {e}" for p, e in failures[:5])
-                    restored = False
-                    try:
-                        restored = _restore_code(backup_dir)
-                    except Exception as re:
-                        logger.error(f"Auto-restore failed: {re}")
-                    raise Exception(
-                        f"{len(failures)} file(s) failed to copy ({detail}). "
-                        f"{'Previous version auto-restored; ' if restored else 'AUTO-RESTORE FAILED — '}"
-                        f"service NOT restarted. Backup: {backup_dir}")
-                logger.info(f"Updated {files_updated} files")
-
-                # 6. Remove obsolete files deleted in the new version
-                #    (best-effort; app/ and templates/ only — see _remove_orphans)
-                set_update_status("updating", "Removing obsolete files...")
-                orphans = _remove_orphans(source_dir)
-                if orphans:
-                    logger.info(f"Removed {len(orphans)} obsolete file(s): {', '.join(orphans[:10])}")
-
-                # 7. Clear stale bytecode
-                set_update_status("updating", "Clearing cached bytecode...")
-                _purge_pycache()
-
-                # 8. Dependencies — abort before restart if they fail
-                set_update_status("updating", "Checking dependencies...")
-                dep_ok, dep_msg = _install_dependencies()
-                if not dep_ok:
-                    raise Exception(
-                        f"Dependency install failed: {dep_msg} — service NOT restarted "
-                        f"to avoid a broken boot. Backup: {backup_dir}")
+                # 5. Apply — atomic release swap if migrated, else in-place copy
+                if _is_release_layout():
+                    _apply_release_update(source_dir, old_version, new_version, backup_dir)
+                else:
+                    _apply_flat_update(source_dir, old_version, new_version, backup_dir)
         finally:
             if os.path.exists(tmp_zip_path):
                 os.unlink(tmp_zip_path)
@@ -603,6 +751,51 @@ def update_status():
     error = require_admin()
     if error:
         return jsonify({"error": "Admin required"}), 403
-        
+
     status = get_update_status()
     return jsonify(status)
+
+
+@admin_bp.route('/rollback', methods=['POST'])
+def rollback_update():
+    """Roll back to the previous release (atomic-release layout only) and
+    restart. Instant; note the shared DB is not reverted."""
+    error = require_admin()
+    if error:
+        return jsonify({"error": "Admin required"}), 403
+
+    if not _is_release_layout():
+        return jsonify({"error": "Rollback requires the atomic-release layout."}), 400
+
+    ok, message = rollback_to_previous()
+    if not ok:
+        return jsonify({"error": message}), 400
+
+    def _rollback_and_restart():
+        set_update_status("restarting", f"{message} Restarting services...")
+        time.sleep(2)
+        _restart_service()
+    threading.Thread(target=_rollback_and_restart, daemon=True).start()
+    return jsonify({"status": "success", "message": message})
+
+
+@admin_bp.route('/release_info')
+def release_info():
+    """Report the current layout and available releases (for the admin UI)."""
+    error = require_admin()
+    if error:
+        return jsonify({"error": "Admin required"}), 403
+
+    if not _is_release_layout():
+        return jsonify({"layout": "flat", "releases": []})
+    try:
+        releases_root, _ = _release_paths()
+        active = os.path.realpath(BASE_DIR)
+        rels = []
+        for d in sorted(os.listdir(releases_root), reverse=True):
+            full = os.path.join(releases_root, d)
+            if os.path.isdir(full):
+                rels.append({"name": d, "active": os.path.realpath(full) == active})
+        return jsonify({"layout": "release", "active": os.path.basename(active), "releases": rels})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
