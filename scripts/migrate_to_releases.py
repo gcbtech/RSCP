@@ -2,59 +2,72 @@
 """
 One-time migration: flat install  ->  atomic-release (symlink) layout.
 
-    BEFORE:  /opt/ebay_receiver/            (real dir: code + config.json + rscp.db + static/uploads)
+Works for ANY app directory name — the old install may be /opt/ebay_receiver
+(the original name, never renamed on production) or /opt/rscp (new installs).
+The app dir is auto-detected from this script's location; the release data
+root is a NON-colliding sibling, <APP>_data, so it never clashes with an
+/opt/rscp app dir.
 
-    AFTER:   /opt/ebay_receiver             -> symlink -> /opt/rscp/releases/<ts>_initial
-             /opt/rscp/releases/<ts>_initial/   code; config.json, rscp.db*, static/uploads
-                                                are symlinks into ../../shared
-             /opt/rscp/shared/                  config.json, rscp.db(+wal/shm), static/uploads
+    BEFORE:  <APP>/                      (real dir: code + config.json + rscp.db + static/uploads)
 
-After this, the RSCP updater builds each update as a new release dir and
-atomically repoints the symlink, so updates are instant and rollback is one step.
+    AFTER:   <APP>            -> <APP>_data/current      (fixed outer symlink)
+             <APP>_data/current -> releases/<ts>_initial (symlink the updater repoints)
+             <APP>_data/releases/<ts>_initial/           code; config.json, rscp.db*,
+                                                          static/uploads are symlinks
+                                                          into ../../shared
+             <APP>_data/shared/  config.json, rscp.db(+wal/shm), static/uploads
+
+The updater detects this layout structurally (no hardcoded paths) and, on each
+update, builds a new release and atomically repoints <APP>_data/current.
 
 RUN AS ROOT, WITH THE SERVICE STOPPED:
 
     systemctl stop rscp
-    python3 /opt/ebay_receiver/scripts/migrate_to_releases.py
+    python3 <APP>/scripts/migrate_to_releases.py
     # verify the printed layout, then:
     systemctl start rscp
 
-It is move-based (no data is copied/duplicated), idempotent (safe to re-run),
-and reversible — see the rollback commands it prints. Nothing is deleted.
+Move-based (no data duplication), idempotent, reversible (prints the exact
+reversal commands). Nothing is deleted.
 """
 import os
 import sys
 import shutil
 import time
 
-APP = os.environ.get('RSCP_APP', '/opt/ebay_receiver')
-ROOT = os.environ.get('RSCP_ROOT', '/opt/rscp')
-RELEASES = os.path.join(ROOT, 'releases')
-SHARED = os.path.join(ROOT, 'shared')
+# App dir: auto-detected from this file's location (<APP>/scripts/this.py),
+# overridable via RSCP_APP for testing.
+APP = os.environ.get('RSCP_APP') or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+APP = APP.rstrip('/')
+# Release data root: a non-colliding sibling. Overridable via RSCP_DATA.
+DATA = (os.environ.get('RSCP_DATA') or (APP + '_data')).rstrip('/')
+
+RELEASES = os.path.join(DATA, 'releases')
+SHARED = os.path.join(DATA, 'shared')
+CURRENT = os.path.join(DATA, 'current')
 
 SHARED_FILES = ['config.json', 'rscp.db', 'rscp.db-wal', 'rscp.db-shm']
 SHARED_DIRS = [os.path.join('static', 'uploads')]
 
 
 def fail(msg):
-    print(f"\nERROR: {msg}\nNo changes were made (or see above for how to reverse). Aborting.")
+    print(f"\nERROR: {msg}\nAborting; see above for how to reverse any partial change.")
     sys.exit(1)
 
 
 def main():
-    print(f"Migrating {APP} to atomic-release layout under {ROOT}\n")
+    print(f"App dir : {APP}")
+    print(f"Data dir: {DATA}\n")
 
     if os.path.islink(APP):
         print(f"{APP} is already a symlink -> {os.path.realpath(APP)}")
         print("Already migrated. Nothing to do.")
         return
-
     if not os.path.isdir(APP):
-        fail(f"{APP} is not a directory.")
+        fail(f"{APP} is not a directory. Set RSCP_APP if the app lives elsewhere.")
 
-    # Refuse to run against a live service (best-effort check).
-    # RSCP_ALLOW_RUNNING=1 bypasses this — used only by the sandbox test that
-    # migrates a throwaway /tmp layout while the real service is up.
+    # Refuse to run against a live service (best-effort). RSCP_ALLOW_RUNNING=1
+    # bypasses this — used only by the sandbox test on a throwaway /tmp layout.
     if os.environ.get('RSCP_ALLOW_RUNNING') == '1':
         print("(RSCP_ALLOW_RUNNING=1: skipping the running-service check)")
     elif os.path.exists('/proc'):
@@ -117,18 +130,22 @@ def main():
                     shutil.rmtree(link)
             os.symlink(target, link)
 
-    # 4. Put the symlink in place of the original path
-    print(f"  link  {APP}  ->  {release_dir}")
-    os.symlink(release_dir, APP)
+    # 4. Two-level symlink: <DATA>/current -> release, then <APP> -> current.
+    #    The updater only ever repoints <DATA>/current; <APP> stays fixed.
+    if os.path.lexists(CURRENT):
+        os.remove(CURRENT)
+    os.symlink(release_dir, CURRENT)
+    os.symlink(CURRENT, APP)
 
     print("\nMigration complete. Layout:")
-    print(f"  {APP} -> {os.path.realpath(APP)}")
+    print(f"  {APP} -> {os.readlink(APP)} -> {os.path.realpath(APP)}")
     print(f"  releases: {RELEASES}")
-    print(f"  shared:   {SHARED}  ({', '.join(os.listdir(SHARED))})")
-    print("\nNext: `systemctl start rscp`, confirm the app works, then future")
-    print("updates will use atomic releases with one-step rollback.\n")
+    print(f"  shared:   {SHARED}  ({', '.join(sorted(os.listdir(SHARED)))})")
+    print("\nNext: `systemctl start rscp`, confirm the app works. Future updates")
+    print("will build new releases and repoint current atomically; rollback is")
+    print("one step (POST /admin/rollback).\n")
     print("To REVERSE this migration (as root, service stopped):")
-    print(f"  rm {APP}")
+    print(f"  rm {APP} {CURRENT}")
     print(f"  mv {release_dir} {APP}")
     for name in SHARED_FILES:
         print(f"  [ -e {os.path.join(SHARED, name)} ] && mv {os.path.join(SHARED, name)} {os.path.join(APP, name)}")

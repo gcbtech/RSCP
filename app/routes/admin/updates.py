@@ -475,23 +475,42 @@ def _restart_service():
 
 
 # =============================================================================
-# Tier 3 — atomic release helpers (active only when BASE_DIR is a symlink)
+# Tier 3 — atomic release helpers
+#
+# Layout (created by scripts/migrate_to_releases.py; app dir name may be
+# /opt/ebay_receiver OR /opt/rscp — nothing here hardcodes it):
+#
+#   <APP>              -> <DATA>/current           (fixed outer symlink)
+#   <DATA>/current     -> releases/<active>        (the symlink updates repoint)
+#   <DATA>/releases/<ts>_v<ver>/                   code; config/db/uploads are
+#                                                  symlinks into ../../shared
+#   <DATA>/shared/     config.json, rscp.db*, static/uploads
+#
+# NOTE: the running app computes BASE_DIR via os.getcwd(), which RESOLVES all
+# symlinks, so BASE_DIR is the real active release dir (not <APP>). We therefore
+# detect the layout structurally and work upward to <DATA>/current, rather than
+# checking os.path.islink(BASE_DIR) (which is always False on a migrated box).
 # =============================================================================
 
-def _is_release_layout():
-    """True when the app dir is a symlink to a release (post-migration)."""
-    try:
-        return os.path.islink(BASE_DIR)
-    except Exception:
-        return False
-
-
 def _release_paths():
-    """Return (releases_root, shared_dir) derived from the active release."""
+    """(releases_root, shared_dir, current_link) from the resolved active
+    release. BASE_DIR resolves to <DATA>/releases/<active>."""
     active = os.path.realpath(BASE_DIR)
     releases_root = os.path.dirname(active)
-    rscp_root = os.path.dirname(releases_root)
-    return releases_root, os.path.join(rscp_root, 'shared')
+    data_root = os.path.dirname(releases_root)
+    return releases_root, os.path.join(data_root, 'shared'), os.path.join(data_root, 'current')
+
+
+def _is_release_layout():
+    """True when running inside <DATA>/releases/<x> with a sibling shared/ and a
+    <DATA>/current symlink — the atomic-release layout, regardless of app path."""
+    try:
+        releases_root, shared_dir, current_link = _release_paths()
+        return (os.path.basename(releases_root) == 'releases'
+                and os.path.isdir(shared_dir)
+                and os.path.islink(current_link))
+    except Exception:
+        return False
 
 
 def _link_shared_into(release_dir, shared_dir):
@@ -534,8 +553,8 @@ def _atomic_point(target, link_path):
 
 def _prune_releases(keep=MAX_RELEASES):
     """Keep the newest `keep` releases plus the active one; delete the rest."""
-    releases_root, _ = _release_paths()
-    active = os.path.realpath(BASE_DIR)
+    releases_root, _, current_link = _release_paths()
+    active = os.path.realpath(current_link)
     if not os.path.isdir(releases_root):
         return
     dirs = [os.path.join(releases_root, d) for d in os.listdir(releases_root)
@@ -552,13 +571,13 @@ def _prune_releases(keep=MAX_RELEASES):
 
 
 def rollback_to_previous():
-    """Repoint the app symlink to the previous release. Returns (ok, message).
-    Instant for code; note the shared DB is NOT reverted (restore a DB backup
-    too if a destructive migration ran)."""
+    """Repoint the <DATA>/current symlink to the previous release. Returns
+    (ok, message). Instant for code; the shared DB is NOT reverted (restore a
+    DB backup too if a destructive migration ran)."""
     if not _is_release_layout():
         return False, "Not in release layout; rollback is unavailable."
-    releases_root, _ = _release_paths()
-    active = os.path.realpath(BASE_DIR)
+    releases_root, _, current_link = _release_paths()
+    active = os.path.realpath(current_link)
     others = [os.path.join(releases_root, d) for d in os.listdir(releases_root)
               if os.path.isdir(os.path.join(releases_root, d))
               and os.path.realpath(os.path.join(releases_root, d)) != active]
@@ -566,7 +585,7 @@ def rollback_to_previous():
         return False, "No previous release to roll back to."
     others.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     prev = others[0]
-    _atomic_point(prev, BASE_DIR)
+    _atomic_point(prev, current_link)
     logger.info(f"Rolled back active release to {prev}")
     return True, f"Rolled back to {os.path.basename(prev)}."
 
@@ -613,7 +632,7 @@ def _apply_release_update(source_dir, old_version, new_version, backup_dir):
     install deps, then ATOMICALLY repoint the app symlink. Nothing live is
     touched until the final atomic swap, so any earlier failure leaves the
     current release active and just discards the half-built one."""
-    releases_root, shared_dir = _release_paths()
+    releases_root, shared_dir, current_link = _release_paths()
     ts = time.strftime('%Y%m%d-%H%M%S')
     new_release = os.path.join(releases_root, f'{ts}_v{new_version or "unknown"}')
 
@@ -632,9 +651,10 @@ def _apply_release_update(source_dir, old_version, new_version, backup_dir):
             f"Dependency install failed: {dep_msg} — new release discarded, "
             f"current release still active (nothing changed). Backup: {backup_dir}")
 
-    # Atomic activation — the single moment the live app changes
+    # Atomic activation — the single moment the live app changes: repoint the
+    # <DATA>/current symlink (the fixed outer <APP> symlink is never touched).
     set_update_status("updating", "Activating new release...")
-    _atomic_point(new_release, BASE_DIR)
+    _atomic_point(new_release, current_link)
     logger.info(f"Activated release {new_release}")
     _prune_releases(MAX_RELEASES)
 
@@ -789,8 +809,8 @@ def release_info():
     if not _is_release_layout():
         return jsonify({"layout": "flat", "releases": []})
     try:
-        releases_root, _ = _release_paths()
-        active = os.path.realpath(BASE_DIR)
+        releases_root, _, current_link = _release_paths()
+        active = os.path.realpath(current_link)
         rels = []
         for d in sorted(os.listdir(releases_root), reverse=True):
             full = os.path.join(releases_root, d)
