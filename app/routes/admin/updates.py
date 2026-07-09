@@ -70,6 +70,13 @@ BACKUP_EXCLUDE_DIRS = {
 # How many timestamped backups to retain (older ones are pruned).
 MAX_BACKUPS = 5
 
+# Orphan cleanup (Tier 2): after an update, delete code files that no longer
+# exist in the new version. Deliberately conservative — restricted to the
+# app-owned pure-code directories and to known code extensions, so user data,
+# config, uploads, and unrecognised files can never be removed.
+ORPHAN_SCAN_DIRS = ('app', 'templates')
+ORPHAN_EXTENSIONS = {'.py', '.html', '.js', '.css', '.map'}
+
 
 def get_current_version():
     """Get current installed version."""
@@ -310,6 +317,57 @@ def _apply_update(source_dir):
     return files_updated, failures
 
 
+def _remove_orphans(source_dir):
+    """Delete code files that no longer exist in the new version.
+
+    SAFETY (this is the only step that deletes from the live tree):
+      - only within ORPHAN_SCAN_DIRS (app/, templates/) — pure code, no
+        user data
+      - only files with a known code extension (ORPHAN_EXTENSIONS)
+      - only when the scan dir exists in BOTH old and new (so a malformed
+        payload that omits a whole dir can never wipe it)
+      - never PROTECTED_FILES / PROTECTED_DIRS
+      - the pre-update backup already captured these files, so a wrong
+        delete is recoverable
+
+    Best-effort: a failure here is harmless (a dead file lingers) and never
+    aborts the update. Returns the list of removed relpaths.
+    """
+    removed = []
+    for scan_dir in ORPHAN_SCAN_DIRS:
+        live_root = os.path.join(BASE_DIR, scan_dir)
+        new_root = os.path.join(source_dir, scan_dir)
+        if not os.path.isdir(live_root) or not os.path.isdir(new_root):
+            continue
+        # Bottom-up so we can prune dirs that become empty.
+        for root, dirs, files in os.walk(live_root, topdown=False):
+            rel_parts = os.path.relpath(root, BASE_DIR).split(os.sep)
+            if any(p in PROTECTED_DIRS for p in rel_parts):
+                continue
+            for f in files:
+                if f in PROTECTED_FILES:
+                    continue
+                if os.path.splitext(f)[1].lower() not in ORPHAN_EXTENSIONS:
+                    continue
+                live_path = os.path.join(root, f)
+                rel_within = os.path.relpath(live_path, live_root)
+                if not os.path.exists(os.path.join(new_root, rel_within)):
+                    try:
+                        os.remove(live_path)
+                        removed.append(os.path.join(scan_dir, rel_within))
+                    except Exception as e:
+                        logger.warning(f"Could not remove orphan {live_path}: {e}")
+            # Prune a now-empty directory that the new version doesn't have.
+            try:
+                rel_dir = os.path.relpath(root, live_root)
+                if (root != live_root and not os.listdir(root)
+                        and not os.path.isdir(os.path.join(new_root, rel_dir))):
+                    os.rmdir(root)
+            except Exception:
+                pass
+    return removed
+
+
 def _purge_pycache():
     """Remove stale __pycache__ dirs so old .pyc can't shadow modules that were
     deleted or changed in the update. Skips the venv."""
@@ -468,11 +526,18 @@ def run_update_in_background(branch_name, branch_info):
                         f"service NOT restarted. Backup: {backup_dir}")
                 logger.info(f"Updated {files_updated} files")
 
-                # 6. Clear stale bytecode
+                # 6. Remove obsolete files deleted in the new version
+                #    (best-effort; app/ and templates/ only — see _remove_orphans)
+                set_update_status("updating", "Removing obsolete files...")
+                orphans = _remove_orphans(source_dir)
+                if orphans:
+                    logger.info(f"Removed {len(orphans)} obsolete file(s): {', '.join(orphans[:10])}")
+
+                # 7. Clear stale bytecode
                 set_update_status("updating", "Clearing cached bytecode...")
                 _purge_pycache()
 
-                # 7. Dependencies — abort before restart if they fail
+                # 8. Dependencies — abort before restart if they fail
                 set_update_status("updating", "Checking dependencies...")
                 dep_ok, dep_msg = _install_dependencies()
                 if not dep_ok:
@@ -483,13 +548,13 @@ def run_update_in_background(branch_name, branch_info):
             if os.path.exists(tmp_zip_path):
                 os.unlink(tmp_zip_path)
 
-        # 8. Prune old backups
+        # 9. Prune old backups
         _prune_backups(MAX_BACKUPS)
 
         new_version = get_current_version()
         logger.info(f"RSCP updated from {old_version} to {new_version}")
 
-        # 9. Restart — reached ONLY after a fully validated, successful update
+        # 10. Restart — reached ONLY after a fully validated, successful update
         set_update_status("restarting",
                           f"Update successful ({old_version} → {new_version})! Restarting services...",
                           version=new_version)
