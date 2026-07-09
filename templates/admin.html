@@ -1742,6 +1742,24 @@
                                         </div>
                                     </div>
                                 </div>
+
+                                <!-- Rollback (atomic-release installs only; shown when a
+                                     previous release is available to revert to) -->
+                                <div id="rollbackSection" class="border border-danger-subtle rounded p-2 mt-3" style="display:none;">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <span class="badge bg-secondary">↩️ Rollback</span>
+                                            <span class="small ms-1">Revert to <span id="rollbackTarget" class="fw-semibold"></span></span>
+                                        </div>
+                                        <button type="button" class="btn btn-outline-danger btn-sm" onclick="startRollback()">
+                                            Roll Back
+                                        </button>
+                                    </div>
+                                    <div class="small text-muted mt-1">
+                                        Instantly reverts application code to the previous release and restarts.
+                                        Your database is shared and is <strong>not</strong> reverted.
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -2110,6 +2128,51 @@
                 })
                 .catch(err => status.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`);
         }
+
+        // --- Rollback (atomic-release installs) ---
+        function loadReleaseInfo() {
+            const section = document.getElementById('rollbackSection');
+            if (!section) return;
+            fetch('/admin/release_info')
+                .then(r => r.json())
+                .then(data => {
+                    // Only offered on the atomic-release layout with a prior release
+                    const prev = (data.layout === 'release' && Array.isArray(data.releases))
+                        ? data.releases.find(rel => !rel.active) : null;
+                    if (prev) {
+                        document.getElementById('rollbackTarget').textContent = prev.name;
+                        section.style.display = 'block';
+                    } else {
+                        section.style.display = 'none';
+                    }
+                })
+                .catch(() => { section.style.display = 'none'; });
+        }
+
+        function startRollback() {
+            if (!confirm('Roll back to the previous release and restart?\n\nThis reverts application CODE only. Your database is shared and will NOT be reverted.')) return;
+            showUpdateModal();
+            document.getElementById('updateModalTitle').textContent = 'Rolling Back';
+            document.getElementById('updateModalSubtitle').textContent = 'Reverting to the previous release...';
+            document.getElementById('updateModalStatusBox').innerHTML = '[info] Requesting rollback...\n';
+
+            const formData = new FormData();
+            formData.append('csrf_token', document.querySelector('input[name="csrf_token"]').value);
+
+            fetch('/admin/rollback', { method: 'POST', body: formData })
+                .then(r => r.ok ? r.json() : r.json().then(d => { throw new Error(d.error || 'Server error'); }))
+                .then(data => {
+                    if (data.error) {
+                        showUpdateError(data.error);
+                    } else {
+                        appendStatusLog('[info] ' + (data.message || 'Rollback initiated.') + ' Restarting...');
+                        updatePollInterval = setInterval(pollUpdateStatus, 1500);
+                    }
+                })
+                .catch(err => showUpdateError('Failed to roll back: ' + err.message));
+        }
+
+        document.addEventListener('DOMContentLoaded', loadReleaseInfo);
 
         let updatePollInterval = null;
         let hasEnteredRestartingState = false;
