@@ -3,9 +3,12 @@ Admin Update System Routes
 Handles version checking and GitHub-based updates.
 """
 import os
+import sys
 import logging
 import shutil
 import tempfile
+import tarfile
+import sqlite3
 import zipfile
 import subprocess
 import requests
@@ -52,6 +55,20 @@ PROTECTED_DIRS = [
     '__pycache__',
     '.pytest_cache',
 ]
+
+# Entries the extracted archive MUST contain to be considered a valid RSCP
+# payload. If any are missing we abort before touching the live install.
+REQUIRED_PAYLOAD_ENTRIES = ['wsgi.py', 'requirements.txt', 'VERSION', 'app']
+
+# Excluded from the pre-update code backup snapshot: bulky, regenerable, or
+# user-data that the update never overwrites anyway.
+BACKUP_EXCLUDE_DIRS = {
+    'venv', '__pycache__', '.pytest_cache', '.git', 'backups',
+    'temp', 'ignore', 'node_modules',
+}
+
+# How many timestamped backups to retain (older ones are pruned).
+MAX_BACKUPS = 5
 
 
 def get_current_version():
@@ -167,116 +184,324 @@ def set_update_status(status, progress="", error=None, version=None):
     except Exception as e:
         logger.error(f"Error writing update status: {e}")
 
+# =============================================================================
+# Update helpers (each does one job; the orchestrator wires them together so a
+# failure aborts BEFORE the service is restarted into a half-applied state).
+# =============================================================================
+
+def _validate_payload(source_dir):
+    """Confirm the extracted archive looks like a real RSCP install.
+
+    Returns (ok, new_version, missing_entries). Guards against a corrupt or
+    truncated download being copied over the live tree.
+    """
+    missing = [e for e in REQUIRED_PAYLOAD_ENTRIES
+               if not os.path.exists(os.path.join(source_dir, e))]
+    new_version = None
+    vf = os.path.join(source_dir, 'VERSION')
+    if os.path.exists(vf):
+        try:
+            with open(vf) as f:
+                new_version = f.read().strip()
+        except Exception:
+            pass
+    return (len(missing) == 0), new_version, missing
+
+
+def _should_exclude_from_backup(name):
+    """True if a tar member (path relative to BASE_DIR) should be skipped."""
+    name = name.lstrip('./')
+    if not name:
+        return False
+    parts = name.split('/')
+    # Skip if ANY path component is an excluded dir (catches nested
+    # __pycache__ like app/__pycache__, not just top-level).
+    if any(p in BACKUP_EXCLUDE_DIRS for p in parts):
+        return True
+    if name.startswith('static/uploads'):
+        return True  # user uploads: large, and never overwritten by updates
+    base = parts[-1]
+    if base.endswith(('.db', '.db-wal', '.db-shm')) or base.endswith('.log') or '.log.' in base:
+        return True
+    return False
+
+
+def _create_backup(old_version):
+    """Snapshot the DB (consistent) and current code BEFORE any change.
+
+    Returns the backup directory. Raises on failure — if we can't build a
+    safety net we must not proceed with the update.
+    """
+    ts = time.strftime('%Y%m%d-%H%M%S')
+    backup_root = os.path.join(BASE_DIR, 'backups')
+    os.makedirs(backup_root, exist_ok=True)
+    backup_dir = os.path.join(backup_root, f'{ts}_v{old_version or "unknown"}')
+    os.makedirs(backup_dir, exist_ok=True)
+
+    # 1. Database — the one-way migration on restart makes this the critical
+    #    asset. Use the SQLite online-backup API for a consistent copy even
+    #    while the app is live in WAL mode (a raw file copy can tear).
+    db_path = os.path.join(BASE_DIR, 'rscp.db')
+    if os.path.exists(db_path):
+        src = sqlite3.connect(db_path)
+        try:
+            dst = sqlite3.connect(os.path.join(backup_dir, 'rscp.db'))
+            try:
+                src.backup(dst)
+            finally:
+                dst.close()
+        finally:
+            src.close()
+
+    # 2. Code snapshot (small once bulky/user dirs are excluded), so rollback
+    #    doesn't depend on git or network.
+    with tarfile.open(os.path.join(backup_dir, 'code.tar.gz'), 'w:gz') as tar:
+        tar.add(BASE_DIR, arcname='.',
+                filter=lambda ti: None if _should_exclude_from_backup(ti.name) else ti)
+
+    # 3. Manifest for humans and for rollback tooling later.
+    try:
+        with open(os.path.join(backup_dir, 'manifest.json'), 'w') as f:
+            json.dump({'old_version': old_version,
+                       'created_at': ts,
+                       'base_dir': BASE_DIR}, f, indent=2)
+    except Exception:
+        pass
+
+    return backup_dir
+
+
+def _restore_code(backup_dir):
+    """Best-effort restore of the code snapshot (used if a copy fails partway).
+    The DB is protected during copy and the migration hasn't run yet, so only
+    code needs restoring. Returns True on success."""
+    tar_path = os.path.join(backup_dir, 'code.tar.gz')
+    if not os.path.exists(tar_path):
+        return False
+    with tarfile.open(tar_path, 'r:gz') as tar:
+        tar.extractall(BASE_DIR)
+    return True
+
+
+def _apply_update(source_dir):
+    """Copy new files over the live tree. Returns (files_updated, failures)
+    where failures is a list of (relpath, error). Protected files/dirs are
+    left untouched. Unlike the old code, failures are collected — not
+    swallowed — so the orchestrator can abort before restarting."""
+    files_updated = 0
+    failures = []
+    for root, dirs, files in os.walk(source_dir):
+        dirs[:] = [d for d in dirs if d not in PROTECTED_DIRS]
+        rel_path = os.path.relpath(root, source_dir)
+        dest_path = os.path.join(BASE_DIR, rel_path) if rel_path != '.' else BASE_DIR
+        try:
+            os.makedirs(dest_path, exist_ok=True)
+        except Exception as e:
+            failures.append((rel_path, f'mkdir failed: {e}'))
+            continue
+        for file in files:
+            if file in PROTECTED_FILES:
+                continue
+            try:
+                shutil.copy2(os.path.join(root, file), os.path.join(dest_path, file))
+                files_updated += 1
+            except Exception as e:
+                failures.append((os.path.join(rel_path, file), str(e)))
+    return files_updated, failures
+
+
+def _purge_pycache():
+    """Remove stale __pycache__ dirs so old .pyc can't shadow modules that were
+    deleted or changed in the update. Skips the venv."""
+    targets = []
+    for root, dirs, files in os.walk(BASE_DIR):
+        if 'venv' in root.split(os.sep):
+            dirs[:] = []
+            continue
+        if '__pycache__' in dirs:
+            targets.append(os.path.join(root, '__pycache__'))
+    removed = 0
+    for t in targets:
+        try:
+            shutil.rmtree(t)
+            removed += 1
+        except Exception as e:
+            logger.warning(f"Could not remove {t}: {e}")
+    return removed
+
+
+def _install_dependencies():
+    """Install requirements. Returns (ok, message).
+
+    Uses the venv pip when present, otherwise the running interpreter — so
+    system-Python deployments (no venv) actually get their deps installed
+    instead of silently skipping the step. The return code IS checked.
+
+    On Debian/PEP 668 "externally-managed" system Pythons (our LXC), a plain
+    system pip install is refused; we retry with --break-system-packages,
+    which is what an admin does by hand there. A genuinely bad/unresolvable
+    requirement still fails (and aborts the update before restart).
+    """
+    req = os.path.join(BASE_DIR, 'requirements.txt')
+    if not os.path.exists(req):
+        return True, 'no requirements.txt'
+    venv_pip = os.path.join(BASE_DIR, 'venv', 'bin', 'pip')
+    if os.path.exists(venv_pip):
+        base_cmd = [venv_pip, 'install', '-r', 'requirements.txt', '-q']
+    else:
+        base_cmd = [sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt', '-q']
+
+    def _run(cmd):
+        return subprocess.run(cmd, cwd=BASE_DIR, capture_output=True, timeout=300, text=True)
+
+    try:
+        result = _run(base_cmd)
+        if result.returncode == 0:
+            return True, 'ok'
+        combined = (result.stderr or '') + (result.stdout or '')
+        if 'externally-managed-environment' in combined or 'externally managed' in combined:
+            # PEP 668 refusal on a no-venv system Python — retry allowing it.
+            result2 = _run(base_cmd + ['--break-system-packages'])
+            if result2.returncode == 0:
+                return True, 'ok (system site-packages)'
+            return False, ((result2.stderr or '') + (result2.stdout or '') or 'pip failed')[-600:]
+        return False, (combined or 'pip returned non-zero')[-600:]
+    except Exception as e:
+        return False, str(e)
+
+
+def _prune_backups(keep=MAX_BACKUPS):
+    """Keep only the most recent `keep` backups to bound disk usage."""
+    backup_root = os.path.join(BASE_DIR, 'backups')
+    if not os.path.isdir(backup_root):
+        return
+    entries = [os.path.join(backup_root, d) for d in os.listdir(backup_root)
+               if os.path.isdir(os.path.join(backup_root, d))]
+    entries.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    for old in entries[keep:]:
+        try:
+            shutil.rmtree(old)
+        except Exception as e:
+            logger.warning(f"Could not prune backup {old}: {e}")
+
+
+def _restart_service():
+    """Restart the service. systemctl if privileged (dev/prod LXC has no sudo),
+    otherwise fall back to signalling gunicorn so systemd's Restart=always
+    respawns us on the new code."""
+    logger.info("Initiating RSCP service restart...")
+    try:
+        subprocess.Popen(['sudo', 'systemctl', 'restart', 'rscp'])
+        time.sleep(1)
+    except Exception as e:
+        logger.warning(f"systemctl restart unavailable: {e}")
+    try:
+        ppid = os.getppid()
+        if ppid > 1:
+            os.kill(ppid, signal.SIGTERM)
+            time.sleep(1)
+    except Exception as e:
+        logger.warning(f"Could not signal gunicorn parent: {e}")
+    os.kill(os.getpid(), signal.SIGTERM)
+
+
 def run_update_in_background(branch_name, branch_info):
-    """Thread target that downloads the update, copies files, updates deps, and restarts."""
+    """Download, validate, back up, apply, and restart — in that order, so the
+    service is only ever restarted after a fully successful, validated update.
+    Any failure aborts before the restart and (for a partial copy) restores the
+    previous code from the just-made backup."""
     set_update_status("updating", "Starting update process...")
     old_version = get_current_version()
-    
+    backup_dir = None
+
     try:
         # 1. Download
-        set_update_status("updating", f"Downloading update ZIP from GitHub ({branch_info['display']})...")
+        set_update_status("updating", f"Downloading update from GitHub ({branch_info['display']})...")
         zip_url = get_github_zip_url(branch_name)
         logger.info(f"Downloading update from GitHub ({branch_name} branch)...")
         response = requests.get(zip_url, timeout=60, stream=True)
         if response.status_code != 200:
             raise Exception(f"Failed to download update: HTTP {response.status_code}")
-        
-        # Save ZIP
+
         with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
             for chunk in response.iter_content(chunk_size=8192):
                 tmp_file.write(chunk)
             tmp_zip_path = tmp_file.name
-            
+
         try:
-            # 2. Extract
-            set_update_status("updating", "Extracting update archive...")
             with tempfile.TemporaryDirectory() as tmp_dir:
+                # 2. Extract (into temp — nothing live touched yet)
+                set_update_status("updating", "Extracting update archive...")
                 with zipfile.ZipFile(tmp_zip_path, 'r') as zip_ref:
                     zip_ref.extractall(tmp_dir)
-                
-                extracted_dirs = [d for d in os.listdir(tmp_dir) if os.path.isdir(os.path.join(tmp_dir, d))]
+                extracted_dirs = [d for d in os.listdir(tmp_dir)
+                                  if os.path.isdir(os.path.join(tmp_dir, d))]
                 if not extracted_dirs:
-                    raise Exception("Update failed: Invalid archive structure")
-                
+                    raise Exception("Update failed: invalid archive structure")
                 source_dir = os.path.join(tmp_dir, extracted_dirs[0])
-                
-                # 3. Copy files
-                set_update_status("updating", "Copying updated files to application...")
-                files_updated = 0
-                for root, dirs, files in os.walk(source_dir):
-                    dirs[:] = [d for d in dirs if d not in PROTECTED_DIRS]
-                    rel_path = os.path.relpath(root, source_dir)
-                    dest_path = os.path.join(BASE_DIR, rel_path) if rel_path != '.' else BASE_DIR
-                    
-                    if not os.path.exists(dest_path):
-                        os.makedirs(dest_path)
-                    
-                    for file in files:
-                        if file in PROTECTED_FILES:
-                            continue
-                        
-                        src_file = os.path.join(root, file)
-                        dst_file = os.path.join(dest_path, file)
-                        
-                        try:
-                            shutil.copy2(src_file, dst_file)
-                            files_updated += 1
-                        except Exception as e:
-                            logger.warning(f"Could not update {file}: {e}")
-                            
+
+                # 3. Validate the payload BEFORE touching the live install
+                ok, new_version, missing = _validate_payload(source_dir)
+                if not ok:
+                    raise Exception(
+                        f"Downloaded update looks incomplete (missing: {', '.join(missing)}). "
+                        f"Aborted — your installation was not modified.")
+
+                # 4. Back up DB + code (the safety net). If this fails we stop.
+                set_update_status("updating", "Backing up database and current version...")
+                backup_dir = _create_backup(old_version)
+                logger.info(f"Pre-update backup created at {backup_dir}")
+
+                # 5. Apply files, collecting any failures
+                set_update_status("updating", f"Installing files (v{old_version} → v{new_version})...")
+                files_updated, failures = _apply_update(source_dir)
+                if failures:
+                    detail = '; '.join(f"{p}: {e}" for p, e in failures[:5])
+                    restored = False
+                    try:
+                        restored = _restore_code(backup_dir)
+                    except Exception as re:
+                        logger.error(f"Auto-restore failed: {re}")
+                    raise Exception(
+                        f"{len(failures)} file(s) failed to copy ({detail}). "
+                        f"{'Previous version auto-restored; ' if restored else 'AUTO-RESTORE FAILED — '}"
+                        f"service NOT restarted. Backup: {backup_dir}")
                 logger.info(f"Updated {files_updated} files")
-                
+
+                # 6. Clear stale bytecode
+                set_update_status("updating", "Clearing cached bytecode...")
+                _purge_pycache()
+
+                # 7. Dependencies — abort before restart if they fail
+                set_update_status("updating", "Checking dependencies...")
+                dep_ok, dep_msg = _install_dependencies()
+                if not dep_ok:
+                    raise Exception(
+                        f"Dependency install failed: {dep_msg} — service NOT restarted "
+                        f"to avoid a broken boot. Backup: {backup_dir}")
         finally:
             if os.path.exists(tmp_zip_path):
                 os.unlink(tmp_zip_path)
-                
-        # 4. Install requirements
-        set_update_status("updating", "Checking and installing dependencies...")
-        venv_pip = os.path.join(BASE_DIR, 'venv', 'bin', 'pip')
-        if os.path.exists(venv_pip):
-            subprocess.run(
-                [venv_pip, 'install', '-r', 'requirements.txt', '-q'],
-                cwd=BASE_DIR,
-                capture_output=True,
-                timeout=120
-            )
-            
+
+        # 8. Prune old backups
+        _prune_backups(MAX_BACKUPS)
+
         new_version = get_current_version()
         logger.info(f"RSCP updated from {old_version} to {new_version}")
-        
-        # 5. Success -> Restarting status
-        set_update_status("restarting", f"Update successful ({old_version} → {new_version})! Restarting services...", version=new_version)
-        
-        # Sleep for a bit to allow the frontend to fetch the restarting status
+
+        # 9. Restart — reached ONLY after a fully validated, successful update
+        set_update_status("restarting",
+                          f"Update successful ({old_version} → {new_version})! Restarting services...",
+                          version=new_version)
         time.sleep(2)
-        
-        # 6. Trigger Restart
-        # First, try cleanly restarting via systemd
-        logger.info("Initiating RSCP service restart...")
-        try:
-            # Run asynchronously so that we don't block or hang
-            subprocess.Popen(['sudo', 'systemctl', 'restart', 'rscp'])
-            time.sleep(1)
-        except Exception as e:
-            logger.warning(f"Failed to run sudo systemctl restart rscp: {e}")
-            
-        # Fallback 1: Terminate the Gunicorn parent process
-        try:
-            ppid = os.getppid()
-            if ppid > 1:
-                logger.info(f"Sending SIGTERM to parent Gunicorn process {ppid}")
-                os.kill(ppid, signal.SIGTERM)
-                time.sleep(1)
-        except Exception as e:
-            logger.warning(f"Failed to kill Gunicorn parent: {e}")
-            
-        # Fallback 2: Terminate our own process
-        logger.info(f"Sending SIGTERM to current process {os.getpid()}")
-        os.kill(os.getpid(), signal.SIGTERM)
-        
+        _restart_service()
+
     except Exception as e:
         logger.error(f"Update background error: {e}")
-        set_update_status("error", error=str(e))
+        msg = str(e)
+        if backup_dir and 'Backup:' not in msg:
+            msg += f" | Backup available at: {backup_dir}"
+        set_update_status("error", error=msg)
 
 
 @admin_bp.route('/update', methods=['POST'])
