@@ -33,14 +33,37 @@ def start_audit():
     if mode not in ['item', 'shelf']:
         flash("Invalid audit mode.")
         return redirect(url_for('inventory.audit_dashboard'))
-        
+
     conn = get_db_connection()
+
+    # Enforce a single active audit at a time. Without this guard, tapping a
+    # mode card while an audit is already in progress spawns a second concurrent
+    # session, splitting one logical audit across multiple reports (the user
+    # then has to resume+finish each fragment in turn). See audit_dashboard,
+    # which only ever surfaces the newest active session.
+    existing = conn.execute(
+        "SELECT * FROM audit_sessions WHERE status = 'active' ORDER BY start_time DESC LIMIT 1"
+    ).fetchone()
+    if existing:
+        existing_id = existing['id']
+        existing_mode = existing['mode']
+        conn.close()
+        if existing_mode == mode:
+            # Same mode: just resume the in-progress audit rather than forking.
+            flash("Resumed your in-progress audit.")
+            return redirect(url_for('inventory.audit_live', session_id=existing_id))
+        # Different mode: don't silently mix counts. Send them back to the
+        # dashboard to explicitly resume or finish the existing audit first.
+        flash(f"You have an in-progress {existing_mode.capitalize()} audit. "
+              f"Resume or finish it before starting a new one.")
+        return redirect(url_for('inventory.audit_dashboard'))
+
     cursor = conn.cursor()
     cursor.execute("INSERT INTO audit_sessions (user_id, mode) VALUES (?, ?)", (user, mode))
     session_id = cursor.lastrowid
     conn.commit()
     conn.close()
-    
+
     return redirect(url_for('inventory.audit_live', session_id=session_id))
 
 

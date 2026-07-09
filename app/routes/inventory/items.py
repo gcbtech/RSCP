@@ -274,7 +274,22 @@ def list_items():
     
     # Validate order direction
     order_dir = 'ASC' if order.lower() == 'asc' else 'DESC'
-    
+
+    # Build ORDER BY clause. Sorting by location must consider the full
+    # location hierarchy (area -> aisle -> shelf -> bin) so items in the same
+    # physical spot group together; sorting on location_area alone leaves items
+    # within an area in arbitrary order. COALESCE keeps NULL/empty fields grouped.
+    if sort_by == 'location_area':
+        order_by_clause = (
+            f"COALESCE(location_area, '') {order_dir}, "
+            f"COALESCE(location_aisle, '') {order_dir}, "
+            f"COALESCE(location_shelf, '') {order_dir}, "
+            f"COALESCE(location_bin, '') {order_dir}, "
+            f"COALESCE(name, '') ASC"
+        )
+    else:
+        order_by_clause = f"{sort_by} {order_dir}"
+
     # Legacy filter clause
     legacy_clause = "" if show_legacy else "AND COALESCE(is_legacy, 0) = 0"
     
@@ -289,12 +304,13 @@ def list_items():
             for token in tokens:
                 pattern = f'%{token}%'
                 search_conditions.append('''
-                    (COALESCE(name, '') LIKE ? 
-                     OR COALESCE(sku, '') LIKE ? 
+                    (COALESCE(name, '') LIKE ?
+                     OR COALESCE(sku, '') LIKE ?
                      OR COALESCE(location_area, '') LIKE ?
-                     OR COALESCE(secondary_ids, '') LIKE ?)
+                     OR COALESCE(secondary_ids, '') LIKE ?
+                     OR COALESCE(keywords, '') LIKE ?)
                 ''')
-                search_params_list.extend([pattern, pattern, pattern, pattern])
+                search_params_list.extend([pattern, pattern, pattern, pattern, pattern])
             
             search_clause = "WHERE (" + " AND ".join(search_conditions) + f") {legacy_clause}"
             search_params = tuple(search_params_list)
@@ -308,9 +324,9 @@ def list_items():
                  WHERE p.sku = inventory_items.sku 
                  AND p.status NOT IN ('received', 'refunded', 'return_pending', 'returned', 'archived')
                 ) as incoming_count
-                FROM inventory_items 
+                FROM inventory_items
                 {search_clause}
-                ORDER BY {sort_by} {order_dir}
+                ORDER BY {order_by_clause}
                 LIMIT ? OFFSET ?
             ''', search_params + (per_page, offset)).fetchall()
         else:
@@ -324,9 +340,9 @@ def list_items():
                  WHERE p.sku = inventory_items.sku 
                  AND p.status NOT IN ('received', 'refunded', 'return_pending', 'returned', 'archived')
                 ) as incoming_count
-                FROM inventory_items 
+                FROM inventory_items
                 {where_clause}
-                ORDER BY {sort_by} {order_dir}
+                ORDER BY {order_by_clause}
                 LIMIT ? OFFSET ?
             ''', (per_page, offset)).fetchall()
         

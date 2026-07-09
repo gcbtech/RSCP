@@ -30,6 +30,16 @@
             transform: scale(0.98);
         }
 
+        /* Disabled state: shown while an audit is already in progress so the
+           two "start" cards can't be tapped (which would fork a new session). */
+        .audit-card:disabled,
+        .audit-card.audit-card-disabled {
+            opacity: 0.5;
+            filter: grayscale(85%);
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
         .icon-large {
             font-size: 2rem;
             margin-bottom: 0.5rem;
@@ -59,15 +69,19 @@
 
         <!-- Active Session Alert -->
         {% if active_session %}
-        <div class="alert alert-warning d-flex justify-content-between align-items-center mb-3 p-2">
-            <div class="small">
-                <strong>⚠️ In Progress</strong><br>
-                {{ active_session.start_time }} ({{ active_session.mode|capitalize }})
+        <div class="alert alert-warning mb-3">
+            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <div>
+                    <strong>⚠️ Audit In Progress</strong><br>
+                    <span class="small">Started {{ active_session.start_time }} · {{ active_session.mode|capitalize }} Mode</span>
+                </div>
+                <a href="{{ url_for('inventory.audit_live', session_id=active_session.id) }}"
+                    class="btn btn-warning btn-lg fw-bold">
+                    ▶ Resume Audit
+                </a>
             </div>
-            <a href="{{ url_for('inventory.audit_live', session_id=active_session.id) }}"
-                class="btn btn-warning btn-sm">
-                Resume
-            </a>
+            <hr class="my-2">
+            <div class="small text-muted mb-0">Finish or resume the current audit before starting a new one.</div>
         </div>
         {% endif %}
 
@@ -77,7 +91,7 @@
                 <form action="{{ url_for('inventory.start_audit') }}" method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="mode" value="item">
-                    <button type="submit" class="card audit-card w-100 p-3 text-start bg-primary text-white">
+                    <button type="submit" class="card audit-card w-100 p-3 text-start bg-primary text-white{% if active_session %} audit-card-disabled{% endif %}"{% if active_session %} disabled{% endif %}>
                         <div class="card-body p-0 d-flex align-items-center">
                             <div class="icon-large me-3 mb-0"><i class="bi bi-box-seam-fill"></i></div>
                             <div>
@@ -96,7 +110,7 @@
                 <form action="{{ url_for('inventory.start_audit') }}" method="POST">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="mode" value="shelf">
-                    <button type="submit" class="card audit-card w-100 p-3 text-start bg-success text-white">
+                    <button type="submit" class="card audit-card w-100 p-3 text-start bg-success text-white{% if active_session %} audit-card-disabled{% endif %}"{% if active_session %} disabled{% endif %}>
                         <div class="card-body p-0 d-flex align-items-center">
                             <div class="icon-large me-3 mb-0"><i class="bi bi-bookshelf"></i></div>
                             <div>
