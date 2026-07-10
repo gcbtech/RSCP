@@ -331,6 +331,43 @@ def compute_cart_totals(cart):
     }
 
 
+@pos_bp.route('/preview-receipt')
+@login_required
+def preview_receipt():
+    """Printable PREVIEW / pick-list of the current cart, BEFORE checkout.
+
+    Deliberately NOT a receipt: no order is created and nothing is committed
+    (no inventory decrement, no payment, no order number). It exists so bulk
+    customers can print the in-progress order and physically check items off.
+    The template makes the preview status unmistakable.
+    """
+    cart = get_cart()
+    if not cart.get('items'):
+        flash('Cart is empty — nothing to preview.')
+        return redirect(url_for('pos.sales'))
+
+    totals = compute_cart_totals(cart)
+    config = load_config() or {}
+
+    operator_name = None
+    if current_user.is_authenticated:
+        operator_name = getattr(current_user, 'username', None)
+    operator_name = operator_name or session.get('operator_name') or session.get('user')
+
+    return render_template(
+        'pos/receipt_preview.html',
+        cart=cart,
+        totals=totals,
+        config=config,
+        org_name=config.get('ORGANIZATION_NAME', ''),
+        receipt_store_name=get_pos_setting('RECEIPT_STORE_NAME', ''),
+        receipt_store_name_bold=get_pos_setting('RECEIPT_STORE_NAME_BOLD', 'false') == 'true',
+        receipt_store_name_italic=get_pos_setting('RECEIPT_STORE_NAME_ITALIC', 'false') == 'true',
+        operator_name=operator_name,
+        generated_at=datetime.now().strftime('%Y-%m-%d %I:%M %p'),
+    )
+
+
 from app.routes.inventory import get_inventory_item
 
 

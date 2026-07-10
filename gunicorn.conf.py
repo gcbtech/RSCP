@@ -21,8 +21,17 @@ errorlog = "-"   # stderr
 loglevel = "info"
 
 # Performance
-worker_class = "sync"  # Default sync workers
+#
+# gthread: multi-process AND multi-threaded. POS peripherals (registers,
+# customer displays, scanners) poll every ~1s with cheap single-row reads;
+# those ride threads without tying up a whole worker, while CPU-bound work
+# (image processing, SQLite) spreads across worker processes/cores. This
+# replaced the old single eventlet worker, where any blocking call froze
+# every terminal at once. Background tasks are started exactly once via a
+# lock-file guard in wsgi.py, so scaling workers does not duplicate them.
+worker_class = "gthread"
+threads = 4
 keepalive = 2
 
 # Print config on startup
-print(f"[Gunicorn Config] CPU Cores: {cpu_cores}, Workers: {workers}")
+print(f"[Gunicorn Config] CPU Cores: {cpu_cores}, Workers: {workers}, Threads/worker: {threads}")

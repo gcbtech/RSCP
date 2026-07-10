@@ -23,6 +23,7 @@ app.log
 app.log.*
 logs/
 error_logs*.csv
+.background_tasks.lock
 
 # ----------------------------------
 # Python Bytecode & Cache

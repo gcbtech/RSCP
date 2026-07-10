@@ -105,6 +105,9 @@
     {% endif %}
     <button class="pos-btn pos-btn-secondary" type="button" data-bs-toggle="modal"
         data-bs-target="#discountModal">🏷️ Discount</button>
+    <a href="{{ url_for('pos.preview_receipt') }}" target="_blank"
+        class="pos-btn pos-btn-secondary text-decoration-none text-center"
+        title="Print a preview / pick-list before completing the sale">🔍 Preview</a>
     <a href="{{ url_for('pos.checkout') }}"
         class="pos-btn pos-btn-success text-decoration-none text-center">
         💳 Checkout (${{ "%.2f"|format(total) }})

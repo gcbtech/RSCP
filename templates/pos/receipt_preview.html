@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>PREVIEW — {{ receipt_store_name or org_name or 'RSCP' }}</title>
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            width: 80mm;
+            margin: 0 auto;
+            padding: 4mm;
+            font-size: 13px;
+            font-weight: 500;
+            position: relative;
+        }
+
+        /* Faint diagonal watermark — reinforces PREVIEW on screen/inkjet.
+           Very light so it never obscures text (and thermal printers, which
+           only fire dark pixels, simply skip it). */
+        .watermark {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transform: rotate(-30deg);
+            font-size: 42px;
+            font-weight: bold;
+            letter-spacing: 6px;
+            color: rgba(0, 0, 0, 0.05);
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .content { position: relative; z-index: 1; }
+
+        /* Inverted bold bar — nothing on a real receipt looks like this. */
+        .preview-banner {
+            background: #000;
+            color: #fff;
+            text-align: center;
+            font-weight: bold;
+            font-size: 15px;
+            letter-spacing: 2px;
+            padding: 6px 4px;
+            margin: 4px 0;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+        }
+
+        .preview-sub {
+            text-align: center;
+            font-size: 11px;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+
+        .header {
+            text-align: center;
+            border-bottom: 1px dashed #000;
+            padding-bottom: 8px;
+            margin-bottom: 8px;
+        }
+
+        .store-name { font-size: 14px; font-weight: bold; }
+
+        .meta { font-size: 11px; margin-top: 4px; }
+
+        .section {
+            border-bottom: 1px dashed #000;
+            padding: 8px 0;
+        }
+
+        .item {
+            display: flex;
+            align-items: flex-start;
+            padding: 5px 0;
+        }
+
+        /* Printable check-off box (bordered square prints reliably on thermal,
+           unlike unicode ☐ glyphs which depend on the font). */
+        .chk {
+            flex: 0 0 auto;
+            width: 15px;
+            height: 15px;
+            border: 1.5px solid #000;
+            margin-right: 8px;
+            margin-top: 1px;
+        }
+
+        .item-main { flex: 1 1 auto; }
+
+        .item-top {
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .item-detail { font-size: 12px; font-weight: 600; }
+
+        .row {
+            display: flex;
+            justify-content: space-between;
+            margin: 2px 0;
+        }
+
+        .total-row {
+            font-weight: bold;
+            font-size: 17px;
+            margin-top: 8px;
+        }
+
+        .footer {
+            text-align: center;
+            padding-top: 10px;
+            font-size: 11px;
+        }
+
+        /* On-screen controls, never printed. */
+        .toolbar {
+            width: 80mm;
+            margin: 0 auto 8px;
+            display: flex;
+            gap: 8px;
+            padding: 8px 0;
+        }
+
+        .toolbar button, .toolbar a {
+            flex: 1;
+            padding: 10px;
+            font-size: 14px;
+            font-weight: bold;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            text-align: center;
+            text-decoration: none;
+        }
+
+        .btn-print { background: #0d6efd; color: #fff; }
+        .btn-back { background: #6c757d; color: #fff; }
+
+        @media print {
+            body { width: 100%; padding: 2mm; }
+            .no-print { display: none !important; }
+            .watermark { font-size: 46px; }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="toolbar no-print">
+        <button class="btn-print" onclick="window.print()">🖨️ Print Pick List</button>
+        <a class="btn-back" href="{{ url_for('pos.sales') }}">← Back to Sale</a>
+    </div>
+
+    <div class="watermark">PREVIEW</div>
+
+    <div class="content">
+        <div class="preview-banner">PREVIEW — NOT A RECEIPT</div>
+        <div class="preview-sub">Order Preview / Pick List · No sale has been completed</div>
+
+        <div class="header">
+            {% if receipt_store_name %}
+            <div class="store-name"
+                style="{% if receipt_store_name_bold %}font-weight:bold;{% endif %}{% if receipt_store_name_italic %}font-style:italic;{% endif %}">
+                {{ receipt_store_name }}</div>
+            {% elif org_name %}
+            <div class="store-name">{{ org_name }}</div>
+            {% endif %}
+            <div class="meta">Generated: {{ generated_at }}</div>
+            {% if operator_name %}<div class="meta">Operator: {{ operator_name }}</div>{% endif %}
+            <div class="meta">{{ totals.item_count }} line item(s) — check each item off as you go</div>
+        </div>
+
+        <div class="section">
+            {% for item in cart['items'] %}
+            {% set qty = item.quantity or 1 %}
+            {% set unit = (item.line_total / qty) if qty else item.line_total %}
+            <div class="item">
+                <div class="chk"></div>
+                <div class="item-main">
+                    <div class="item-top">
+                        <span>{{ item.name }}</span>
+                        <span>${{ "%.2f"|format(item.line_total) }}</span>
+                    </div>
+                    <div class="item-detail">
+                        {% if item.sku %}{{ item.sku }} · {% endif %}{{ qty }} × ${{ "%.2f"|format(unit) }}
+                        {% if item.is_on_sale %} · SALE{% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <div class="section">
+            <div class="row">
+                <span>Subtotal</span>
+                <span>${{ "%.2f"|format(totals.subtotal) }}</span>
+            </div>
+            {% if totals.order_discount and totals.order_discount > 0.005 %}
+            <div class="row">
+                <span>Order Discount</span>
+                <span>-${{ "%.2f"|format(totals.order_discount) }}</span>
+            </div>
+            {% endif %}
+            {% if totals.applied_coupon and totals.coupon_discount and totals.coupon_discount > 0.005 %}
+            <div class="row">
+                <span>Coupon ({{ totals.applied_coupon['code'] }})</span>
+                <span>-${{ "%.2f"|format(totals.coupon_discount) }}</span>
+            </div>
+            {% endif %}
+            <div class="row">
+                <span>Tax ({{ "%.2f"|format(totals.tax_rate_pct) }}%)</span>
+                <span>${{ "%.2f"|format(totals.tax_amount) }}</span>
+            </div>
+            <div class="row total-row">
+                <span>ESTIMATED TOTAL</span>
+                <span>${{ "%.2f"|format(totals.card_total) }}</span>
+            </div>
+            {% if totals.cash_discount_enabled and totals.cash_total < totals.card_total %}
+            <div class="row" style="font-size:12px;">
+                <span>Est. Cash Price</span>
+                <span>${{ "%.2f"|format(totals.cash_total) }}</span>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="preview-banner">PREVIEW ONLY · NOT PROOF OF PURCHASE</div>
+
+        <div class="footer">
+            <p>This is a preview of an in-progress order. Prices, discounts, and
+               totals are estimates and are <strong>not final</strong> until the
+               sale is completed at checkout.</p>
+        </div>
+    </div>
+</body>
+
+</html>

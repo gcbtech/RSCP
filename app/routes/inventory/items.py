@@ -74,6 +74,28 @@ def optimize_image(image_data, max_size=MAX_IMAGE_SIZE, quality=JPEG_QUALITY):
 
 THUMB_SIZE = (40, 40)
 
+
+def get_thumbnail_url(image_url):
+    """Cheap thumbnail lookup for list rendering: path check only, no PIL.
+
+    Thumbnails are generated at upload time (see generate_thumbnail calls in
+    add_item/edit_item/upload_photo) — doing image work per-row inside the
+    list request stalled the whole page (and, before the gthread switch,
+    every worker). Returns None when no thumbnail exists; the template falls
+    back to the full image.
+    """
+    if not image_url or image_url.startswith('http'):
+        return None
+    if '/static/uploads/inventory/' not in image_url:
+        return None
+    filename = image_url.split('/static/uploads/inventory/')[-1]
+    base, _ext = os.path.splitext(filename)
+    thumb_rel = f"uploads/inventory/thumbs/{base}_thumb.jpg"
+    if os.path.exists(os.path.join(BASE_DIR, 'static', thumb_rel.replace('/', os.sep))):
+        return f"/static/{thumb_rel}"
+    return None
+
+
 def generate_thumbnail(image_url):
     """
     Generate a 40x40 thumbnail for an image.
@@ -348,12 +370,13 @@ def list_items():
         
         total_pages = (total + per_page - 1) // per_page if total > 0 else 1
         
-        # Generate thumbnails for list display
+        # Attach pre-generated thumbnails for list display (path check only —
+        # generation happens at upload time, never inside this request).
         items_with_thumbs = []
         for item in items:
             item_dict = dict(item)
             if item_dict.get('image_url'):
-                item_dict['thumbnail_url'] = generate_thumbnail(item_dict['image_url'])
+                item_dict['thumbnail_url'] = get_thumbnail_url(item_dict['image_url'])
             else:
                 item_dict['thumbnail_url'] = None
             items_with_thumbs.append(item_dict)
@@ -505,6 +528,9 @@ def add_item():
                     with open(os.path.join(upload_folder, unique_name), 'wb') as f:
                         f.write(optimized_data)
                     image_url = url_for('static', filename=f'uploads/inventory/{unique_name}')
+                    # Generate the list thumbnail now, at upload time, so the
+                    # items list never does image work per request.
+                    generate_thumbnail(image_url)
 
             # Handle additional gallery images
             additional_images_list = []
@@ -522,6 +548,7 @@ def add_item():
                         with open(os.path.join(upload_folder, unique_name), 'wb') as f:
                             f.write(optimized_data)
                         img_path = url_for('static', filename=f'uploads/inventory/{unique_name}')
+                        generate_thumbnail(img_path)
                         additional_images_list.append(img_path)
 
             # If cover is empty, the first uploaded gallery image automatically becomes the primary cover
@@ -767,6 +794,9 @@ def edit_item(item_id):
                     with open(os.path.join(upload_folder, unique_name), 'wb') as f:
                         f.write(optimized_data)
                     image_url = url_for('static', filename=f'uploads/inventory/{unique_name}')
+                    # Generate the list thumbnail now, at upload time, so the
+                    # items list never does image work per request.
+                    generate_thumbnail(image_url)
 
             # Handle new gallery uploads
             if 'additional_images' in request.files:
@@ -783,6 +813,7 @@ def edit_item(item_id):
                         with open(os.path.join(upload_folder, unique_name), 'wb') as f:
                             f.write(optimized_data)
                         img_path = url_for('static', filename=f'uploads/inventory/{unique_name}')
+                        generate_thumbnail(img_path)
                         additional_images_list.append(img_path)
 
             # Fallback: if not image_url and additional_images_list:
@@ -1160,8 +1191,12 @@ def upload_photo():
         filepath = os.path.join(upload_dir, filename)
         with open(filepath, 'wb') as f:
             f.write(optimized_data)
-            
-        return jsonify({'url': f'/static/uploads/inventory/{filename}'})
+
+        photo_url = f'/static/uploads/inventory/{filename}'
+        # Thumbnail at upload time (list rendering never does image work)
+        generate_thumbnail(photo_url)
+
+        return jsonify({'url': photo_url})
     except Exception as e:
         logger.error(f"Photo upload failed: {e}")
         return jsonify({'error': str(e)}), 500
