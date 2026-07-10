@@ -47,11 +47,15 @@ def _acquire_singleton_lock():
 
 
 # Start background tasks (manifest sync every 5 min, email ingest every 15 min)
-# in exactly ONE worker process.
+# and run pending system migrations, in exactly ONE worker process.
 _lock_fd = _acquire_singleton_lock()
 if _lock_fd is not None:
     logger.info(f"[Background Tasks] Worker {os.getpid()} owns background tasks")
     start_background_tasks()
+    # Post-update system steps (unit rewrites, backfills) — versioned and
+    # idempotent, so in-app updates need no manual follow-up commands.
+    from app.services.system_migrations import run_system_migrations
+    run_system_migrations()
 else:
     logger.info(f"[Background Tasks] Worker {os.getpid()} skipping (another worker owns them)")
 
