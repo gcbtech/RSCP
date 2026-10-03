@@ -264,7 +264,8 @@
         .pos-btn-success {
             background: var(--pos-success);
             color: white;
-            grid-column: span 2;
+            /* Single grid cell: Checkout sits next to Preview (under Discount)
+               rather than spanning a full-width row of its own. */
         }
 
         .pos-btn-secondary {
@@ -512,10 +513,11 @@
                 border-radius: 0;
             }
 
-            /* Cart - no bottom padding, just margin for fixed buttons */
+            /* Cart - bottom margin reserves space for the fixed action bar so
+               the last cart item can scroll clear of it. The bar is now two
+               rows tall (~110px); 130px leaves a small cushion below. */
             .pos-cart-card {
-                margin-bottom: 85px !important;
-                /* Space for fixed buttons */
+                margin-bottom: 130px !important;
                 padding-bottom: 0 !important;
             }
 
@@ -532,7 +534,6 @@
             }
 
             .pos-btn-success {
-                grid-column: span 2;
                 font-size: 1rem;
                 padding: 0.875rem;
             }
@@ -546,9 +547,28 @@
                 font-size: 2.5rem;
             }
 
-            /* Autocomplete dropdown */
+            /* Autocomplete dropdown - taller on mobile so more results are
+               visible/tappable at once (the search box sits near the top of
+               the screen, so there's room). Scrolls internally past this. */
             .autocomplete-results {
-                max-height: 200px;
+                max-height: 65vh;
+            }
+
+            /* The search card (.pos-card) has overflow:hidden to round its
+               corners, which also clips this absolutely-positioned dropdown to
+               the card box — capping it at ~2 rows regardless of max-height.
+               Let the search card and its body overflow so the full 65vh list
+               is visible; it floats (z-index) over the cart card below. */
+            .pos-search-card,
+            .pos-search-card .pos-card-body {
+                overflow: visible !important;
+            }
+
+            /* Without the card's clip, keep the header's top corners rounded to
+               match the card so they don't show square past the card edge. */
+            .pos-search-card .pos-card-header {
+                border-top-left-radius: 8px;
+                border-top-right-radius: 8px;
             }
 
             .autocomplete-item {

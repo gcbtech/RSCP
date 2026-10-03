@@ -308,56 +308,48 @@ def delete_coupon(coupon_id):
 # Coupon Validation & Application API
 # ========================================
 
-@pos_bp.route('/api/coupon/validate', methods=['POST'])
-@login_required
-def validate_coupon():
-    """Validate a coupon code and return details."""
-    data = request.get_json()
-    code = data.get('code', '').strip().upper()
-    
-    # ALWAYS use the authoritative server-side cart for validation.
-    # Client-passed cart data can be stale after DOM hot-swaps or across
-    # paired terminal sessions.  get_cart() handles all pairing/session
-    # resolution and returns the canonical cart.
-    from app.routes.pos.core import get_cart
-    live_cart = get_cart()
-    cart_items = live_cart.get('items', [])
-    cart_subtotal = sum(item.get('line_total', 0) for item in cart_items)
-    
-    logger.info(f"[Coupon Validate] Validating coupon: {code}. "
-                f"Live cart items count: {len(cart_items)}, subtotal: {cart_subtotal}")
-    
-    conn = get_db_connection()
-    
+def evaluate_coupon(code, cart_items, cart_subtotal, conn):
+    """Authoritatively validate a coupon against the given cart and compute its
+    discount server-side.
+
+    Returns a plain dict, either:
+      {'valid': False, 'error': <message>}
+    or:
+      {'valid': True, 'coupon': {...}, 'discount_amount': <server-computed>}
+
+    Both /api/coupon/validate and /api/coupon/apply route through this, so the
+    discount that gets stored on the cart can never diverge from — or be forged
+    past — validation. The caller owns the connection lifecycle.
+    """
     # Find coupon
     coupon = conn.execute('''
         SELECT * FROM pos_coupons WHERE code = ? AND active = 1
     ''', (code,)).fetchone()
-    
+
     if not coupon:
         logger.warning(f"[Coupon Validate] Coupon not found or inactive: {code}")
-        return jsonify({'valid': False, 'error': 'Invalid coupon code.'})
-    
+        return {'valid': False, 'error': 'Invalid coupon code.'}
+
     now = datetime.now().strftime('%Y-%m-%d')
-    
+
     # Check dates
     if coupon['start_date'] and coupon['start_date'] > now:
         logger.warning(f"[Coupon Validate] Coupon {code} is not yet active (start_date: {coupon['start_date']}, now: {now})")
-        return jsonify({'valid': False, 'error': 'Coupon is not yet active.'})
-    
+        return {'valid': False, 'error': 'Coupon is not yet active.'}
+
     if coupon['end_date'] and coupon['end_date'] < now:
         logger.warning(f"[Coupon Validate] Coupon {code} has expired (end_date: {coupon['end_date']}, now: {now})")
-        return jsonify({'valid': False, 'error': 'Coupon has expired.'})
-    
+        return {'valid': False, 'error': 'Coupon has expired.'}
+
     # Check usage limits (None, empty string, or 0/None indicates unlimited uses)
     max_uses = coupon['max_uses']
     current_uses = int(coupon['current_uses'] or 0)
-    
+
     if max_uses is not None and str(max_uses).strip() != "" and int(max_uses) > 0:
         if current_uses >= int(max_uses):
             logger.warning(f"[Coupon Validate] Coupon {code} reached max uses: {current_uses}/{max_uses}")
-            return jsonify({'valid': False, 'error': 'Coupon has reached maximum uses.'})
-    
+            return {'valid': False, 'error': 'Coupon has reached maximum uses.'}
+
     # For serialized coupons, check if already redeemed
     if coupon['coupon_type'] == 'serialized':
         redemption = conn.execute('''
@@ -365,17 +357,17 @@ def validate_coupon():
         ''', (coupon['id'], code)).fetchone()
         if redemption:
             logger.warning(f"[Coupon Validate] Serialized coupon {code} already redeemed")
-            return jsonify({'valid': False, 'error': 'This coupon has already been redeemed.'})
-    
+            return {'valid': False, 'error': 'This coupon has already been redeemed.'}
+
     # Check minimum purchase for order-level coupons
     if coupon['discount_type'] in ('order_dollar', 'order_percent') and coupon['min_purchase']:
         if cart_subtotal < coupon['min_purchase']:
             logger.warning(f"[Coupon Validate] Subtotal {cart_subtotal} < min purchase {coupon['min_purchase']} for coupon {code}")
-            return jsonify({
-                'valid': False, 
+            return {
+                'valid': False,
                 'error': f'Minimum purchase of ${coupon["min_purchase"]:.2f} required.'
-            })
-    
+            }
+
     # For item-specific coupons, check if item is in cart
     if coupon['discount_type'] in ('item_dollar', 'item_percent', 'bogo_free', 'bogo_percent'):
         target_items = conn.execute('''
@@ -385,10 +377,10 @@ def validate_coupon():
         ''', (coupon['id'],)).fetchall()
         target_ids = [r['item_id'] for r in target_items]
         target_skus = {r['sku'].upper() for r in target_items if r['sku']}
-        
+
         logger.info(f"[Coupon Validate] Item-specific validation for coupon ID {coupon['id']}. "
                      f"Target item IDs: {target_ids}, Target SKUs: {target_skus}")
-        
+
         if target_ids:
             # Build matching sets from the live cart: by inventory_item_id AND by SKU
             cart_item_ids = []
@@ -403,29 +395,29 @@ def validate_coupon():
                 sku = item.get('sku')
                 if sku:
                     cart_item_skus.add(str(sku).upper())
-            
+
             # Match by inventory_item_id first, then fall back to SKU matching
             matching_ids = set(target_ids) & set(cart_item_ids)
             matching_skus = target_skus & cart_item_skus
-            
+
             logger.info(f"[Coupon Validate] Cart item IDs: {cart_item_ids}, Cart SKUs: {cart_item_skus}")
             logger.info(f"[Coupon Validate] Matching IDs: {matching_ids}, Matching SKUs: {matching_skus}")
-            
+
             if not matching_ids and not matching_skus:
                 logger.warning(f"[Coupon Validate] Required item for coupon {code} not in cart. "
                                f"Targets: {target_ids}/{target_skus}, Cart: {cart_item_ids}/{cart_item_skus}")
-                return jsonify({
-                    'valid': False, 
+                return {
+                    'valid': False,
                     'error': 'Required item for this coupon is not in cart.'
-                })
+                }
             else:
                 logger.info(f"[Coupon Validate] Matching target items found in cart (IDs: {matching_ids}, SKUs: {matching_skus})")
-    
-    # Calculate discount
+
+    # Calculate discount (server-authoritative)
     discount = calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn)
     logger.info(f"[Coupon Validate] Coupon {code} validated successfully. Discount amount: {discount}")
-    
-    return jsonify({
+
+    return {
         'valid': True,
         'coupon': {
             'id': coupon['id'],
@@ -436,7 +428,30 @@ def validate_coupon():
             'cannot_combine': bool(coupon['cannot_combine'])
         },
         'discount_amount': discount
-    })
+    }
+
+
+@pos_bp.route('/api/coupon/validate', methods=['POST'])
+@login_required
+def validate_coupon():
+    """Validate a coupon code and return details."""
+    data = request.get_json()
+    code = data.get('code', '').strip().upper()
+
+    # ALWAYS use the authoritative server-side cart for validation.
+    # Client-passed cart data can be stale after DOM hot-swaps or across
+    # paired terminal sessions.  get_cart() handles all pairing/session
+    # resolution and returns the canonical cart.
+    from app.routes.pos.core import get_cart
+    live_cart = get_cart()
+    cart_items = live_cart.get('items', [])
+    cart_subtotal = sum(item.get('line_total', 0) for item in cart_items)
+
+    logger.info(f"[Coupon Validate] Validating coupon: {code}. "
+                f"Live cart items count: {len(cart_items)}, subtotal: {cart_subtotal}")
+
+    conn = get_db_connection()
+    return jsonify(evaluate_coupon(code, cart_items, cart_subtotal, conn))
 
 
 def calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn):
@@ -574,21 +589,37 @@ def calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn):
 @pos_bp.route('/api/coupon/apply', methods=['POST'])
 @login_required
 def apply_coupon():
-    """Apply a validated coupon to the cart session."""
+    """Apply a coupon to the cart, re-validating and recomputing the discount
+    server-side. Only the coupon CODE from the client is trusted; the posted
+    discount amount is ignored and re-derived from the authoritative live cart,
+    so a crafted request can't apply an arbitrary (or oversized) discount."""
     from app.routes.pos.core import get_cart, save_cart
-    
-    data = request.get_json()
+
+    data = request.get_json() or {}
+    code = data.get('code', '').strip().upper()
+    if not code:
+        return jsonify({'success': False, 'error': 'Coupon code required.'}), 400
+
     cart = get_cart()
-    
+    cart_items = cart.get('items', [])
+    cart_subtotal = sum(item.get('line_total', 0) for item in cart_items)
+
+    conn = get_db_connection()
+    result = evaluate_coupon(code, cart_items, cart_subtotal, conn)
+    if not result.get('valid'):
+        return jsonify({'success': False, 'error': result.get('error', 'Invalid coupon.')}), 400
+
+    coupon = result['coupon']
     cart['applied_coupon'] = {
-        'id': data.get('coupon_id'),
-        'code': data.get('code'),
-        'name': data.get('name'),
-        'discount': data.get('discount', 0)
+        'id': coupon['id'],
+        'code': coupon['code'],
+        'name': coupon['name'],
+        'discount': result['discount_amount'],
+        'cannot_combine': coupon.get('cannot_combine', False),
     }
     save_cart(cart)
-    
-    return jsonify({'success': True})
+
+    return jsonify({'success': True, 'discount_amount': result['discount_amount']})
 
 
 @pos_bp.route('/api/coupon/remove', methods=['POST'])

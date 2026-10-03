@@ -6,7 +6,7 @@ Security:
 - API key authentication required (X-API-Key header)
 - SELECT queries only — no write operations exist in this module
 - Explicit column allowlist — internal fields are never queried
-- Hardcoded aisle filter — only Laptops, Desktops, Servers are returned
+- Hardcoded aisle filter — only the aisles in ALLOWED_AISLES are returned
 - Rate limited to 30 requests per minute per IP
 - Out-of-stock and legacy items are excluded
 """
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 public_api_bp = Blueprint('public_api', __name__, url_prefix='/api/public')
 
 # ── Hardcoded allowlist — customers can ONLY see these aisles ──
-ALLOWED_AISLES = ('Laptops', 'Desktops', 'Servers', 'Glass Case', 'Glass Counter', 'Island Shelves')
+ALLOWED_AISLES = ('Laptops', 'Desktops', 'Servers', 'Switches', 'Glass Case', 'Glass Counter', 'Island Shelves')
 
 
 def require_api_key(f):

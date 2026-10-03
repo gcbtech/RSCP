@@ -32,8 +32,16 @@ def create_app(test_config=None):
     
     file_handler = None
     try:
+        # Per-process log file. Under gunicorn this setup runs once per worker,
+        # each in its own process. A single shared RotatingFileHandler is NOT
+        # multi-process safe: on rollover each worker renames app.log out from
+        # under the others, which interleaves and truncates records (the
+        # "corrupted app.log" symptom, seen as fragmented app.log.N files).
+        # Giving every process its own app-<pid>.log removes the cross-process
+        # rollover race entirely. Orphaned files from old PIDs are just logs and
+        # can be pruned by logrotate/cron.
         file_handler = RotatingFileHandler(
-            os.path.join(BASE_DIR, 'app.log'), 
+            os.path.join(BASE_DIR, f'app-{os.getpid()}.log'),
             maxBytes=10*1024*1024, # 10MB
             backupCount=5
         )

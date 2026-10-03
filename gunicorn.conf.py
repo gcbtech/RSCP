@@ -2,11 +2,14 @@
 Gunicorn Configuration File
 Usage: gunicorn -c gunicorn.conf.py wsgi:app
 """
-import multiprocessing
+import os
 
-# Calculate workers based on CPU cores
-# Formula: (2 * cores) + 1, with a minimum of 2
-cpu_cores = multiprocessing.cpu_count()
+# Calculate workers based on the CPUs actually available to this process.
+# multiprocessing.cpu_count() reports the HOST's core count inside an LXC
+# (12 on pve2), which inflated the pool to the clamp of 8 workers and
+# overran the container's RAM. sched_getaffinity respects the container's
+# cpuset, so this yields the intended (2 * cores) + 1.
+cpu_cores = len(os.sched_getaffinity(0))
 workers = min(max((2 * cpu_cores) + 1, 2), 8)  # Clamp between 2 and 8
 
 # Binding

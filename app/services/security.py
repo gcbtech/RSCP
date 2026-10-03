@@ -14,11 +14,21 @@ logger = logging.getLogger(__name__)
 _cipher_suite = None
 _last_secret_key = None
 
+def _get_secret_key():
+    """SECRET_KEY from the app context when available, else from config.json.
+    Background jobs (APScheduler threads) run outside any app context, but
+    must derive the same Fernet key create_app() uses."""
+    try:
+        return current_app.config.get('SECRET_KEY', 'default-insecure-key')
+    except RuntimeError:
+        from app.services.data_manager import load_config
+        return (load_config() or {}).get('SECRET_KEY', 'default-insecure-key')
+
 def get_cipher():
     """Get or create the Fernet cipher suite based on current app secret."""
     global _cipher_suite, _last_secret_key
-    
-    secret = current_app.config.get('SECRET_KEY', 'default-insecure-key')
+
+    secret = _get_secret_key()
     
     # Re-initialize if secret changed (unlikely but safe)
     if _cipher_suite is None or secret != _last_secret_key:

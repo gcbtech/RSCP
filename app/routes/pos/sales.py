@@ -109,8 +109,16 @@ def cart_fragment():
 def cart_add():
     """Add an item to the cart."""
     sku = request.form.get('sku', '').strip()
-    quantity = int(request.form.get('quantity', 1))
-    
+    # Adding is always a positive action; guard against negative/zero/garbage
+    # quantities that would otherwise understate the sale and, at checkout,
+    # INCREASE inventory (quantity - negative). Use cart/update to reduce a line.
+    try:
+        quantity = int(request.form.get('quantity', 1))
+    except (TypeError, ValueError):
+        quantity = 1
+    if quantity < 1:
+        quantity = 1
+
     if not sku:
         flash('Please enter a SKU or scan an item.')
         if _wants_json():
@@ -193,18 +201,26 @@ def cart_add_custom():
     """Add a custom (non-inventory) item to the cart."""
     name = request.form.get('name', '').strip()
     price = request.form.get('price', '0').strip()
-    quantity = int(request.form.get('quantity', 1))
-    
+    try:
+        quantity = int(request.form.get('quantity', 1))
+    except (TypeError, ValueError):
+        quantity = 1
+    if quantity < 1:
+        quantity = 1
+
     if not name:
         flash('Please enter an item name.')
         return redirect(url_for('pos.sales'))
-    
+
     try:
         unit_price = float(price)
     except ValueError:
         flash('Invalid price.')
         return redirect(url_for('pos.sales'))
-    
+    if unit_price < 0:
+        flash('Price cannot be negative.')
+        return redirect(url_for('pos.sales'))
+
     cart = get_cart()
     
     # Generate a unique custom SKU with timestamp to avoid collisions
