@@ -381,16 +381,10 @@ def generate_custom_report_data(start_date, end_date):
         
         max_activity_revenue = max((a['amount'] for a in activity_data), default=0) if activity_data else 0
 
-        # 5. Top Sellers
-        top_items = conn.execute('''
-            SELECT oi.sku, oi.name, SUM(oi.quantity) as qty, SUM(oi.line_total) as total
-            FROM pos_order_items oi
-            JOIN pos_orders o ON oi.order_id = o.id
-            WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held'
-            GROUP BY oi.sku
-            ORDER BY total DESC
-            LIMIT 10
-        ''', (start_dt, end_dt)).fetchall()
+        # 5. Top Sellers -- same figures as the Top Sellers report (after discounts and refunds, ex. tax)
+        top_report = generate_top_sellers_data(start_date, end_date, {}, sort='revenue')
+        top_items = [{'sku': i['sku'], 'name': i['name'], 'qty': i['net_qty'], 'total': i['net_revenue']}
+                     for i in top_report['items'][:10]]
 
         return {
             'summary': dict(summary),
@@ -420,9 +414,14 @@ LOCATION_NONE = '__none__'  # filter value meaning "no location set"
 
 # Order items resolve to their inventory item by id, falling back to SKU when the
 # original item was deleted and re-created. Refunds are attributed to the sale.
+# `ol` holds each order's line total so order-level discounts (order discount,
+# coupons, cash discount) and tax can be spread across lines by line value --
+# that keeps item figures adding up to the order totals the Custom Report uses.
 _TOP_SELLERS_FROM = '''
     FROM pos_order_items oi
     JOIN pos_orders o ON o.id = oi.order_id
+    JOIN (SELECT order_id, SUM(line_total) AS lines_total
+          FROM pos_order_items GROUP BY order_id) ol ON ol.order_id = o.id
     LEFT JOIN inventory_items inv ON inv.id = COALESCE(
         (SELECT x.id FROM inventory_items x WHERE x.id = oi.inventory_item_id),
         CASE WHEN oi.inventory_item_id IS NOT NULL
@@ -433,6 +432,10 @@ _TOP_SELLERS_FROM = '''
     ) rf ON rf.order_item_id = oi.id
     WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held'
 '''
+
+# Share of a line's list value that was actually charged (ex. tax), and its share of tax
+_NET_RATIO = '(CASE WHEN ol.lines_total > 0 THEN (o.total - o.tax_amount) / ol.lines_total ELSE 0 END)'
+_TAX_RATIO = '(CASE WHEN ol.lines_total > 0 THEN o.tax_amount / ol.lines_total ELSE 0 END)'
 
 _TOP_SELLERS_KEY = '''
     CASE WHEN inv.id IS NOT NULL THEN 'i:' || inv.id
@@ -457,7 +460,7 @@ def _top_sellers_filter_sql(filters, low_threshold):
     """Build extra WHERE clauses for the Top Sellers filters. Returns (sql, params)."""
     clauses, params = [], []
 
-    if not filters.get('include_custom'):
+    if filters.get('exclude_custom'):
         clauses.append('oi.inventory_item_id IS NOT NULL')
 
     if filters.get('q'):
@@ -522,9 +525,12 @@ def _top_sellers_items(conn, start_date, end_date, where_sql, where_params):
                MAX(inv.sell_price) AS list_price,
                MAX(inv.is_legacy) AS is_legacy,
                SUM(oi.quantity) AS qty_sold,
-               SUM(oi.line_total) AS gross_revenue,
+               SUM(oi.line_total) AS list_revenue,
+               SUM(oi.line_total * {_NET_RATIO}) AS gross_revenue,
+               SUM(oi.line_total * {_TAX_RATIO}) AS gross_tax,
                COALESCE(SUM(rf.qty), 0) AS refunded_qty,
-               COALESCE(SUM(rf.amount), 0) AS refunded_amount,
+               COALESCE(SUM(rf.amount * {_NET_RATIO}), 0) AS refunded_amount,
+               COALESCE(SUM(rf.amount * {_TAX_RATIO}), 0) AS refunded_tax,
                COUNT(DISTINCT o.id) AS orders,
                MIN(o.created_at) AS first_sold,
                MAX(o.created_at) AS last_sold
@@ -555,7 +561,7 @@ def _top_sellers_trend(conn, start_date, end_date, where_sql, where_params):
         SELECT {period_expr} AS period,
                MIN(date(o.created_at, 'localtime')) AS period_start,
                SUM(oi.quantity) - COALESCE(SUM(rf.qty), 0) AS units,
-               SUM(oi.line_total) - COALESCE(SUM(rf.amount), 0) AS revenue
+               SUM(oi.line_total * {_NET_RATIO}) - COALESCE(SUM(rf.amount * {_NET_RATIO}), 0) AS revenue
         {_TOP_SELLERS_FROM} {where_sql}
         GROUP BY period ORDER BY period
     ''', [start_dt, end_dt] + where_params).fetchall()
@@ -609,7 +615,7 @@ def generate_top_sellers_data(start_date, end_date, filters, sort='qty', descend
 
     Args:
         start_date, end_date (date): Local date range (inclusive).
-        filters (dict): q, categories, area/aisle/shelf/bin, item_status, stock, include_custom.
+        filters (dict): q, categories, area/aisle/shelf/bin, item_status, stock, exclude_custom.
         sort (str): Key from TOP_SELLERS_SORTS.
         descending (bool): Sort direction.
         category_names (dict): SKU category code -> display name.
@@ -642,6 +648,7 @@ def generate_top_sellers_data(start_date, end_date, filters, sort='qty', descend
     for r in raw:
         d = dict(r)
         d['net_qty'] = d['qty_sold'] - d['refunded_qty']
+        d['discounts'] = d['list_revenue'] - d['gross_revenue']
         d['net_revenue'] = d['gross_revenue'] - d['refunded_amount']
         has_cost = d['item_id'] is not None and (d['buy_price'] or 0) > 0
         d['cost'] = d['net_qty'] * d['buy_price'] if has_cost else None
@@ -680,12 +687,20 @@ def generate_top_sellers_data(start_date, end_date, filters, sort='qty', descend
     present.sort(key=key, reverse=descending)
     items = present + missing  # rows without a value (e.g. no cost data) always sort last
 
+    gross_revenue = sum(i['gross_revenue'] for i in items)
+    tax = sum(i['gross_tax'] for i in items)
+    refunded_amount = sum(i['refunded_amount'] for i in items)
     summary = {
         'units_sold': sum(i['qty_sold'] for i in items),
         'refunded_units': sum(i['refunded_qty'] for i in items),
         'net_units': net_units,
-        'gross_revenue': sum(i['gross_revenue'] for i in items),
-        'refunded_amount': sum(i['refunded_amount'] for i in items),
+        'list_revenue': sum(i['list_revenue'] for i in items),
+        'discounts': sum(i['discounts'] for i in items),
+        'gross_revenue': gross_revenue,               # after discounts, ex. tax, before refunds
+        'tax': tax,
+        'total_incl_tax': gross_revenue + tax,        # = Custom Report "Overall Total" when unfiltered
+        'refunded_amount': refunded_amount,
+        'refunded_incl_tax': refunded_amount + sum(i['refunded_tax'] for i in items),
         'net_revenue': net_revenue,
         'profit': profit,
         'margin': (profit / costed_revenue * 100) if costed_revenue > 0 else None,

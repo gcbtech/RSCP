@@ -282,10 +282,15 @@
                                         {% endif %}
                                 </td>
                                 {% if has_permission(current_user, 'inventory.manage') %}
-                                <td class="text-end">
+                                <td class="text-end text-nowrap">
                                     <form method="POST" action="{{ url_for('inventory.snooze_attention_item', item_id=item.id) }}" class="d-inline">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <button type="submit" class="btn btn-sm btn-outline-secondary py-0" title="Hide from this list for 5 days">💤 Snooze</button>
+                                    </form>
+                                    <form method="POST" action="{{ url_for('inventory.toggle_legacy', item_id=item.id) }}" class="d-inline">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary py-0" title="Mark as legacy/discontinued"
+                                            onclick="return confirm('Mark this item as Legacy? It will be hidden from inventory lists.');">📦 Legacy</button>
                                     </form>
                                 </td>
                                 {% endif %}

@@ -335,7 +335,7 @@
                         <select name="location_area" class="form-select form-select-sm" id="quickAddLocation">
                             <option value="">-- Area --</option>
                             {% for opt in loc_options.get('area', []) %}
-                            <option value="{{ opt }}">{{ opt }}</option>
+                            <option value="{{ opt }}" {% if opt == quick_add_default_area %}selected{% endif %}>{{ opt }}</option>
                             {% endfor %}
                             <option value="General">General</option>
                         </select>
@@ -346,13 +346,13 @@
                     </div>
                     <div class="col-md-2">
                         <label class="form-label small">Cost ($)</label>
-                        <input type="number" name="buy_price" class="form-control form-control-sm" step="0.01" min="0"
-                            placeholder="0.00">
+                        <input type="number" name="buy_price" id="quickAddBuyPrice" class="form-control form-control-sm"
+                            step="0.01" min="0" placeholder="0.00">
                     </div>
                     <div class="col-md-2">
                         <label class="form-label small">Price ($)</label>
-                        <input type="number" name="sell_price" class="form-control form-control-sm" step="0.01" min="0"
-                            placeholder="0.00">
+                        <input type="number" name="sell_price" id="quickAddSellPrice" class="form-control form-control-sm"
+                            step="0.01" min="0" placeholder="0.00">
                     </div>
                     <div class="col-md-2">
                         <label class="form-label small">UPC/EAN Barcode</label>
@@ -370,6 +370,31 @@
             </div>
         </div>
     </div>
+    <script>
+        // Suggested price hint from cost, using the same margin settings as the Add Item page
+        (function () {
+            const marginEnabled = {{ 'true' if config and config.PREFERRED_MARGIN_ENABLED else 'false' }};
+            const marginPercent = {{ config.PREFERRED_MARGIN_PERCENT if config and config.PREFERRED_MARGIN_PERCENT else 20 }};
+            const buyInput = document.getElementById('quickAddBuyPrice');
+            const sellInput = document.getElementById('quickAddSellPrice');
+
+            function updateQuickAddSuggestedPrice() {
+                if (!marginEnabled) return;
+
+                const buyPrice = parseFloat(buyInput.value) || 0;
+
+                if (buyPrice > 0 && !sellInput.value) {
+                    const suggestedPrice = (buyPrice * (1 + marginPercent / 100)).toFixed(2);
+                    sellInput.placeholder = '~$' + suggestedPrice;
+                } else if (buyPrice === 0) {
+                    sellInput.placeholder = '0.00';
+                }
+            }
+
+            buyInput.addEventListener('input', updateQuickAddSuggestedPrice);
+            sellInput.addEventListener('input', updateQuickAddSuggestedPrice);
+        })();
+    </script>
     {% endif %}
 
     <!-- Search -->

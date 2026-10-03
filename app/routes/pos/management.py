@@ -134,17 +134,14 @@ def management():
     except:
         daily_sales = list(days_data)
     
-    # Top sellers (excludes custom/non-inventory items)
-    top_sellers = conn.execute('''
-        SELECT sku, name, SUM(quantity) as sold, SUM(line_total) as revenue
-        FROM pos_order_items oi
-        JOIN pos_orders o ON oi.order_id = o.id
-        WHERE date(o.created_at, 'localtime') BETWEEN ? AND ? AND o.status != 'held'
-        AND oi.inventory_item_id IS NOT NULL
-        GROUP BY sku
-        ORDER BY sold DESC
-        LIMIT 10
-    ''', (start_date, end_date)).fetchall()
+    # Top sellers -- same figures as the Top Sellers report ("View All" opens it with this range)
+    from app.services.pos_reports import generate_top_sellers_data
+    try:
+        top_report = generate_top_sellers_data(date.fromisoformat(start_date), date.fromisoformat(end_date), {})
+        top_sellers = [{'sku': i['sku'], 'name': i['name'], 'sold': i['net_qty'], 'revenue': i['net_revenue']}
+                       for i in top_report['items'][:10]]
+    except ValueError:
+        top_sellers = []
     
     # Payment method breakdown
     payment_breakdown = conn.execute('''
@@ -284,7 +281,7 @@ def top_sellers():
         'categories': [c for c in args.getlist('cat') if c in CATEGORY_CODES],
         'item_status': args.get('item_status') if args.get('item_status') in ('current', 'legacy') else 'all',
         'stock': args.get('stock') if args.get('stock') in ('in', 'low', 'out') else 'any',
-        'include_custom': args.get('include_custom') == '1',
+        'exclude_custom': args.get('exclude_custom') == '1',
     }
     for field in LOCATION_FIELDS:
         value = args.get(field, '')
@@ -347,14 +344,16 @@ def _top_sellers_csv(items, start_date, end_date):
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(['Rank', 'SKU', 'Name', 'Category', 'Type', 'Area', 'Aisle', 'Shelf', 'Bin',
-                     'Qty Sold', 'Qty Refunded', 'Net Qty', 'Gross Revenue', 'Refunded', 'Net Revenue',
-                     'Revenue Share %', 'Avg Price', 'Unit Cost', 'Est. Profit', 'Margin %', 'Orders',
+                     'Qty Sold', 'Qty Refunded', 'Net Qty', 'Item Prices', 'Discounts', 'Sales (ex. tax)',
+                     'Refunded', 'Net Sales (ex. tax)',
+                     'Sales Share %', 'Avg Price', 'Unit Cost', 'Est. Profit', 'Margin %', 'Orders',
                      'Units/Day', 'Stock', 'Days of Cover', 'Prev Period Net Qty', 'Qty Change %', 'Last Sold'])
     for rank, i in enumerate(items, 1):
         writer.writerow([rank, i['sku'], i['name'], i['category_name'], i['kind'],
                          i['area'], i['aisle'], i['shelf'], i['bin'],
                          i['qty_sold'], i['refunded_qty'], i['net_qty'],
-                         num(i['gross_revenue']), num(i['refunded_amount']), num(i['net_revenue']),
+                         num(i['list_revenue']), num(i['discounts']), num(i['gross_revenue']),
+                         num(i['refunded_amount']), num(i['net_revenue']),
                          num(i['share'], 1), num(i['avg_price']), num(i['buy_price']),
                          num(i['profit']), num(i['margin'], 1), i['orders'], num(i['per_day']),
                          '' if i['stock'] is None else i['stock'], num(i['days_cover'], 0),

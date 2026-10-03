@@ -253,8 +253,8 @@
                         {% endfor %}
                         <div class="col-md-auto">
                             <div class="form-check mb-1">
-                                <input class="form-check-input" type="checkbox" name="include_custom" value="1" id="include_custom" {% if filters.include_custom %}checked{% endif %}>
-                                <label class="form-check-label small" for="include_custom">Include custom items</label>
+                                <input class="form-check-input" type="checkbox" name="exclude_custom" value="1" id="exclude_custom" {% if filters.exclude_custom %}checked{% endif %}>
+                                <label class="form-check-label small" for="exclude_custom">Hide custom items</label>
                             </div>
                         </div>
                         <div class="col-md-auto">
@@ -288,7 +288,7 @@
             <div class="col-xl-2 col-md-4 col-6">
                 <div class="card h-100 border-start border-success border-3">
                     <div class="card-body">
-                        <div class="filter-label">Net Revenue</div>
+                        <div class="filter-label">Net Sales <span class="text-lowercase fw-normal">(ex. tax)</span></div>
                         <div class="stat-value">${{ "{:,.2f}".format(summary.net_revenue) }}</div>
                         <small>{{ change_badge(summary.revenue_change) }} <span class="text-muted">vs ${{ "{:,.0f}".format(summary.prev_revenue) }}</span></small>
                     </div>
@@ -331,6 +331,24 @@
                         <small class="text-muted">-${{ "{:,.2f}".format(summary.refunded_amount) }}
                             {% if summary.units_sold %}· {{ "%.1f"|format(summary.refunded_units / summary.units_sold * 100) }}% of units{% endif %}</small>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Reconciliation with the Custom Report -->
+        {% set filtered = filters.q or filters.categories or filters.area or filters.aisle or filters.shelf or filters.bin
+            or filters.item_status != 'all' or filters.stock != 'any' or filters.exclude_custom %}
+        <div class="card bg-light mb-4">
+            <div class="card-body py-2 small d-flex flex-wrap gap-4 align-items-center">
+                <div><strong>Item prices:</strong> ${{ "{:,.2f}".format(summary.list_revenue) }}</div>
+                <div><strong>Discounts:</strong> <span class="text-danger">-${{ "{:,.2f}".format(summary.discounts) }}</span></div>
+                <div><strong>Sales (ex. tax):</strong> ${{ "{:,.2f}".format(summary.gross_revenue) }}</div>
+                <div><strong>Tax:</strong> ${{ "{:,.2f}".format(summary.tax) }}</div>
+                <div><strong>Total incl. tax:</strong> <span class="fw-bold">${{ "{:,.2f}".format(summary.total_incl_tax) }}</span></div>
+                <div><strong>Refunds:</strong> <span class="text-danger">-${{ "{:,.2f}".format(summary.refunded_incl_tax) }}</span> <span class="text-muted">incl. tax</span></div>
+                <div class="text-muted ms-auto">
+                    {% if filtered %}Filters applied — totals cover matching items only.
+                    {% else %}"Total incl. tax" matches the Custom Report's "Overall Total" for the same dates.{% endif %}
                 </div>
             </div>
         </div>
@@ -407,7 +425,7 @@
                                 <th class="text-end">Sold</th>
                                 <th class="text-end">Refunded</th>
                                 {{ sort_th('qty', 'Net Qty', 'text-end') }}
-                                {{ sort_th('revenue', 'Net Revenue', 'text-end') }}
+                                {{ sort_th('revenue', 'Net Sales', 'text-end') }}
                                 <th class="text-end">Share</th>
                                 {{ sort_th('avg_price', 'Avg Price', 'text-end') }}
                                 {{ sort_th('profit', 'Est. Profit', 'text-end') }}
@@ -526,8 +544,9 @@
         {% endif %}
 
         <p class="text-muted small mb-0">
-            <strong>Notes:</strong> Revenue is the item line total before order-level discounts and tax.
-            Refunds count against the period the item was sold in. Profit uses each item's <em>current</em> cost price;
+            <strong>Notes:</strong> Sales are what customers paid, excluding tax. Order discounts, coupons and cash
+            discounts are spread across each order's items by price. Refunds count against the period the item was
+            sold in (the Custom Report subtracts them on the day of the refund). Profit uses each item's <em>current</em> cost price;
             {% if summary.uncosted_items %}{{ summary.uncosted_items }} item{{ 's' if summary.uncosted_items != 1 else '' }} without a cost price {{ 'are' if summary.uncosted_items != 1 else 'is' }} left out of profit and margin.{% else %}all items have a cost price.{% endif %}
             "Days Left" is current stock ÷ average net units sold per day in this range.
             "vs Prev" compares net units with the previous {{ summary.range_days }} days.

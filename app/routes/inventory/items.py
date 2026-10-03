@@ -23,6 +23,8 @@ from app.services.data_manager import BASE_DIR, load_config
 logger = logging.getLogger(__name__)
 
 # Image optimization settings
+QUICK_ADD_DEFAULT_AREA = 'Retail'  # Pre-selected Quick Add area (used only if it's a configured area)
+
 MAX_IMAGE_SIZE = (1280, 720)  # Max resolution (720p)
 JPEG_QUALITY = 85
 
@@ -399,7 +401,8 @@ def list_items():
                                total_pages=total_pages,
                                total_items=total,
                                search_query=search_query,
-                               show_legacy=show_legacy)
+                               show_legacy=show_legacy,
+                               quick_add_default_area=QUICK_ADD_DEFAULT_AREA)
     finally:
         conn.close()
 
@@ -465,7 +468,8 @@ def add_item():
         if request.form.get('quick_add'):
             # Default location for Quick Add if not specified
             if not any([location_area, location_aisle, location_shelf, location_bin]):
-                location_area = 'General'
+                area_options = (load_config() or {}).get('LOCATION_OPTIONS', {}).get('area', [])
+                location_area = QUICK_ADD_DEFAULT_AREA if QUICK_ADD_DEFAULT_AREA in area_options else 'General'
         
         if not validate_location(location_area, location_aisle, location_shelf, location_bin):
             flash("At least one location field is required.")

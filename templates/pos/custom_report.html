@@ -287,8 +287,10 @@
             <!-- Top Sellers -->
             <div class="col-12">
                 <div class="card">
-                    <div class="card-header bg-white">
+                    <div class="card-header bg-white d-flex justify-content-between align-items-center">
                         <h5 class="mb-0">🏆 Top Selling Items</h5>
+                        <a href="{{ url_for('pos.top_sellers', start=start_date.strftime('%Y-%m-%d'), end=end_date.strftime('%Y-%m-%d')) }}"
+                            class="btn btn-sm btn-outline-primary">Full Top Sellers report →</a>
                     </div>
                     <div class="card-body p-0">
                         {% if top_items %}
@@ -298,8 +300,8 @@
                                     <tr>
                                         <th class="ps-3">SKU</th>
                                         <th>Item Name</th>
-                                        <th class="text-center">Qty Sold</th>
-                                        <th class="text-end pe-3">Total Revenue</th>
+                                        <th class="text-center">Net Qty</th>
+                                        <th class="text-end pe-3">Net Sales <small class="text-muted">(ex. tax)</small></th>
                                     </tr>
                                 </thead>
                                 <tbody>
