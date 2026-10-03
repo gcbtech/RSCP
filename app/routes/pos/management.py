@@ -256,157 +256,114 @@ def sales_history():
 @login_required
 @require_admin
 def top_sellers():
-    """Top selling items analysis."""
-    conn = get_request_db()
-    
-    default_days = get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30')
-    days = int(request.args.get('days', default_days))
-    start_date = (date.today() - timedelta(days=max(0, days - 1))).strftime('%Y-%m-%d')
-    
-    items = conn.execute('''
-        SELECT 
-            oi.sku, oi.name,
-            SUM(oi.quantity) as sold,
-            SUM(oi.line_total) as revenue,
-            COUNT(DISTINCT o.id) as order_count,
-            AVG(oi.unit_price) as avg_price
-        FROM pos_order_items oi
-        JOIN pos_orders o ON oi.order_id = o.id
-        WHERE date(o.created_at, 'localtime') >= ? AND o.status != 'held'
-        AND oi.inventory_item_id IS NOT NULL
-        GROUP BY oi.sku
-        ORDER BY sold DESC
-        LIMIT 50
-    ''', (start_date,)).fetchall()
-    
-    return render_template('pos/top_sellers.html', items=items, days=days)
-
-
-@pos_bp.route('/management/margins')
-@login_required
-@require_admin
-def margins():
-    """Margin analysis for items sold."""
-    conn = get_request_db()
-    
-    # Get config for preferred margin
+    """Top selling items with date range, SKU/location filters, and detailed metrics."""
+    from app.routes.inventory import CATEGORY_CODES
     from app.services.data_manager import load_config
+    from app.services.pos_reports import (generate_top_sellers_data, get_location_options, get_first_sale_date,
+                                          TOP_SELLERS_SORTS, LOCATION_FIELDS, LOCATION_NONE)
+    args = request.args
+    today = date.today()
+
+    # Date range: explicit start/end (same as the Custom Report), else the last N days
+    try:
+        start_date = datetime.strptime(args.get('start', ''), '%Y-%m-%d').date()
+        end_date = datetime.strptime(args.get('end', ''), '%Y-%m-%d').date()
+    except ValueError:
+        try:
+            days = max(1, int(args.get('days') or get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30')))
+        except ValueError:
+            days = 30
+        end_date = today
+        start_date = today - timedelta(days=days - 1)
+    if start_date > end_date:
+        start_date, end_date = end_date, start_date
+
+    location_options = get_location_options()
+    filters = {
+        'q': args.get('q', '').strip(),
+        'categories': [c for c in args.getlist('cat') if c in CATEGORY_CODES],
+        'item_status': args.get('item_status') if args.get('item_status') in ('current', 'legacy') else 'all',
+        'stock': args.get('stock') if args.get('stock') in ('in', 'low', 'out') else 'any',
+        'include_custom': args.get('include_custom') == '1',
+    }
+    for field in LOCATION_FIELDS:
+        value = args.get(field, '')
+        filters[field] = value if value == LOCATION_NONE or value in location_options[field] else ''
+
+    sort = args.get('sort') if args.get('sort') in TOP_SELLERS_SORTS else 'qty'
+    direction = args.get('dir') if args.get('dir') in ('asc', 'desc') else ('desc' if TOP_SELLERS_SORTS[sort][1] else 'asc')
+    try:
+        limit = int(args.get('limit', 50))
+    except ValueError:
+        limit = 50
+    if limit not in TOP_SELLERS_LIMITS:
+        limit = 50
+
     config = load_config() or {}
-    preferred_margin = float(config.get('PREFERRED_MARGIN_PERCENT', 30))
-    
-    default_days = get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30')
-    days = int(request.args.get('days', default_days))
-    start_date = (date.today() - timedelta(days=max(0, days - 1))).strftime('%Y-%m-%d')
-    sort = request.args.get('sort', 'high')  # high or low
-    filter_type = request.args.get('filter', 'all')
-    
-    having_clause = ""
-    params = [start_date]
-    
-    if filter_type == 'under_margin':
-        having_clause = "HAVING margin_percent < ?"
-        params.append(preferred_margin)
-    
-    items = conn.execute(f'''
-        SELECT 
-            oi.sku, oi.name,
-            SUM(oi.quantity) as sold,
-            SUM(oi.line_total) as revenue,
-            AVG(oi.unit_price) as avg_sell_price,
-            AVG(inv.buy_price) as avg_buy_price,
-            AVG(oi.unit_price) - AVG(COALESCE(inv.buy_price, 0)) as margin,
-            CASE WHEN AVG(oi.unit_price) > 0 
-                 THEN ((AVG(oi.unit_price) - AVG(COALESCE(inv.buy_price, 0))) / AVG(oi.unit_price)) * 100 
-                 ELSE 0 END as margin_percent
-        FROM pos_order_items oi
-        JOIN pos_orders o ON oi.order_id = o.id
-        LEFT JOIN inventory_items inv ON oi.inventory_item_id = inv.id
-        WHERE date(o.created_at, 'localtime') >= ? AND o.status != 'held'
-        AND oi.inventory_item_id IS NOT NULL
-        GROUP BY oi.sku
-        {having_clause}
-        ORDER BY margin_percent {'DESC' if sort == 'high' else 'ASC'}
-        LIMIT 50
-    ''', params).fetchall()
-    
-    return render_template('pos/margins.html', 
-                           items=items, 
-                           days=days, 
-                           sort=sort, 
-                           active_filter=filter_type,
-                           preferred_margin=preferred_margin)
+    report = generate_top_sellers_data(
+        start_date, end_date, filters, sort=sort, descending=(direction == 'desc'),
+        category_names=CATEGORY_CODES, low_threshold=int(config.get('LOW_STOCK_THRESHOLD', 5)))
+
+    if args.get('format') == 'csv':
+        return _top_sellers_csv(report['items'], start_date, end_date)
+
+    # Sortable column headers keep the current filters and toggle direction
+    base_args = args.to_dict(flat=False)
+    base_args.pop('format', None)
+    sort_links = {}
+    for key, (_, desc_default) in TOP_SELLERS_SORTS.items():
+        if key == sort:
+            new_dir = 'asc' if direction == 'desc' else 'desc'
+        else:
+            new_dir = 'desc' if desc_default else 'asc'
+        sort_links[key] = url_for('pos.top_sellers', **{**base_args, 'sort': key, 'dir': new_dir})
+
+    return render_template('pos/top_sellers.html',
+                           start_date=start_date,
+                           end_date=end_date,
+                           first_sale_date=get_first_sale_date(),
+                           filters=filters,
+                           sort=sort,
+                           direction=direction,
+                           limit=limit,
+                           limits=TOP_SELLERS_LIMITS,
+                           category_codes=CATEGORY_CODES,
+                           location_options=location_options,
+                           location_none=LOCATION_NONE,
+                           sort_links=sort_links,
+                           csv_url=url_for('pos.top_sellers', **{**base_args, 'format': 'csv'}),
+                           shown_items=report['items'][:limit] if limit else report['items'],
+                           **report)
 
 
-@pos_bp.route('/management/hourly')
-@login_required
-@require_admin
-def hourly_analysis():
-    """Sales by hour and day of week."""
-    conn = get_request_db()
-    
-    default_days = get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30')
-    days = int(request.args.get('days', default_days))
-    start_date = (date.today() - timedelta(days=max(0, days - 1))).strftime('%Y-%m-%d')
-    
-    # Hourly breakdown
-    hourly = conn.execute('''
-        SELECT 
-            strftime('%H', created_at, 'localtime') as hour,
-            COUNT(*) as orders,
-            SUM(total) as revenue
-        FROM pos_orders
-        WHERE date(created_at, 'localtime') >= ? AND status != 'held'
-        GROUP BY hour
-        ORDER BY hour
-    ''', (start_date,)).fetchall()
-    
-    # Day of week breakdown
-    daily = conn.execute('''
-        SELECT 
-            strftime('%w', created_at, 'localtime') as dow,
-            COUNT(*) as orders,
-            SUM(total) as revenue
-        FROM pos_orders
-        WHERE date(created_at, 'localtime') >= ? AND status != 'held'
-        GROUP BY dow
-        ORDER BY dow
-    ''', (start_date,)).fetchall()
-    
-    dow_names = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-    
-    return render_template('pos/hourly.html', 
-                           hourly=hourly, 
-                           daily=daily, 
-                           dow_names=dow_names,
-                           days=days)
+TOP_SELLERS_LIMITS = (25, 50, 100, 250, 0)  # 0 = all
 
 
-@pos_bp.route('/management/operators')
-@login_required
-@require_admin
-def operator_performance():
-    """Operator sales performance."""
-    conn = get_request_db()
-    
-    default_days = get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30')
-    days = int(request.args.get('days', default_days))
-    start_date = (date.today() - timedelta(days=max(0, days - 1))).strftime('%Y-%m-%d')
-    
-    operators = conn.execute('''
-        SELECT 
-            u.username,
-            COUNT(o.id) as orders,
-            SUM(o.total) as revenue,
-            AVG(o.total) as avg_order,
-            SUM(o.discount_amount) as discounts_given
-        FROM pos_orders o
-        JOIN users u ON o.operator_id = u.id
-        WHERE date(o.created_at, 'localtime') >= ? AND o.status != 'held'
-        GROUP BY o.operator_id
-        ORDER BY revenue DESC
-    ''', (start_date,)).fetchall()
-    
-    return render_template('pos/operators.html', operators=operators, days=days)
+def _top_sellers_csv(items, start_date, end_date):
+    """Export every matching Top Sellers row (ignores the display limit)."""
+    def num(value, digits=2):
+        return '' if value is None else round(value, digits)
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Rank', 'SKU', 'Name', 'Category', 'Type', 'Area', 'Aisle', 'Shelf', 'Bin',
+                     'Qty Sold', 'Qty Refunded', 'Net Qty', 'Gross Revenue', 'Refunded', 'Net Revenue',
+                     'Revenue Share %', 'Avg Price', 'Unit Cost', 'Est. Profit', 'Margin %', 'Orders',
+                     'Units/Day', 'Stock', 'Days of Cover', 'Prev Period Net Qty', 'Qty Change %', 'Last Sold'])
+    for rank, i in enumerate(items, 1):
+        writer.writerow([rank, i['sku'], i['name'], i['category_name'], i['kind'],
+                         i['area'], i['aisle'], i['shelf'], i['bin'],
+                         i['qty_sold'], i['refunded_qty'], i['net_qty'],
+                         num(i['gross_revenue']), num(i['refunded_amount']), num(i['net_revenue']),
+                         num(i['share'], 1), num(i['avg_price']), num(i['buy_price']),
+                         num(i['profit']), num(i['margin'], 1), i['orders'], num(i['per_day']),
+                         '' if i['stock'] is None else i['stock'], num(i['days_cover'], 0),
+                         i['prev_qty'], num(i['qty_change_pct'], 1), i['last_sold_local']])
+
+    response = make_response(output.getvalue())
+    response.headers['Content-Type'] = 'text/csv'
+    response.headers['Content-Disposition'] = f'attachment; filename=top_sellers_{start_date}_{end_date}.csv'
+    return response
 
 
 @pos_bp.route('/management/refunds-report')

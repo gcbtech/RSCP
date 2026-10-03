@@ -235,7 +235,8 @@ def _create_inventory_tables(conn):
         _safe_add_column(conn, 'inventory_items', 'sale_enabled', 'BOOLEAN DEFAULT 0')
         _safe_add_column(conn, 'inventory_items', 'sale_end_on_stock', 'BOOLEAN DEFAULT 0')
         _safe_add_column(conn, 'inventory_items', 'is_legacy', 'BOOLEAN DEFAULT 0')
-        
+        _safe_add_column(conn, 'inventory_items', 'attention_snoozed_until', 'TEXT')
+
         # Indexes for inventory_items
         conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_sku ON inventory_items(sku)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_inventory_asin ON inventory_items(asin)')
@@ -294,7 +295,23 @@ def _create_inventory_tables(conn):
                 FOREIGN KEY(item_id) REFERENCES inventory_items(id)
             )
         ''')
-        
+
+        # V2.6.8: Clear an item's "Needs Attention" snooze when stock is added or it runs out.
+        # A trigger covers every code path that changes quantity (POS, refunds, audits, imports, ...).
+        try:
+            conn.execute('''
+                CREATE TRIGGER IF NOT EXISTS trg_inventory_attention_snooze_reset
+                AFTER UPDATE OF quantity ON inventory_items
+                FOR EACH ROW
+                WHEN NEW.attention_snoozed_until IS NOT NULL
+                 AND (NEW.quantity > OLD.quantity OR (NEW.quantity <= 0 AND OLD.quantity > 0))
+                BEGIN
+                    UPDATE inventory_items SET attention_snoozed_until = NULL WHERE id = NEW.id;
+                END
+            ''')
+        except sqlite3.OperationalError as e:
+            logger.warning(f"Could not create attention snooze reset trigger: {e}")
+
         conn.commit()
         logger.info("Inventory tables initialized.")
         

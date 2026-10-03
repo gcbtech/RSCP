@@ -10,6 +10,7 @@ from flask_login import login_required, current_user
 from app.routes.inventory import inventory_bp, CATEGORY_CODES
 from app.services.db import get_db_connection, get_request_db
 from app.services.data_manager import load_config
+from app.utils.permissions import require_permission
 
 logger = logging.getLogger(__name__)
 
@@ -288,24 +289,36 @@ def overview():
         
         conf = load_config()
         low_threshold = int(conf.get('LOW_STOCK_THRESHOLD', 5))
-        
-        attention_items = conn.execute('''
-            SELECT id, name, quantity 
-            FROM inventory_items 
+        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        attention_where = '''
             WHERE COALESCE(is_legacy, 0) = 0
             AND (
                 quantity <= 0
                 OR (
                     quantity > 0 AND (
                         (COALESCE(alert_threshold, 0) > 0 AND quantity <= alert_threshold)
-                        OR 
+                        OR
                         (COALESCE(alert_threshold, 0) = 0 AND ? > 0 AND quantity <= ?)
                     )
                 )
             )
+        '''
+
+        attention_items = conn.execute(f'''
+            SELECT id, name, quantity
+            FROM inventory_items
+            {attention_where}
+            AND (attention_snoozed_until IS NULL OR attention_snoozed_until <= ?)
             ORDER BY quantity ASC, name ASC
             LIMIT 10
-        ''', (low_threshold, low_threshold)).fetchall()
+        ''', (low_threshold, low_threshold, now_str)).fetchall()
+
+        snoozed_count = conn.execute(f'''
+            SELECT COUNT(*) FROM inventory_items
+            {attention_where}
+            AND attention_snoozed_until > ?
+        ''', (low_threshold, low_threshold, now_str)).fetchone()[0]
         
         # Sales trend
         sales_data = conn.execute('''
@@ -329,9 +342,34 @@ def overview():
                                stats=stats,
                                top_movers=top_movers,
                                attention_items=attention_items,
+                               snoozed_count=snoozed_count,
                                sales_trend=sales_trend)
     finally:
         conn.close()
+
+
+ATTENTION_SNOOZE_DAYS = 5
+
+
+@inventory_bp.route('/attention/<int:item_id>/snooze', methods=['POST'])
+@login_required
+@require_permission('inventory.manage')
+def snooze_attention_item(item_id):
+    """Hide an item from 'Items Needing Attention' for ATTENTION_SNOOZE_DAYS days."""
+    until = datetime.now() + timedelta(days=ATTENTION_SNOOZE_DAYS)
+    conn = get_db_connection()
+    try:
+        item = conn.execute('SELECT name FROM inventory_items WHERE id = ?', (item_id,)).fetchone()
+        if not item:
+            flash("Item not found.")
+        else:
+            conn.execute('UPDATE inventory_items SET attention_snoozed_until = ? WHERE id = ?',
+                         (until.strftime('%Y-%m-%d %H:%M:%S'), item_id))
+            conn.commit()
+            flash(f"Snoozed '{item['name']}' until {until.strftime('%b %d')}.")
+    finally:
+        conn.close()
+    return redirect(url_for('inventory.overview'))
 
 
 @inventory_bp.route('/api/overview')

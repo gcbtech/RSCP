@@ -178,9 +178,6 @@
                     <a href="{{ url_for('pos.stale_inventory') }}" class="quick-link">🐌 Stale Inventory</a>
                     <a href="{{ url_for('pos.sales_history') }}" class="quick-link">📜 Sales History</a>
                     <a href="{{ url_for('pos.top_sellers') }}" class="quick-link">🏆 Top Sellers</a>
-                    <a href="{{ url_for('pos.margins') }}" class="quick-link">💰 Margin Analysis</a>
-                    <a href="{{ url_for('pos.hourly_analysis') }}" class="quick-link">🕐 Hourly Analysis</a>
-                    <a href="{{ url_for('pos.operator_performance') }}" class="quick-link">👤 Operator Performance</a>
                     <a href="{{ url_for('pos.refunds') }}" class="quick-link">🔄 Process Refund</a>
                     <a href="{{ url_for('pos.refunds_report') }}" class="quick-link">↩️ Refunds Report</a>
                     <a href="{{ url_for('pos.settings') }}" class="quick-link">⚙️ POS Settings</a>
@@ -211,7 +208,7 @@
                             {% endfor %}
                         </tbody>
                     </table>
-                    <a href="{{ url_for('pos.top_sellers') }}" class="btn btn-sm btn-outline-primary">View All →</a>
+                    <a href="{{ url_for('pos.top_sellers', start=start_date, end=end_date) }}" class="btn btn-sm btn-outline-primary">View All →</a>
                 </div>
             </div>
 

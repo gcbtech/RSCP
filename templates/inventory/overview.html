@@ -245,15 +245,18 @@
         <!-- Items Needing Attention -->
         <div class="col-md-6 mb-4">
             <div class="card h-100">
-                <div class="card-header">⚠️ Items Needing Attention</div>
+                <div class="card-header">⚠️ Items Needing Attention
+                    {% if snoozed_count %}<small class="text-muted float-end">💤 {{ snoozed_count }} snoozed</small>{% endif %}
+                </div>
                 <div class="card-body">
                     {% if attention_items %}
-                    <table class="table table-sm table-striped">
+                    <table class="table table-sm table-striped align-middle">
                         <thead>
                             <tr>
                                 <th>Item</th>
                                 <th>Qty</th>
                                 <th>Status</th>
+                                {% if has_permission(current_user, 'inventory.manage') %}<th></th>{% endif %}
                             </tr>
                         </thead>
                         <tbody>
@@ -278,10 +281,20 @@
                                         <span class="text-warning">Low Stock</span>
                                         {% endif %}
                                 </td>
+                                {% if has_permission(current_user, 'inventory.manage') %}
+                                <td class="text-end">
+                                    <form method="POST" action="{{ url_for('inventory.snooze_attention_item', item_id=item.id) }}" class="d-inline">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-secondary py-0" title="Hide from this list for 5 days">💤 Snooze</button>
+                                    </form>
+                                </td>
+                                {% endif %}
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
+                    {% elif snoozed_count %}
+                    <p class="text-muted">No items need attention ({{ snoozed_count }} snoozed).</p>
                     {% else %}
                     <p class="text-success">✓ All items are well stocked!</p>
                     {% endif %}
