@@ -537,4 +537,43 @@
                 .catch(() => { });
         });
     })();
+
+    // Background polling for live-updating pages. Each run waits for the previous one to
+    // finish, a request that hangs is aborted after `timeoutMs`, and polling pauses while
+    // the tab is hidden, then runs again the moment the tab is shown. (setInterval + fetch
+    // keeps starting requests whether or not the last ones finished, so a tab left open
+    // can build a queue of stuck requests that the next click has to wait behind.)
+    //   task(signal) -> Promise   pass `signal` to fetch()
+    //   options.delayFirst        wait one interval before the first run (data already on the page)
+    window.rscpPoll = function (task, intervalMs, options) {
+        options = options || {};
+        const timeoutMs = options.timeoutMs || 10000;
+        let timer = null;
+        let running = false;
+
+        async function run() {
+            clearTimeout(timer);
+            timer = null;
+            if (running || document.visibilityState === 'hidden') return;
+            running = true;
+            const controller = new AbortController();
+            const abortTimer = setTimeout(() => controller.abort(), timeoutMs);
+            try {
+                await task(controller.signal);
+            } catch (e) {
+                if (e.name !== 'AbortError') console.warn('[rscpPoll]', e);
+            } finally {
+                clearTimeout(abortTimer);
+                running = false;
+                if (document.visibilityState !== 'hidden') timer = setTimeout(run, intervalMs);
+            }
+        }
+
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') run();
+        });
+        if (options.delayFirst) timer = setTimeout(run, intervalMs);
+        else run();
+        return { refresh: run };
+    };
 </script>

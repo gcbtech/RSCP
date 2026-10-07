@@ -1880,10 +1880,10 @@
 
         // Live Update
         // Live Update
-        function refreshPackages() {
+        function refreshPackages(signal) {
             const url = new URL(window.location.href);
             url.searchParams.set('partial', '1');
-            fetch(url)
+            return fetch(url, { signal })
                 .then(r => r.ok ? r.text() : Promise.reject('Network error'))
                 .then(html => {
                     const tbody = document.getElementById('packagesBody');
@@ -1903,7 +1903,7 @@
                 .catch(err => console.error('Live update failed:', err));
         }
 
-        setInterval(refreshPackages, 5000);
+        rscpPoll(refreshPackages, 5000, { delayFirst: true });
 
         // Helpers
         function showImage(src) {

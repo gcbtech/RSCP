@@ -236,8 +236,8 @@
         // Live Dashboard Logic
         let sparkChart = null;
 
-        function updateStats() {
-            fetch('/api/dashboard_stats')
+        function updateStats(signal) {
+            return fetch('/api/dashboard_stats', { signal })
                 .then(response => response.json())
                 .then(data => {
                     const s = data.stats;
@@ -313,9 +313,8 @@
                 .catch(e => console.error("Stats update failed", e));
         }
 
-        // Init
-        updateStats();
-        setInterval(updateStats, 5000);
+        // Init (refreshes every 5s while the tab is visible)
+        rscpPoll(updateStats, 5000);
 
         function updateStatus(id, newStatus) {
             const el = document.getElementById(id);

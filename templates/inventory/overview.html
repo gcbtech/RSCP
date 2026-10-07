@@ -350,9 +350,9 @@
             }
         });
 
-        // Auto-Refresh Stats
-        setInterval(function () {
-            fetch('/inventory/api/overview')
+        // Auto-Refresh Stats (every 5s while the tab is visible)
+        rscpPoll(function (signal) {
+            return fetch('/inventory/api/overview', { signal })
                 .then(r => r.json())
                 .then(data => {
                     if (data.total_items !== undefined) document.getElementById('stat_total_items').innerText = data.total_items;
@@ -362,7 +362,7 @@
                     if (data.out_of_stock !== undefined) document.getElementById('stat_out_of_stock').innerText = data.out_of_stock;
                 })
                 .catch(e => console.error("Stats refresh failed", e));
-        }, 5000);
+        }, 5000, { delayFirst: true });
     </script>
 </body>
 

@@ -1460,11 +1460,12 @@
             return false;
         }
 
-        async function pollRegisterCart() {
+        async function pollRegisterCart(signal) {
             try {
                 const res = await fetch(`/pos/api/register/poll?since=${registerCartVersion}`, {
                     headers: { 'X-Terminal-Id': getTerminalId() },
-                    cache: 'no-store'
+                    cache: 'no-store',
+                    signal
                 });
                 if (res.ok) {
                     const data = await res.json();
@@ -1480,8 +1481,7 @@
                         // version stays stale and we retry next tick.
                     }
                 }
-            } catch (err) { /* offline; retry next tick */ }
-            setTimeout(pollRegisterCart, REGISTER_POLL_MS);
+            } catch (err) { /* offline or timed out; retry next tick */ }
         }
 
         // --- PAIRED DEVICES: status badge + modal list ---
@@ -1528,8 +1528,8 @@
             }
         }
 
-        function refreshPeripherals() {
-            fetch(`/pos/api/register/peripherals?register_id=${encodeURIComponent(getTerminalId())}`)
+        function refreshPeripherals(signal) {
+            return fetch(`/pos/api/register/peripherals?register_id=${encodeURIComponent(getTerminalId())}`, { signal })
                 .then(r => r.json())
                 .then(data => { if (data.success) renderPeripherals(data.peripherals || []); })
                 .catch(err => console.warn('Peripheral status error:', err));
@@ -1663,10 +1663,10 @@
                 initSlaveMode(getScannerToken());
             } else {
                 // Announce this register, then start the sync + status loops
+                // (they pause while the tab is hidden and catch up when it's shown)
                 registerHello();
-                pollRegisterCart();
-                refreshPeripherals();
-                setInterval(refreshPeripherals, PERIPHERAL_REFRESH_MS);
+                rscpPoll(pollRegisterCart, REGISTER_POLL_MS);
+                rscpPoll(refreshPeripherals, PERIPHERAL_REFRESH_MS);
             }
         });
 

@@ -663,9 +663,11 @@
             let refreshTimer = null;
             let idleTimer = null;
             let isIdle = false;
+            let refreshInFlight = false;
 
-            // Trigger one AJAX live update row refresh
+            // Trigger one AJAX live update row refresh (never overlaps; gives up after 10s)
             function triggerRefresh() {
+                if (refreshInFlight) return;
                 if (document.querySelector('.modal.show')) return;
                 if (document.getElementById('searchInput').value.trim() !== '') return;
                 if (document.querySelectorAll('.item-checkbox:checked').length > 0) return;
@@ -673,13 +675,17 @@
                 const url = new URL(window.location.href);
                 url.searchParams.set('partial', '1');
 
-                fetch(url)
+                refreshInFlight = true;
+                const controller = new AbortController();
+                const abortTimer = setTimeout(() => controller.abort(), 10000);
+                fetch(url, { signal: controller.signal })
                     .then(r => r.text())
                     .then(html => {
                         const tbody = document.getElementById('inventoryBody');
                         if (tbody) tbody.innerHTML = html;
                     })
-                    .catch(e => console.error('[Auto-Refresh Error]', e));
+                    .catch(e => { if (e.name !== 'AbortError') console.error('[Auto-Refresh Error]', e); })
+                    .finally(() => { clearTimeout(abortTimer); refreshInFlight = false; });
             }
 
             function startTimer() {
