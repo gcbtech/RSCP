@@ -4,7 +4,7 @@
     <td><input type="checkbox" name="trackings" value="{{ tracking }}"></td>
     <td class="text-center">
         {% if data.image and data.image|lower != 'nan' and data.image|length > 10 %}
-        <a href="#" onclick="showImage('{{ data.image }}'); return false;">
+        <a href="#" onclick="showImage({{ data.image|js }}); return false;">
             <img src="{{ data.image }}" alt="Img"
                 style="width: 40px; height: 40px; object-fit: contain; border-radius: 4px; background: #f8f9fa;"
                 loading="lazy"
@@ -20,11 +20,11 @@
         <div class="d-flex">
             <input type="date" id="date_{{ tracking }}" class="form-control form-control-sm me-1" required>
             <button type="button" class="btn btn-sm btn-outline-dark"
-                onclick="submitDate('{{ tracking }}')">Set</button>
+                onclick="submitDate({{ tracking|js }})">Set</button>
         </div>
         {% else %}
         <div class="date-display" id="dateDisplay_{{ tracking }}">
-            <span onclick="toggleDateEdit('{{ tracking }}')" style="cursor: pointer;" title="Click to edit">
+            <span onclick="toggleDateEdit({{ tracking|js }})" style="cursor: pointer;" title="Click to edit">
                 {{ data.date | format_date(date_format) }}
                 {% if data.manual_date %}<span class="badge bg-info text-dark ms-1">M</span>{% endif %}
                 <small class="text-muted ms-1">✏️</small>
@@ -35,9 +35,9 @@
                 <input type="date" id="date_{{ tracking }}" class="form-control form-control-sm me-1"
                     value="{{ data.date_expected }}">
                 <button type="button" class="btn btn-sm btn-success"
-                    onclick="submitDate('{{ tracking }}')">Save</button>
+                    onclick="submitDate({{ tracking|js }})">Save</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary ms-1"
-                    onclick="toggleDateEdit('{{ tracking }}')">✕</button>
+                    onclick="toggleDateEdit({{ tracking|js }})">✕</button>
             </div>
         </div>
         {% endif %}
@@ -164,7 +164,7 @@
             {% endif %}
 
             <form action="/admin/delete_package/{{ data.id }}" method="POST" style="display:inline;"
-                onsubmit="return confirm('Delete {{ tracking }}? This will also remove it from history.');">
+                onsubmit="return confirm('Delete ' + {{ tracking|js }} + '? This will also remove it from history.');">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-sm btn-danger ms-1">DELETE</button>
             </form>

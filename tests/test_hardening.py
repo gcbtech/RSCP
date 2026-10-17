@@ -159,3 +159,16 @@ def test_federation_endpoints_removed(fresh_client):
     assert fresh_client.get('/api/federation/ping').status_code in (302, 401, 404)
     login(fresh_client, 1)
     assert fresh_client.get('/api/federation/ping').status_code == 404
+
+
+# --- values inside inline JS handlers ---------------------------------------
+
+def test_js_filter_is_safe_in_attributes(fresh_app):
+    import html
+    import json
+    nasty = "Bob's' + alert(1) + '\"</script><b>"
+    with fresh_app.app_context():
+        out = fresh_app.jinja_env.from_string('<a onclick="f({{ v|js }})">x</a>').render(v=nasty)
+    attr = out.split('onclick="', 1)[1].split('">x', 1)[0]
+    assert '"' not in attr and '<' not in attr          # cannot break out of the attribute
+    assert json.loads(html.unescape(attr)[2:-1]) == nasty  # the JS sees exactly the original string

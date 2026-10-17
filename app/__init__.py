@@ -215,6 +215,15 @@ def create_app(test_config=None):
     from app.utils.helpers import local_time_filter
     app.jinja_env.filters['format_date'] = format_date_filter
     app.jinja_env.filters['local_time'] = local_time_filter
+
+    # {{ value|js }} -> a JavaScript string/number literal that is safe inside
+    # an HTML attribute such as onclick="f({{ value|js }})". Plain HTML
+    # escaping is NOT enough there: the browser decodes &#39; back to ' before
+    # running the handler, so '{{ name }}' lets a name containing a quote
+    # inject script.
+    import json as _json
+    from markupsafe import escape as _escape
+    app.jinja_env.filters['js'] = lambda value: _escape(_json.dumps(value))
     
     # Reverse proxy support: honour X-Forwarded-* only from configured proxies
     # (TRUSTED_PROXIES setting; default loopback, e.g. a local cloudflared).
