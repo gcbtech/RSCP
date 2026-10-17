@@ -1,11 +1,7 @@
-<!DOCTYPE html>
-<html>
-
-<head>
-    <title>RSCP | POS Management</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <link rel="icon" href="{{ favicon }}">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% extends 'base.html' %}
+{% import '_vendor.html' as vendor %}
+{% block title %}POS Management{% endblock %}
+{% block head %}
     <style>
         body {
             background: #f1f5f9;
@@ -59,11 +55,8 @@
             transform: translateX(4px);
         }
     </style>
-</head>
-
-<body>
-    {% include '_nav.html' %}
-
+{% endblock %}
+{% block content %}
     <div class="mgmt-header">
         <div class="d-flex justify-content-between align-items-center">
             <div>
@@ -103,24 +96,6 @@
             </div>
         </div>
     </div>
-
-    <script>
-        function handleDaysChange(value) {
-            if (value === 'custom') {
-                document.getElementById('customRangeInputs').style.display = 'flex';
-            } else {
-                location.href = '?days=' + value;
-            }
-        }
-
-        function applyCustomRange() {
-            const start = document.getElementById('startDate').value;
-            const end = document.getElementById('endDate').value;
-            if (start && end) {
-                location.href = '?start_date=' + start + '&end_date=' + end;
-            }
-        }
-    </script>
 
     <div class="container-fluid p-4">
         <div class="row">
@@ -248,7 +223,26 @@
             </form>
         </div>
     </div>
+{% endblock %}
+{% block scripts %}
+    {{ vendor.chartjs() }}
+    <script>
+        function handleDaysChange(value) {
+            if (value === 'custom') {
+                document.getElementById('customRangeInputs').style.display = 'flex';
+            } else {
+                location.href = '?days=' + value;
+            }
+        }
 
+        function applyCustomRange() {
+            const start = document.getElementById('startDate').value;
+            const end = document.getElementById('endDate').value;
+            if (start && end) {
+                location.href = '?start_date=' + start + '&end_date=' + end;
+            }
+        }
+    </script>
     <script>
         // Sales Chart
         const salesData = {{ daily_sales| map(attribute = 'revenue') | list | tojson }};
@@ -300,6 +294,4 @@
             }
         });
     </script>
-</body>
-
-</html>
+{% endblock %}
