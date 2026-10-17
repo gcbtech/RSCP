@@ -528,6 +528,10 @@ PY
     local name="$NEW_VERSION"
     [ -e "$RELEASES/$name" ] && name="$NEW_VERSION-$(date +%Y%m%d%H%M%S)"
     mv "$BUILD_DIR" "$RELEASES/$name"
+    # The venv was created inside the build dir; its scripts' shebangs and
+    # activate files name that path. Point them at the final location.
+    grep -rlIF "$BUILD_DIR" "$RELEASES/$name/venv/bin" 2>/dev/null \
+        | xargs -r sed -i "s|$BUILD_DIR/venv|$RELEASES/$name/venv|g"
     BUILD_DIR=""
     NEW_RELEASE="$RELEASES/$name"
     info "Built $NEW_RELEASE"
