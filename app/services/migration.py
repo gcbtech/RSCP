@@ -834,6 +834,14 @@ def _m5_checkout_token(conn):
                  'ON pos_orders(checkout_token) WHERE checkout_token IS NOT NULL')
 
 
+def _m6_settings_store(conn):
+    """Typed settings table; imports config.json (minus bootstrap keys) and
+    pos_settings. Both legacy stores are left untouched for rollback."""
+    from app.services import settings as settings_store
+    settings_store.create_tables(conn)
+    settings_store.import_legacy(conn)
+
+
 def _add_column_in_txn(conn, table, column, column_def):
     cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
     if column not in cols:
@@ -846,6 +854,7 @@ SCHEMA_MIGRATIONS = [
     (3, 'hot-path indexes', _m3_hot_path_indexes),
     (4, 'rate_events table', _m4_rate_events),
     (5, 'pos_orders.checkout_token', _m5_checkout_token),
+    (6, 'settings table (config.json + pos_settings)', _m6_settings_store),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 

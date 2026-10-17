@@ -45,14 +45,15 @@ def test_forwarded_for_ignored_from_untrusted_peer():
     assert _remote_addr_seen('10.0.0.50', '1.2.3.4') == '10.0.0.50'
 
 
-def test_network_setting_validates_and_saves(fresh_app, fresh_client, monkeypatch):
-    saved = {}
-    monkeypatch.setattr('app.routes.admin.settings.save_config', lambda d: saved.update(d) or True)
+def test_network_setting_validates_and_saves(fresh_app, fresh_client):
+    from app.services import settings
     login(fresh_client, 1)
-    fresh_client.post('/admin/settings/network', data={'trusted_proxies': 'not-an-ip'})
-    assert saved == {}
-    fresh_client.post('/admin/settings/network', data={'trusted_proxies': '127.0.0.1, 10.0.0.50'})
-    assert saved['TRUSTED_PROXIES'] == ['127.0.0.1', '10.0.0.50']
+    fresh_client.post('/admin/settings/save', data={'group': 'network', 'TRUSTED_PROXIES': 'not-an-ip'})
+    with fresh_app.app_context():
+        assert settings.get('TRUSTED_PROXIES') == ['127.0.0.1', '::1']
+    fresh_client.post('/admin/settings/save', data={'group': 'network', 'TRUSTED_PROXIES': '127.0.0.1, 10.0.0.50'})
+    with fresh_app.app_context():
+        assert settings.get('TRUSTED_PROXIES') == ['127.0.0.1', '10.0.0.50']
 
 
 def test_chained_proxies_resolve_real_client():
@@ -114,21 +115,18 @@ def test_login_rejects_offsite_next(fresh_client):
 # --- POS settings are manager-only ------------------------------------------
 
 def _tax_rate(app):
-    from app.services.db import get_db_connection
+    from app.services import settings
     with app.app_context():
-        conn = get_db_connection()
-        row = conn.execute("SELECT value FROM pos_settings WHERE key='TAX_RATE'").fetchone()
-        conn.close()
-        return row['value'] if row else None
+        return settings.get('TAX_RATE')
 
 
 def test_cashier_cannot_change_tax_rate(fresh_app, fresh_client):
     login(fresh_client, 2)
-    fresh_client.post('/pos/settings/save_tax_rate', data={'tax_rate': '0'})
-    assert _tax_rate(fresh_app) in (None, '0.0')
+    fresh_client.post('/admin/settings/save', data={'group': 'pos', 'TAX_RATE': '5'})
+    assert _tax_rate(fresh_app) == 0.0
     login(fresh_client, 3)  # POS manager
-    fresh_client.post('/pos/settings/save_tax_rate', data={'tax_rate': '7'})
-    assert float(_tax_rate(fresh_app)) == pytest.approx(0.07)
+    fresh_client.post('/admin/settings/save', data={'group': 'pos', 'TAX_RATE': '7'})
+    assert _tax_rate(fresh_app) == pytest.approx(0.07)
 
 
 # --- manager PIN brute force ------------------------------------------------

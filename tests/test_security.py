@@ -83,7 +83,7 @@ class TestCSRFProtection:
         # Enable CSRF check for this test
         authenticated_client.application.config['WTF_CSRF_ENABLED'] = True
         # Try to post to a protected endpoint without CSRF token
-        response = authenticated_client.post('/admin/toggle_trim', data={})
+        response = authenticated_client.post('/admin/settings/save', data={'group': 'general'})
         # Global error handler returns 500, but CSRF check did trigger
         # Check logs for confirmation
         assert response.status_code in [403, 500]  # 500 due to error handler

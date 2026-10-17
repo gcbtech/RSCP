@@ -36,14 +36,16 @@
     </div>
 
     <div class="container py-4">
-        {% with messages = get_flashed_messages() %}
-        {% if messages %}
-        <div class="alert alert-success">{{ messages[0] }}</div>
-        {% endif %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+        <div class="alert alert-{{ 'danger' if category == 'error' else ('warning' if category == 'warning' else 'success') }}">{{ message }}</div>
+        {% endfor %}
         {% endwith %}
 
-        <form action="{{ url_for('pos.settings') }}" method="POST">
+        <form action="{{ url_for('settings.save') }}" method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="group" value="pos">
+            <input type="hidden" name="next" value="{{ url_for('pos.settings') }}">
 
             <!-- Tax Settings -->
             <div class="settings-card">
@@ -58,7 +60,7 @@
                         </div>
                         <div class="col-md-6">
                             <div class="input-group" style="max-width: 200px;">
-                                <input type="number" name="tax_rate" class="form-control" value="{{ tax_rate }}"
+                                <input type="number" name="TAX_RATE" class="form-control" value="{{ tax_rate }}"
                                     step="0.01" min="0" max="100">
                                 <span class="input-group-text">%</span>
                             </div>
@@ -81,7 +83,8 @@
                         </div>
                         <div class="col-md-4 text-end">
                             <div class="form-check form-switch d-inline-block">
-                                <input class="form-check-input" type="checkbox" name="require_manager_void" {% if
+                                <input type="hidden" name="REQUIRE_MANAGER_VOID" value="false">
+                                <input class="form-check-input" type="checkbox" name="REQUIRE_MANAGER_VOID" value="true" {% if
                                     require_manager_void %}checked{% endif %} style="transform: scale(1.5);">
                             </div>
                         </div>
@@ -94,7 +97,8 @@
                         </div>
                         <div class="col-md-4 text-end">
                             <div class="form-check form-switch d-inline-block">
-                                <input class="form-check-input" type="checkbox" name="allow_hold_orders" {% if
+                                <input type="hidden" name="ALLOW_HOLD_ORDERS" value="false">
+                                <input class="form-check-input" type="checkbox" name="ALLOW_HOLD_ORDERS" value="true" {% if
                                     allow_hold_orders %}checked{% endif %} style="transform: scale(1.5);">
                             </div>
                         </div>
@@ -115,7 +119,8 @@
                         </div>
                         <div class="col-md-4 text-end">
                             <div class="form-check form-switch d-inline-block">
-                                <input class="form-check-input" type="checkbox" name="cash_discount_enabled" {% if
+                                <input type="hidden" name="CASH_DISCOUNT_ENABLED" value="false">
+                                <input class="form-check-input" type="checkbox" name="CASH_DISCOUNT_ENABLED" value="true" {% if
                                     cash_discount_enabled %}checked{% endif %} style="transform: scale(1.5);">
                             </div>
                         </div>
@@ -126,9 +131,9 @@
                         </div>
                         <div class="col-md-6">
                             <div class="input-group" style="max-width: 250px;">
-                                <input type="number" name="cash_discount_amount" class="form-control"
+                                <input type="number" name="CASH_DISCOUNT_AMOUNT" class="form-control"
                                     value="{{ cash_discount_amount or 0 }}" step="0.01" min="0">
-                                <select name="cash_discount_type" class="form-select" style="max-width: 100px;">
+                                <select name="CASH_DISCOUNT_TYPE" class="form-select" style="max-width: 100px;">
                                     <option value="percent" {% if cash_discount_type=='percent' %}selected{% endif %}>%
                                     </option>
                                     <option value="fixed" {% if cash_discount_type=='fixed' %}selected{% endif %}>$
@@ -153,7 +158,8 @@
                         </div>
                         <div class="col-md-4 text-end">
                             <div class="form-check form-switch d-inline-block">
-                                <input class="form-check-input" type="checkbox" name="cash_drawer_enabled"
+                                <input type="hidden" name="CASH_DRAWER_ENABLED" value="false">
+                                <input class="form-check-input" type="checkbox" name="CASH_DRAWER_ENABLED" value="true"
                                     id="cashDrawerEnabled" {% if cash_drawer_enabled %}checked{% endif %}
                                     style="transform: scale(1.5);">
                             </div>
@@ -166,7 +172,7 @@
                         </div>
                         <div class="col-md-6">
                             <div class="input-group mb-2" style="max-width: 300px;">
-                                <select name="cash_drawer_port" class="form-select" id="cashDrawerPort">
+                                <select name="CASH_DRAWER_PORT" class="form-select" id="cashDrawerPort">
                                     <option value="">-- Select Port --</option>
                                     {% for port in available_ports %}
                                     <option value="{{ port.device }}" {% if cash_drawer_port==port.device %}selected{%
@@ -195,7 +201,8 @@
                         </div>
                         <div class="col-md-4 text-end">
                             <div class="form-check form-switch d-inline-block">
-                                <input class="form-check-input" type="checkbox" name="auto_print_receipt" {% if
+                                <input type="hidden" name="AUTO_PRINT_RECEIPT" value="false">
+                                <input class="form-check-input" type="checkbox" name="AUTO_PRINT_RECEIPT" value="true" {% if
                                     auto_print_receipt %}checked{% endif %} style="transform: scale(1.5);">
                             </div>
                         </div>
@@ -215,7 +222,7 @@
                             <p class="text-muted small mb-0">Select the default time range for POS reports</p>
                         </div>
                         <div class="col-md-4">
-                            <select name="pos_default_report_timeframe" class="form-select">
+                            <select name="POS_DEFAULT_REPORT_TIMEFRAME" class="form-select">
                                 <option value="1" {% if pos_default_report_timeframe=='1' %}selected{% endif %}>Today
                                 </option>
                                 <option value="7" {% if pos_default_report_timeframe=='7' %}selected{% endif %}>Last 7
@@ -244,16 +251,18 @@
                 <div class="card-body">
                     <div class="mb-3">
                         <label class="form-label fw-bold">Store Name</label>
-                        <input type="text" name="receipt_store_name" class="form-control"
+                        <input type="text" name="RECEIPT_STORE_NAME" class="form-control"
                             value="{{ receipt_store_name or '' }}" placeholder="e.g., Main Street Location">
                         <div class="mt-2 d-flex gap-3">
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="receipt_store_name_bold"
+                                <input type="hidden" name="RECEIPT_STORE_NAME_BOLD" value="false">
+                                <input class="form-check-input" type="checkbox" name="RECEIPT_STORE_NAME_BOLD" value="true"
                                     id="storeNameBold" {% if receipt_store_name_bold %}checked{% endif %}>
                                 <label class="form-check-label" for="storeNameBold"><strong>Bold</strong></label>
                             </div>
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="receipt_store_name_italic"
+                                <input type="hidden" name="RECEIPT_STORE_NAME_ITALIC" value="false">
+                                <input class="form-check-input" type="checkbox" name="RECEIPT_STORE_NAME_ITALIC" value="true"
                                     id="storeNameItalic" {% if receipt_store_name_italic %}checked{% endif %}>
                                 <label class="form-check-label" for="storeNameItalic"><em>Italic</em></label>
                             </div>
@@ -262,16 +271,18 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-bold">Receipt Header Message</label>
-                        <textarea name="receipt_header" class="form-control" rows="2"
+                        <textarea name="RECEIPT_HEADER" class="form-control" rows="2"
                             placeholder="e.g., Address, phone number, store hours">{{ receipt_header or '' }}</textarea>
                         <div class="mt-2 d-flex gap-3">
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="receipt_header_bold"
+                                <input type="hidden" name="RECEIPT_HEADER_BOLD" value="false">
+                                <input class="form-check-input" type="checkbox" name="RECEIPT_HEADER_BOLD" value="true"
                                     id="headerBold" {% if receipt_header_bold %}checked{% endif %}>
                                 <label class="form-check-label" for="headerBold"><strong>Bold</strong></label>
                             </div>
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="receipt_header_italic"
+                                <input type="hidden" name="RECEIPT_HEADER_ITALIC" value="false">
+                                <input class="form-check-input" type="checkbox" name="RECEIPT_HEADER_ITALIC" value="true"
                                     id="headerItalic" {% if receipt_header_italic %}checked{% endif %}>
                                 <label class="form-check-label" for="headerItalic"><em>Italic</em></label>
                             </div>
@@ -279,16 +290,18 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-bold">Receipt Footer Message</label>
-                        <textarea name="receipt_footer" class="form-control" rows="2"
+                        <textarea name="RECEIPT_FOOTER" class="form-control" rows="2"
                             placeholder="e.g., Thank you for shopping with us! Return policy info">{{ receipt_footer or '' }}</textarea>
                         <div class="mt-2 d-flex gap-3">
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="receipt_footer_bold"
+                                <input type="hidden" name="RECEIPT_FOOTER_BOLD" value="false">
+                                <input class="form-check-input" type="checkbox" name="RECEIPT_FOOTER_BOLD" value="true"
                                     id="footerBold" {% if receipt_footer_bold %}checked{% endif %}>
                                 <label class="form-check-label" for="footerBold"><strong>Bold</strong></label>
                             </div>
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="receipt_footer_italic"
+                                <input type="hidden" name="RECEIPT_FOOTER_ITALIC" value="false">
+                                <input class="form-check-input" type="checkbox" name="RECEIPT_FOOTER_ITALIC" value="true"
                                     id="footerItalic" {% if receipt_footer_italic %}checked{% endif %}>
                                 <label class="form-check-label" for="footerItalic"><em>Italic</em></label>
                             </div>
@@ -297,41 +310,13 @@
                 </div>
             </div>
 
-            <button type="submit" class="btn btn-primary btn-lg">Save Settings</button>
-    </div>
-    </div>
+            <button type="submit" class="btn btn-primary btn-lg mb-4">Save Settings</button>
+        </form>
 
-    <!-- Email Automation Settings -->
-    <div class="settings-card">
-        <div class="card-header bg-white border-bottom">
-            <strong>📧 Email Automation</strong>
-        </div>
-        <div class="card-body">
-            <!-- Note: Using a separate form for email settings to match backend route -->
-        </div>
-    </div>
-    <!-- End Main Form temporarily to insert Email form, or just use separate form? -->
-    <!-- The page wraps everything in one BIG form at line 45. I should probably add this fields to the main form 
-                 AND update the main route handler, OR close the main form and start a new one.
-                 
-                 Looking at core.py, the main route handler 'pos.settings' DOES NOT handle email fields.
-                 But I see I added 'save_email_settings' route.
-                 
-                 If I put a form inside a form, HTML breaks. I must not do that.
-                 
-                 Alternative: Add these fields to the main form, and update the main 'settings' route in core.py 
-                 to call 'save_email_settings' logic or merge it.
-                 
-                 Actually, looking at the previous file content of core.py, 'save_email_settings' IS A SEPARATE ROUTE.
-                 So I should probably close the main form before this, or place this card OUTSIDE the main form.
-                 
-                 The main form starts at line 45 and ends at line 300.
-                 I will place this NEW form AFTER the main form.
-            -->
-    </form>
-
-    <form action="{{ url_for('pos.save_email_settings') }}" method="POST">
+    <form action="{{ url_for('settings.save') }}" method="POST">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="group" value="pos">
+        <input type="hidden" name="next" value="{{ url_for('pos.settings') }}">
         <div class="settings-card">
             <div class="card-header bg-white border-bottom">
                 <strong>📧 Email Automation</strong>
@@ -340,25 +325,25 @@
                 <div class="row mb-3">
                     <div class="col-md-9">
                         <label class="form-label fw-bold">SMTP Host</label>
-                        <input type="text" name="host" class="form-control" value="{{ pos_email_host }}"
+                        <input type="text" name="POS_EMAIL_HOST" class="form-control" value="{{ pos_email_host }}"
                             placeholder="smtp.gmail.com">
                     </div>
                     <div class="col-md-3">
                         <label class="form-label fw-bold">Port</label>
-                        <input type="text" name="port" class="form-control" value="{{ pos_email_port }}"
+                        <input type="text" name="POS_EMAIL_PORT" class="form-control" value="{{ pos_email_port }}"
                             placeholder="587">
                     </div>
                 </div>
                 <div class="row mb-3">
                     <div class="col-md-6">
                         <label class="form-label fw-bold">Username / Email</label>
-                        <input type="text" name="user" class="form-control" value="{{ pos_email_user }}"
+                        <input type="text" name="POS_EMAIL_USER" class="form-control" value="{{ pos_email_user }}"
                             placeholder="email@example.com">
                     </div>
                     <div class="col-md-6">
                         <label class="form-label fw-bold">Password</label>
-                        <input type="password" name="password" class="form-control"
-                            placeholder="Leave blank to keep unchanged">
+                        <input type="password" name="POS_EMAIL_PASSWORD" class="form-control" autocomplete="new-password"
+                            placeholder="{{ '(saved - leave blank to keep)' if pos_email_password_set else 'Leave blank to keep unchanged' }}">
                     </div>
                 </div>
 
@@ -366,13 +351,14 @@
 
                 <div class="mb-3">
                     <label class="form-label fw-bold">Recipients</label>
-                    <input type="text" name="recipients" class="form-control" value="{{ pos_email_recipients }}"
+                    <input type="text" name="POS_EMAIL_RECIPIENTS" class="form-control" value="{{ pos_email_recipients }}"
                         placeholder="owner@example.com, manager@example.com">
                     <div class="form-text">Comma separated list of email addresses.</div>
                 </div>
 
                 <div class="form-check form-switch mb-2">
-                    <input class="form-check-input" type="checkbox" name="auto_email_enabled" id="autoEmailCheck" {% if
+                    <input type="hidden" name="POS_AUTO_EMAIL_ENABLED" value="false">
+                    <input class="form-check-input" type="checkbox" name="POS_AUTO_EMAIL_ENABLED" value="true" id="autoEmailCheck" {% if
                         pos_auto_email_enabled %}checked{% endif %}>
                     <label class="form-check-label fw-bold" for="autoEmailCheck">Enable Automated End-of-Day
                         Email</label>
@@ -384,7 +370,7 @@
                         <label class="col-form-label">Send daily at:</label>
                     </div>
                     <div class="col-auto">
-                        <input type="time" name="auto_email_time" class="form-control"
+                        <input type="time" name="POS_AUTO_EMAIL_TIME" class="form-control"
                             value="{{ pos_auto_email_time }}">
                     </div>
                     <div class="col-auto">
@@ -402,12 +388,6 @@
             document.getElementById('autoEmailConfig').style.display = this.checked ? 'flex' : 'none';
         });
     </script>
-
-    <!-- Re-open dummy form or just leave it closed? 
-             The original form closed at line 300.
-             If I replace lines 300, I am removing the closing tag.
-             So I should just append this AFTER the main form.
-        -->
 
     </div>
 

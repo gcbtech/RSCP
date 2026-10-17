@@ -1,4 +1,5 @@
 import os
+import copy
 import json
 import logging
 import datetime
@@ -26,41 +27,29 @@ DATA_CACHE = {
     'last_sync_date': None
 }
 
-# Performance: Config cache with TTL to avoid disk I/O on every request
-# Lock to prevent race conditions during concurrent load/save
+# config.json holds only bootstrap values now (SECRET_KEY); every other
+# setting lives in the database (app/services/settings.py, migration 6).
+# load_config()/save_config() remain as compatibility shims over both.
+# CONFIG_CACHE caches the config.json file itself (5s TTL).
 CONFIG_LOCK = threading.Lock()
 CONFIG_CACHE = {
     'data': None,
     'loaded_at': 0,
-    'ttl': 5  # seconds (reduced from 60 for more responsive updates)
+    'ttl': 5  # seconds
 }
 
-def load_config(force_reload: bool = False) -> Dict[str, Any]:
-    """Load configuration with caching. Uses 5s TTL to avoid disk I/O.
-    
-    Thread-safe: Uses CONFIG_LOCK to prevent race conditions.
-    
-    Args:
-        force_reload: If True, bypasses cache and reloads from disk.
-    """
-    global CONFIG_CACHE
+
+def _load_config_file(force_reload: bool = False) -> Dict[str, Any]:
+    """config.json as a dict (cached for CONFIG_CACHE['ttl'] seconds)."""
     now = time.time()
-    
-    # Return cached config if valid and not forcing reload (no lock needed for read)
     if not force_reload and CONFIG_CACHE['data'] is not None:
         if (now - CONFIG_CACHE['loaded_at']) < CONFIG_CACHE['ttl']:
-            return CONFIG_CACHE['data'].copy()  # Return copy to prevent mutation
-    
-    # Lock for disk I/O and cache update
+            return CONFIG_CACHE['data']
     with CONFIG_LOCK:
-        # Double-check cache after acquiring lock (another thread may have updated)
         if not force_reload and CONFIG_CACHE['data'] is not None:
             if (now - CONFIG_CACHE['loaded_at']) < CONFIG_CACHE['ttl']:
-                return CONFIG_CACHE['data'].copy()
-        
+                return CONFIG_CACHE['data']
         config = {}
-        
-        # Load from config.json first
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, 'r') as f:
@@ -68,44 +57,76 @@ def load_config(force_reload: bool = False) -> Dict[str, Any]:
             except Exception as e:
                 logger.error(f"[Config] Failed to load {CONFIG_FILE}: {e}")
                 config = {}
-        
-        # Environment variable overrides for sensitive values
-        # These take priority over config.json values
-        env_overrides = {
-            'WEBHOOK_URL': os.environ.get('RSCP_WEBHOOK_URL'),
-            'IMAP_SERVER': os.environ.get('RSCP_IMAP_SERVER'),
-            'EMAIL_USER': os.environ.get('RSCP_EMAIL_USER'),
-            'EMAIL_PASS': os.environ.get('RSCP_EMAIL_PASS'),
-            'EMAIL_PASS': os.environ.get('RSCP_EMAIL_PASS'),
-            'SECRET_KEY': os.environ.get('RSCP_SECRET_KEY'),
-            'SSO_CLIENT_ID': os.environ.get('RSCP_SSO_CLIENT_ID'),
-            'SSO_CLIENT_SECRET': os.environ.get('RSCP_SSO_CLIENT_SECRET'),
-            'SSO_DISCOVERY_URL': os.environ.get('RSCP_SSO_DISCOVERY_URL'),
-        }
-        
-        for key, env_val in env_overrides.items():
-            if env_val:
-                config[key] = env_val
-        
-        # Update cache
         CONFIG_CACHE['data'] = config
         CONFIG_CACHE['loaded_at'] = time.time()
-        
-        return config.copy()
+        return config
+
+
+def load_config(force_reload: bool = False) -> Dict[str, Any]:
+    """All settings as one dict, with the same keys/values as the old config.json.
+
+    Bootstrap keys come from config.json; everything else from the settings
+    table once the database is migrated (before that, config.json as before).
+    Environment variables (RSCP_*) override both. Returns a fresh copy.
+    """
+    from app.services import settings as settings_store
+    file_conf = _load_config_file(force_reload)
+    stored = settings_store.stored_values(force=force_reload)
+    if stored is None:
+        config = dict(file_conf)
+    else:
+        config = {k: v for k, v in file_conf.items() if k in settings_store.BOOTSTRAP_KEYS}
+        config.update(copy.deepcopy(stored))
+    for key, var in settings_store.ENV_OVERRIDES.items():
+        env_val = os.environ.get(var)
+        if env_val:
+            config[key] = env_val
+    return config
+
 
 def save_config(new_config: Dict[str, Any] = None, updater=None) -> bool:
-    """Merge `new_config` into config.json and update the cache.
+    """Save settings. Bootstrap keys (SECRET_KEY) go to config.json; every other
+    key goes to the settings table (or, before migration 6, to config.json).
 
-    Safe across threads (CONFIG_LOCK) and worker processes (an flock on
-    config.json.lock). The write goes to a unique temp file that is fsynced
-    and then atomically renamed over config.json. If the existing file cannot
-    be parsed, nothing is written: saving only the new keys would silently
-    wipe SECRET_KEY and every stored credential.
+    config.json writes are safe across threads (CONFIG_LOCK) and worker
+    processes (an flock on config.json.lock): a unique temp file is fsynced
+    and atomically renamed over config.json. If the existing file cannot be
+    parsed, nothing is written.
 
-    `updater`, if given, is called with the current on-disk config while the
-    lock is held and returns the keys to change; use it for read-modify-write
-    updates that must not race with other workers.
+    `updater`, if given, is called with the current settings (config.json
+    merged with the database) while the config.json lock is held and returns
+    the keys to change; use it for read-modify-write updates of bootstrap
+    values that must not race with other workers.
     """
+    from app.services import settings as settings_store
+    updates = dict(new_config or {})
+    store_ready = settings_store.store_ready()
+
+    def is_file_key(key):
+        return key in settings_store.BOOTSTRAP_KEYS or not store_ready
+
+    to_store = {k: v for k, v in updates.items() if not is_file_key(k)}
+    to_file = {k: v for k, v in updates.items() if is_file_key(k)}
+
+    if to_file or updater is not None:
+        deferred = {}
+        ok = _write_config_file(to_file, updater, is_file_key, deferred)
+        if not ok:
+            return False
+        to_store.update(deferred)
+
+    if to_store:
+        try:
+            settings_store.set_lenient(to_store)
+        except Exception as e:
+            logger.error(f"[Config] Failed to save settings {sorted(to_store)}: {e}")
+            return False
+    return True
+
+
+def _write_config_file(new_config, updater, is_file_key, deferred) -> bool:
+    """Merge into config.json under the cross-process lock (see save_config).
+    Keys produced by `updater` that belong in the database go to `deferred`."""
     global CONFIG_CACHE
 
     with CONFIG_LOCK:
@@ -130,7 +151,14 @@ def save_config(new_config: Dict[str, Any] = None, updater=None) -> bool:
             if new_config:
                 current.update(new_config)
             if updater is not None:
-                current.update(updater(dict(current)) or {})
+                from app.services import settings as settings_store
+                view = dict(current)
+                view.update(settings_store.stored_values() or {})
+                for key, value in (updater(view) or {}).items():
+                    if is_file_key(key):
+                        current[key] = value
+                    else:
+                        deferred[key] = value
 
             import tempfile
             # Resolve symlinks: in the release layout config.json links into the

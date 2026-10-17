@@ -18,20 +18,13 @@ from app import paths
 from app.services.migration import run_migrations
 from app.services.logger import log_exception
 
-# Config keys that must never reach a rendered page.
-_SECRET_CONFIG_KEYS = ('SECRET', 'PASS', 'TOKEN', 'API_KEY', 'ADMIN_HASH')
-
-
 def _template_config(conf):
-    """config.json minus credentials, for templates. Templates can still ask
-    whether a secret is set via <KEY>_SET (e.g. config.SSO_CLIENT_SECRET_SET)."""
-    safe = {}
-    for key, value in (conf or {}).items():
-        if any(marker in key.upper() for marker in _SECRET_CONFIG_KEYS):
-            safe[f'{key}_SET'] = bool(value)
-        else:
-            safe[key] = value
-    return safe
+    """Settings minus credentials, for templates. Secrets are the registry's
+    secret settings plus any key named like one (SECRET/PASS/TOKEN/...).
+    Templates can still ask whether a secret is set via <KEY>_SET
+    (e.g. config.SSO_CLIENT_SECRET_SET)."""
+    from app.services.settings import template_view
+    return template_view(conf)
 
 
 def create_app(test_config=None):
@@ -177,6 +170,8 @@ def create_app(test_config=None):
     app.register_blueprint(pos_bp)
     app.register_blueprint(timeclock_bp)
     app.register_blueprint(public_api_bp)
+    from app.routes.settings import settings_bp
+    app.register_blueprint(settings_bp)
     
     # Notifications API
     from app.routes.notifications import notifications_bp
@@ -250,12 +245,12 @@ def create_app(test_config=None):
     app.jinja_env.filters['local_time'] = local_time_filter
     
     # Reverse proxy support: honour X-Forwarded-* only from configured proxies
-    # (config.json TRUSTED_PROXIES; default loopback, e.g. a local cloudflared).
+    # (TRUSTED_PROXIES setting; default loopback, e.g. a local cloudflared).
     from app.utils.proxy import TrustedProxyFix
     app.wsgi_app = TrustedProxyFix(app.wsgi_app, (load_config() or {}).get('TRUSTED_PROXIES'))
 
     # Cookies. Secure-only cookies would break plain-http LAN access
-    # (http://<ip>:5000), so they are opt-in: SECURE_COOKIES in config.json or
+    # (http://<ip>:5000), so they are opt-in: the SECURE_COOKIES setting or
     # FLASK_ENV=production. The remember-me cookie gets the same treatment as
     # the session cookie instead of Flask-Login's 365-day, no-SameSite default.
     secure_cookies = bool((load_config() or {}).get('SECURE_COOKIES')) or \
