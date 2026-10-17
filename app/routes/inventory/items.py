@@ -603,7 +603,7 @@ def add_item():
                     INSERT INTO inventory_transactions 
                     (inventory_item_id, quantity_change, reason, user_id)
                     VALUES (?, ?, ?, ?)
-                ''', (item_id, quantity, 'Initial Stock', session.get('user')))
+                ''', (item_id, quantity, 'Initial Stock', current_user.username))
                 conn.commit()
             
             flash(f"Item added: {sku}")
@@ -1047,7 +1047,7 @@ def adjust_quantity(item_id):
             INSERT INTO inventory_transactions 
             (inventory_item_id, quantity_change, reason, user_id, source_tracking)
             VALUES (?, ?, ?, ?, ?)
-        ''', (item_id, quantity_change, reason, session.get('user'), source_tracking))
+        ''', (item_id, quantity_change, reason, current_user.username, source_tracking))
         
         conn.commit()
         
@@ -1143,9 +1143,12 @@ def add_stock(item_id):
             qty_to_add = int(request.form.get('qty', 1))
             tracking = request.form.get('tracking', '')
             
-            new_qty = item['quantity'] + qty_to_add
-            conn.execute('UPDATE inventory_items SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-                         (new_qty, item_id))
+            if qty_to_add < 1:
+                flash("Quantity to add must be at least 1.")
+                return redirect(url_for('inventory.add_stock', item_id=item_id))
+            # Relative update: never overwrite a sale that committed meanwhile
+            conn.execute('UPDATE inventory_items SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+                         (qty_to_add, item_id))
             
             conn.execute('''
                 INSERT INTO inventory_transactions (inventory_item_id, quantity_change, reason, source_tracking)

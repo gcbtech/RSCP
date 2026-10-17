@@ -330,6 +330,8 @@
                 <form action="{{ url_for('pos.checkout_process') }}" method="POST" id="checkoutForm">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="payment_method" id="paymentMethod" value="card">
+                    <input type="hidden" name="checkout_token" value="{{ checkout_token }}">
+                    <input type="hidden" name="expected_total" value="{{ '%.2f'|format(total) }}">
 
                     <!-- Cash Payment -->
                     <div id="cash-content" class="payment-content">
@@ -446,6 +448,16 @@
         }
         return splitCashDiscount;
         }
+
+        // One click, one sale: lock the button once the form is really
+        // submitting (the server also de-duplicates by checkout_token).
+        document.addEventListener('DOMContentLoaded', function () {
+            document.getElementById('checkoutForm').addEventListener('submit', function () {
+                const btn = document.getElementById('completeBtn');
+                btn.disabled = true;
+                btn.textContent = 'Processing...';
+            });
+        });
 
         function validateCheckout() {
             const paymentMethod = document.getElementById('paymentMethod').value;

@@ -172,7 +172,7 @@ def import_items():
                             INSERT INTO inventory_transactions 
                             (inventory_item_id, quantity_change, reason, user_id)
                             VALUES (?, ?, 'CSV Import', ?)
-                        ''', (new_id, quantity, session.get('user')))
+                        ''', (new_id, quantity, current_user.username))
                         
                         success_count += 1
                         

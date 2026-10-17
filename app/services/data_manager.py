@@ -463,7 +463,8 @@ def sync_manifest():
                                     img = best_match['image_url']
                                 
                                 # Trust Email Quantity
-                                email_qty = best_match.get('quantity', 1)
+                                # sqlite3.Row has no .get(); this used to raise and abort the whole sync
+                                email_qty = best_match['quantity'] if 'quantity' in best_match.keys() else 1
                                 if email_qty and email_qty > 0:
                                     qty = email_qty
 
@@ -709,31 +710,23 @@ def log_receipt(tracking: str, item_name: str, quantity: str, user: str, conn=No
             mapping = conn.execute("SELECT inventory_sku FROM product_mappings WHERE package_name = ?", (item_name,)).fetchone()
             if mapping: sku = mapping['inventory_sku']
 
-            conn.execute('''
+            # date_expected is a calendar date: use the store's local date, not
+            # UTC (CURRENT_DATE), or evening scans land on tomorrow.
+            cur = conn.execute('''
                 INSERT INTO packages (tracking_number, item_name, quantity, status, source, date_expected, date_scanned, sku)
-                VALUES (?, ?, ?, 'received', 'scan', CURRENT_DATE, CURRENT_TIMESTAMP, ?)
+                VALUES (?, ?, ?, 'received', 'scan', date('now', 'localtime'), CURRENT_TIMESTAMP, ?)
             ''', (tracking, item_name, quantity, sku))
-            
-            # Get the new ID
-            pkg_id = conn.execute("SELECT id FROM packages WHERE tracking_number = ?", (tracking,)).fetchone()['id']
+            pkg_id = cur.lastrowid
             
             # Log History
             conn.execute("INSERT INTO history (package_id, user_id, action, details) VALUES (?, ?, ?, ?)", 
                          (pkg_id, user_id, 'received', f"Qty: {quantity}"))
         
         conn.commit()
-        
-        # Trigger Webhook if Priority
-        if is_priority:
-            conf = load_config()
-            if conf.get('WEBHOOK_ENABLED') and conf.get('WEBHOOK_URL'):
-                enc_url = conf.get('WEBHOOK_URL')
-                key = conf.get('SECRET_KEY', 'dev_key_fallback')
-                
-                import threading
-                t = threading.Thread(target=send_priority_alert, args=(tracking, item_name, quantity, user, enc_url, key))
-                t.start()
-        
+        # (Priority alerts are sent per package in the loop above. A second
+        # copy here fired the webhook twice, and raised NameError for newly
+        # created packages, where is_priority was never defined.)
+
     except Exception as e:
         logger.error(f"Log receipt error: {e}")
     finally:

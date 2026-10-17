@@ -113,23 +113,124 @@ def import_backup():
                 except Exception as e:
                     logger.warning(f"Could not validate backup config: {e}")
             
-            # Perform restore
-            for member in backup_files:
-                if member in allowed_files:
-                    # Security: Validate target path stays within BASE_DIR
-                    target_path = os.path.normpath(os.path.join(BASE_DIR, member))
-                    if not target_path.startswith(os.path.normpath(BASE_DIR)):
-                        flash(f"Security error: Invalid path detected.")
-                        return redirect(url_for('admin.admin_panel'))
-                    zf.extract(member, BASE_DIR)
-            
-            flash("✅ System restored from backup successfully. Please log in again.")
+            # Validate the database BEFORE touching anything live
+            restored_db = None
+            if 'rscp.db' in backup_files:
+                restored_db = _extract_to_temp(zf, 'rscp.db', suffix='.db')
+                problem = _check_backup_db(restored_db)
+                if problem:
+                    os.remove(restored_db)
+                    flash(f"Restore refused: {problem}")
+                    return redirect(url_for('admin.admin_panel'))
+
+            try:
+                if restored_db:
+                    safety_copy = _restore_database(restored_db)
+                    logger.info(f"Database restored from upload; previous copy saved to {safety_copy}")
+            finally:
+                if restored_db and os.path.exists(restored_db):
+                    os.remove(restored_db)
+
+            for name, target in (('config.json', CONFIG_FILE), ('manifest.csv', MANIFEST_FILE)):
+                if name in backup_files:
+                    _atomic_replace(target, zf.read(name))
+            if 'config.json' in backup_files:
+                load_config(force_reload=True)
+
+            flash("✅ System restored from backup. A copy of the previous database was kept in the "
+                  "backups folder. Restart RSCP if settings were restored. Please log in again.")
             session.clear()
-            
+
     except Exception as e:
+        logger.exception("Restore failed")
         flash(f"Restore failed: {str(e)}")
-        
+
     return redirect(url_for('admin.admin_panel'))
+
+
+def _extract_to_temp(zf, member, suffix=''):
+    import tempfile
+    fd, path = tempfile.mkstemp(suffix=suffix)
+    with os.fdopen(fd, 'wb') as out:
+        out.write(zf.read(member))
+    return path
+
+
+def _check_backup_db(path):
+    """Return a reason string if the uploaded database is unusable, else None."""
+    import sqlite3
+    try:
+        conn = sqlite3.connect(path)
+        try:
+            if conn.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                return "the database in the backup is corrupt."
+            tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if 'users' not in tables or 'packages' not in tables:
+                return "the file is not an RSCP database."
+            if conn.execute('SELECT COUNT(*) FROM users').fetchone()[0] == 0:
+                return "the backup has no user accounts (you would be locked out)."
+        finally:
+            conn.close()
+    except sqlite3.DatabaseError as e:
+        return f"the database could not be read ({e})."
+    return None
+
+
+def _restore_database(src_path):
+    """Replace the live database's contents with `src_path`, safely.
+
+    Overwriting rscp.db on disk while workers hold it open (WAL mode) can
+    corrupt it: their -wal/-shm files still describe the old file. SQLite's
+    online backup API copies into the live database through SQLite itself,
+    under its locks, so every connection sees a consistent result. The
+    current database is copied aside first. Returns the safety copy's path.
+    """
+    import sqlite3
+    from app.services.migration import run_migrations
+
+    live_path = os.path.realpath(DB_PATH)
+    backup_dir = os.path.join(os.path.dirname(live_path), 'backups')
+    os.makedirs(backup_dir, exist_ok=True)
+    stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    safety_copy = os.path.join(backup_dir, f'pre-restore-{stamp}.db')
+
+    live = sqlite3.connect(DB_PATH, timeout=30)
+    try:
+        dest = sqlite3.connect(safety_copy)
+        with dest:
+            live.backup(dest)
+        dest.close()
+
+        src = sqlite3.connect(src_path)
+        try:
+            src.backup(live)
+        finally:
+            src.close()
+    finally:
+        live.close()
+
+    # An older backup may predate the current schema
+    run_migrations(DB_PATH)
+    return safety_copy
+
+
+def _atomic_replace(target, data):
+    """Write bytes to `target` (following symlinks into the shared data dir) atomically."""
+    import tempfile
+    real = os.path.realpath(target)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(real), prefix='.restore.')
+    try:
+        with os.fdopen(fd, 'wb') as out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        if os.path.basename(real) == 'config.json':
+            os.chmod(tmp, 0o600)
+        os.replace(tmp, real)
+    except Exception:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
 
 
 @admin_bp.route('/toggle_trim', methods=['POST'])

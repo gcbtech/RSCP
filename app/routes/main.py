@@ -116,7 +116,7 @@ def report_issue():
     # Store minimal trace info
     details = f"User Report from {source_url}\nUA: {user_agent}"
     
-    log_error(message, level="USER_REPORT", source="Frontend", user_id=session.get('user'), trace=details)
+    log_error(message, level="USER_REPORT", source="Frontend", user_id=current_user.username, trace=details)
     
     flash("Issue Reported. Admins have been notified.")
     # Redirect back to source if valid, otherwise index
@@ -351,7 +351,7 @@ def api_dashboard_stats():
             # Log It (Sync Manifest called inside get_dashboard_stats? no need here?)
             # log_receipt handles DB updates and history logging
             qty = str(item['quantity']) if item else '1'
-            log_receipt(tracking, item_name, qty, session['user'])
+            log_receipt(tracking, item_name, qty, current_user.username)
             return {"status": "success", "msg": "Received", "name": item_name}
             
     finally:
@@ -516,7 +516,7 @@ def process_return():
                  conn.execute('''
                      INSERT INTO history (package_id, user_id, action, details)
                      VALUES (?, (SELECT id FROM users WHERE username=?), ?, ?)
-                 ''', (pid, session.get('user'), 'return_initiated', f"Reason: {reason}, New Track: {return_tracking}"))
+                 ''', (pid, current_user.username, 'return_initiated', f"Reason: {reason}, New Track: {return_tracking}"))
                  
              conn.commit()
              flash("Return Initiated")
@@ -539,7 +539,7 @@ def mark_refunded(tracking):
         res = conn.execute("SELECT id FROM packages WHERE tracking_number=?", (tracking,)).fetchone()
         if res:
              conn.execute("INSERT INTO history (package_id, user_id, action) VALUES (?, (SELECT id FROM users WHERE username=?), 'refunded')", 
-                          (res['id'], session.get('user')))
+                          (res['id'], current_user.username))
         conn.commit()
     except Exception as e:
         print(e)

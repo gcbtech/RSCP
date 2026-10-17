@@ -110,44 +110,26 @@ def calculate_line_total(unit_price, quantity, discount_amount=0, discount_type=
     return round_money(base)
 
 
-def generate_order_number(terminal_id='POS-1'):
-    """Generate a unique order number in format POS-YYYYMMDD-XXX."""
-    today = date.today().strftime('%Y%m%d')
-    prefix = f"POS-{today}"
-    
-    close_conn = False
-    try:
-        from flask import has_app_context
-        if has_app_context():
-            conn = get_request_db()
-        else:
-            conn = get_db_connection()
-            close_conn = True
-    except ImportError:
+def generate_order_number(terminal_id='POS-1', conn=None):
+    """Next order number for today, format POS-YYYYMMDD-NNN.
+
+    Call with the checkout transaction's connection (after BEGIN IMMEDIATE)
+    so the read and the insert are atomic across registers. The sequence is
+    compared numerically, so it keeps counting past 999.
+    """
+    prefix = f"POS-{date.today().strftime('%Y%m%d')}"
+    own_conn = conn is None
+    if own_conn:
         conn = get_db_connection()
-        close_conn = True
-        
     try:
-        # Find the highest order number for today
-        result = conn.execute('''
-            SELECT order_number FROM pos_orders 
-            WHERE order_number LIKE ? 
-            ORDER BY order_number DESC LIMIT 1
-        ''', (f"{prefix}-%",)).fetchone()
-        
-        if result:
-            try:
-                # Extract the sequence number
-                last_seq = int(result['order_number'].split('-')[-1])
-                next_seq = last_seq + 1
-            except (ValueError, IndexError):
-                next_seq = 1
-        else:
-            next_seq = 1
-        
+        row = conn.execute('''
+            SELECT MAX(CAST(substr(order_number, ?) AS INTEGER)) AS seq
+            FROM pos_orders WHERE order_number LIKE ?
+        ''', (len(prefix) + 2, f"{prefix}-%")).fetchone()
+        next_seq = (row['seq'] or 0) + 1
         return f"{prefix}-{str(next_seq).zfill(3)}"
     finally:
-        if close_conn:
+        if own_conn:
             conn.close()
 
 
@@ -353,7 +335,7 @@ def preview_receipt():
     operator_name = None
     if current_user.is_authenticated:
         operator_name = getattr(current_user, 'username', None)
-    operator_name = operator_name or session.get('operator_name') or session.get('user')
+    operator_name = operator_name or session.get('operator_name') or (current_user.username if current_user.is_authenticated else '')
 
     return render_template(
         'pos/receipt_preview.html',

@@ -446,7 +446,7 @@ def bulk_action():
         if action == 'mark_received':
             for t in trackings:
                 from app.services.data_manager import log_receipt
-                log_receipt(t, "Bulk Item", "1", session.get('user', 'Admin'), conn=conn)
+                log_receipt(t, "Bulk Item", "1", current_user.username, conn=conn)
                  
         elif action == 'mark_late':
             placeholders = ','.join(['?']*len(trackings))

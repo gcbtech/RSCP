@@ -28,7 +28,7 @@ def audit_dashboard():
 def start_audit():
     """Start a new audit session."""
     mode = request.form.get('mode')  # 'item' or 'shelf'
-    user = session.get('user', 'Unknown')
+    user = current_user.username
     
     if mode not in ['item', 'shelf']:
         flash("Invalid audit mode.")
@@ -136,9 +136,14 @@ def audit_submit_count():
     count = int(data.get('count'))
     
     conn = get_db_connection()
-    
+    # Read the current quantity and write the count under one write lock so
+    # the logged difference matches what actually changed.
+    conn.isolation_level = None
+    conn.execute('BEGIN IMMEDIATE')
+
     item = conn.execute("SELECT * FROM inventory_items WHERE id = ?", (item_id,)).fetchone()
     if not item:
+        conn.execute('ROLLBACK')
         conn.close()
         return jsonify({'error': 'Item not found'}), 404
         
@@ -152,7 +157,7 @@ def audit_submit_count():
         conn.execute("UPDATE inventory_items SET quantity = ? WHERE id = ?", (count, item_id))
         
         # Log the transaction
-        user = session.get('user', 'Unknown')
+        user = current_user.username
         conn.execute('''
             INSERT INTO inventory_transactions (inventory_item_id, quantity_change, reason, user_id) 
             VALUES (?, ?, 'Live Audit Correction', ?)
@@ -212,27 +217,6 @@ def audit_report(session_id):
     
     conn.close()
     return render_template('inventory/audit_report.html', audit_session=sess, records=records)
-
-
-@inventory_bp.route('/audit/apply_fix/<int:record_id>', methods=['POST'])
-@login_required
-def audit_apply_fix(record_id):
-    """Apply a single audit correction."""
-    conn = get_db_connection()
-    record = conn.execute("SELECT * FROM audit_records WHERE id = ?", (record_id,)).fetchone()
-    
-    if record:
-        conn.execute("UPDATE inventory_items SET quantity = ? WHERE id = ?", 
-                     (record['counted_qty'], record['item_id']))
-        diff = record['counted_qty'] - record['expected_qty']
-        conn.execute("INSERT INTO inventory_transactions (inventory_item_id, quantity_change, reason, user_id) VALUES (?, ?, 'Audit Correction', ?)", 
-                     (record['item_id'], diff, session.get('user')))
-                     
-        flash(f"Updated stock for {record['name']} to {record['counted_qty']}")
-        conn.commit()
-        
-    conn.close()
-    return redirect(request.referrer)
 
 
 @inventory_bp.route('/audit/export/<int:session_id>')

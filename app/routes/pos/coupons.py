@@ -308,7 +308,7 @@ def delete_coupon(coupon_id):
 # Coupon Validation & Application API
 # ========================================
 
-def evaluate_coupon(code, cart_items, cart_subtotal, conn):
+def evaluate_coupon(code, cart_items, cart_subtotal, conn, cart=None):
     """Authoritatively validate a coupon against the given cart and compute its
     discount server-side.
 
@@ -412,6 +412,10 @@ def evaluate_coupon(code, cart_items, cart_subtotal, conn):
                 }
             else:
                 logger.info(f"[Coupon Validate] Matching target items found in cart (IDs: {matching_ids}, SKUs: {matching_skus})")
+
+    # "Cannot combine" coupons do not stack with an order-level discount
+    if coupon['cannot_combine'] and cart and cart.get('discount_amount') and cart.get('discount_type'):
+        return {'valid': False, 'error': 'This coupon cannot be combined with other discounts.'}
 
     # Calculate discount (server-authoritative)
     discount = calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn)
@@ -605,7 +609,7 @@ def apply_coupon():
     cart_subtotal = sum(item.get('line_total', 0) for item in cart_items)
 
     conn = get_db_connection()
-    result = evaluate_coupon(code, cart_items, cart_subtotal, conn)
+    result = evaluate_coupon(code, cart_items, cart_subtotal, conn, cart=cart)
     if not result.get('valid'):
         return jsonify({'success': False, 'error': result.get('error', 'Invalid coupon.')}), 400
 

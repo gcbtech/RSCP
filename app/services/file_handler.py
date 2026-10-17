@@ -40,7 +40,13 @@ class SimpleFileLock:
 
 @contextlib.contextmanager
 def atomic_write(file_path: str, mode: str = 'w', encoding: str = 'utf-8') -> Generator[TextIO, None, None]:
-    """Safe write: Write to .tmp then rename to target."""
+    """Safe write: Write to .tmp then rename to target.
+
+    Symlinks are followed first: in the release layout, data files link into
+    the shared dir, and renaming over the link would replace it with a plain
+    file inside the release (lost on the next update).
+    """
+    file_path = os.path.realpath(file_path)
     temp_path = file_path + ".tmp"
     try:
         with open(temp_path, mode, encoding=encoding) as f:

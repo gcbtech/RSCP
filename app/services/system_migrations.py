@@ -211,10 +211,54 @@ def migrate_002_backfill_thumbnails():
     return False, 'backfill running in background; records itself on completion'
 
 
+# ---------------------------------------------------------------------------
+# 003 — move manifest.csv into the shared data dir (release layout)
+# ---------------------------------------------------------------------------
+
+def migrate_003_share_manifest():
+    """manifest.csv is user data, but until 3.0 it lived inside each release
+    dir: an update left it behind in the old release, and pruning old
+    releases deleted it. Copy the newest one into <DATA>/shared and link it
+    into the active release (later releases are linked by the updater).
+
+    Records as done on flat (non-release) installs, where the file already
+    sits in the one and only app dir.
+    """
+    import shutil
+    from app.routes.admin.updates import _is_release_layout, _release_paths
+    from app.services.auth import BASE_DIR
+
+    if not _is_release_layout():
+        return True, 'skipped: not the release layout'
+    releases_root, shared_dir, _current = _release_paths()
+    shared = os.path.join(shared_dir, 'manifest.csv')
+    link = os.path.join(BASE_DIR, 'manifest.csv')
+
+    if not os.path.exists(shared):
+        candidates = []
+        for name in os.listdir(releases_root):
+            path = os.path.join(releases_root, name, 'manifest.csv')
+            if os.path.isfile(path) and not os.path.islink(path):
+                candidates.append(path)
+        if candidates:
+            newest = max(candidates, key=os.path.getmtime)
+            shutil.copy2(newest, shared)
+        else:
+            return True, 'no manifest.csv found; nothing to share'
+
+    if os.path.islink(link) and os.path.realpath(link) == os.path.realpath(shared):
+        return True, 'already linked'
+    if os.path.lexists(link):
+        os.remove(link)
+    os.symlink(shared, link)
+    return True, f'linked {link} -> {shared}'
+
+
 # Ordered, append-only.
 MIGRATIONS = [
     ('001_gthread_systemd_unit', migrate_001_gthread_systemd_unit),
     ('002_backfill_thumbnails', migrate_002_backfill_thumbnails),
+    ('003_share_manifest', migrate_003_share_manifest),
 ]
 
 

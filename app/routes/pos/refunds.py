@@ -302,6 +302,13 @@ def refund_process():
     
     conn = get_db_connection()
     try:
+        # Take the write lock BEFORE reading what has already been refunded, so
+        # two submissions (double-click, two managers) cannot both pass the
+        # caps below. Early returns leave the transaction open; close() in the
+        # finally block discards it.
+        conn.isolation_level = None
+        conn.execute('BEGIN IMMEDIATE')
+
         # Get order
         order = conn.execute('SELECT * FROM pos_orders WHERE id = ?', (order_id,)).fetchone()
         if not order:
@@ -324,6 +331,13 @@ def refund_process():
             'SELECT COALESCE(SUM(amount), 0) AS t FROM pos_refunds WHERE order_id = ?',
             (order_id,)
         ).fetchone()['t']
+        remaining_paid = round(order['total'] - already_refunded_total, 2)
+
+        # What the customer actually paid per $1 of line value: folds in the
+        # order discount, coupon, cash discount and tax. A refunded unit is
+        # worth its line value times this ratio, never more.
+        lines_total = sum(r['line_total'] for r in refunded_rows)
+        paid_ratio = (order['total'] / lines_total) if lines_total > 0 else 0
 
         # Calculate refund amount and process items
         refund_amount = 0
@@ -388,20 +402,30 @@ def refund_process():
                     flash(f'Cannot refund {qty} of that item — only {remaining} left to refund.')
                     return redirect(url_for('pos.refund_order', order_number=order['order_number']))
                 per_unit = (item['line_total'] / item['quantity']) if item['quantity'] else 0
-                item_refund = round(per_unit * qty, 2)
+                list_value = round(per_unit * qty, 2)
                 restock_action = request.form.get(f'restock_{item_id}', default_restock)
                 items_to_refund.append({
                     'order_item_id': item['id'],
                     'quantity': qty,
-                    'amount': item_refund,
+                    'amount': list_value,  # list value; reports apply the paid/tax ratios
                     'restock_action': restock_action,
                     'inventory_item_id': item['inventory_item_id']
                 })
-                refund_amount += item_refund
+                refund_amount += list_value * paid_ratio
                 if restock_action == 'restock':
                     items_restocked += qty
                 elif restock_action == 'damaged':
                     items_damaged += qty
+
+        if refund_type != 'full':
+            # Never refund more than is left of what was paid. If this partial
+            # refund returns every remaining unit, refund exactly what is left
+            # so no stray cent remains from rounding.
+            units_left = sum(r['quantity'] - r['refunded_qty'] for r in refunded_rows)
+            units_now = sum(i['quantity'] for i in items_to_refund)
+            if units_now >= units_left:
+                refund_amount = remaining_paid
+            refund_amount = round(min(refund_amount, remaining_paid), 2)
 
         if not items_to_refund or refund_amount <= 0:
             flash('No items available to refund (order may already be fully refunded).')
@@ -444,8 +468,10 @@ def refund_process():
                     ) VALUES (?, ?, ?, ?)
                 ''', (item['inventory_item_id'], item['quantity'], 'Refund Restock', str(manager_id)))
         
-        # Update order status
-        new_status = 'refunded' if refund_type == 'full' else 'partial_refund'
+        # Update order status: fully refunded once no unit is left to refund
+        units_left = sum(r['quantity'] - r['refunded_qty'] for r in refunded_rows)
+        fully_refunded = refund_type == 'full' or sum(i['quantity'] for i in items_to_refund) >= units_left
+        new_status = 'refunded' if fully_refunded else 'partial_refund'
         conn.execute('UPDATE pos_orders SET status = ? WHERE id = ?', (new_status, order_id))
         
         conn.commit()

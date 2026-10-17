@@ -5,6 +5,7 @@ Rate limited to 100 requests per minute per IP.
 """
 import logging
 from flask import request, session, jsonify, current_app
+from flask_login import current_user
 
 from app.routes.inventory import inventory_bp
 from app.routes.inventory.core import is_inventory_enabled
@@ -110,7 +111,7 @@ def api_add_quantity(item_id):
             INSERT INTO inventory_transactions 
             (inventory_item_id, quantity_change, reason, user_id, source_tracking)
             VALUES (?, ?, ?, ?, ?)
-        ''', (item_id, quantity, 'Received from Scan', session.get('user'), tracking))
+        ''', (item_id, quantity, 'Received from Scan', current_user.username, tracking))
         
         conn.commit()
         
@@ -178,44 +179,51 @@ def quick_adjust(item_id):
     
     conn = get_db_connection()
     try:
-        current = conn.execute('SELECT quantity, name, sku FROM inventory_items WHERE id = ?', 
+        # Relative, guarded update under the write lock: a POS sale committing
+        # in between can no longer be overwritten by a stale absolute value.
+        conn.isolation_level = None
+        conn.execute('BEGIN IMMEDIATE')
+        current = conn.execute('SELECT quantity, name, sku FROM inventory_items WHERE id = ?',
                                (item_id,)).fetchone()
         if not current:
+            conn.execute('ROLLBACK')
             return jsonify({"error": "Item not found"}), 404
-        
+
         if action == 'oos':
-            new_qty = 0
             reason = "Marked OOS from Scan"
             change = -current['quantity']
         else:
-            new_qty = current['quantity'] + change
-            if new_qty < 0:
+            if current['quantity'] + change < 0:
+                conn.execute('ROLLBACK')
                 return jsonify({
                     "error": f"Cannot reduce by {abs(change)} - only {current['quantity']} in stock"
                 }), 400
             reason = "Sold/Consumed" if change < 0 else "Received from Scan"
-        
+
         conn.execute('''
-            UPDATE inventory_items 
-            SET quantity = ?, updated_at = CURRENT_TIMESTAMP
+            UPDATE inventory_items
+            SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        ''', (new_qty, item_id))
-        
+        ''', (change, item_id))
+        new_qty = current['quantity'] + change
+
         if change != 0:
             conn.execute('''
-                INSERT INTO inventory_transactions 
+                INSERT INTO inventory_transactions
                 (inventory_item_id, quantity_change, reason, user_id)
                 VALUES (?, ?, ?, ?)
-            ''', (item_id, change, reason, session.get('user')))
-        
-        conn.commit()
-        
+            ''', (item_id, change, reason, str(current_user.id)))
+
+        conn.execute('COMMIT')
+
         return jsonify({
             "success": True,
             "new_quantity": new_qty,
             "name": current['name']
         })
     except Exception as e:
+        if conn.in_transaction:
+            conn.execute('ROLLBACK')
         logger.error(f"Quick adjust error: {e}")
         return jsonify({"error": str(e)}), 500
     finally:

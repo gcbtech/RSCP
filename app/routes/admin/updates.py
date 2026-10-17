@@ -82,7 +82,7 @@ ORPHAN_EXTENSIONS = {'.py', '.html', '.js', '.css', '.map'}
 # updater builds a new release and atomically repoints the symlink instead of
 # copying over the live tree. These shared items live once in <root>/shared and
 # are symlinked into every release so they survive swaps and rollbacks.
-SHARED_LINK_FILES = ('config.json', 'rscp.db', 'rscp.db-wal', 'rscp.db-shm')
+SHARED_LINK_FILES = ('config.json', 'rscp.db', 'rscp.db-wal', 'rscp.db-shm', 'manifest.csv')
 SHARED_LINK_DIRS = (os.path.join('static', 'uploads'),)
 MAX_RELEASES = 5
 
@@ -249,7 +249,10 @@ def _create_backup(old_version):
     safety net we must not proceed with the update.
     """
     ts = time.strftime('%Y%m%d-%H%M%S')
-    backup_root = os.path.join(BASE_DIR, 'backups')
+    # Next to the real database: in the release layout that is the shared
+    # data dir, so pruning old releases no longer deletes these backups.
+    backup_root = os.path.join(os.path.dirname(os.path.realpath(os.path.join(BASE_DIR, 'rscp.db'))),
+                               'backups')
     os.makedirs(backup_root, exist_ok=True)
     backup_dir = os.path.join(backup_root, f'{ts}_v{old_version or "unknown"}')
     os.makedirs(backup_dir, exist_ok=True)

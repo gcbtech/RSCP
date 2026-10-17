@@ -2,6 +2,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from app.utils.permissions import has_permission
 import datetime
+from app.services.timeclock_hours import summarize as summarize_hours
 from app.services.db import get_db_connection
 from app.services.data_manager import load_config
 import logging
@@ -34,6 +35,19 @@ def get_pay_period_config():
     start_str = config.get('TIMECLOCK_PAY_PERIOD_START', '2024-01-01')
     freq = config.get('TIMECLOCK_PAY_PERIOD_TYPE', 'biweekly') 
     return start_str, freq
+
+def _workweek_anchor():
+    """Workweeks start on the weekday of the configured pay-period start."""
+    start_str, _freq = get_pay_period_config()
+    try:
+        return datetime.datetime.strptime(start_str, '%Y-%m-%d').date()
+    except ValueError:
+        return datetime.date(2024, 1, 1)
+
+
+def _paid_breaks():
+    return bool(load_config().get('TIMECLOCK_PAID_BREAKS', True))
+
 
 def get_current_pay_period():
     """Calculate current pay period start/end based on config."""
@@ -150,8 +164,8 @@ def index():
             now = datetime.datetime.now()
             diff = now - clock_in_dt
             # Format duration
-            hours = diff.seconds // 3600
-            minutes = (diff.seconds % 3600) // 60
+            hours = int(diff.total_seconds()) // 3600
+            minutes = (int(diff.total_seconds()) % 3600) // 60
             duration = f"{hours}h {minutes}m"
         except Exception as e:
             logger.error(f"Date parse error: {e}")
@@ -221,26 +235,15 @@ def index():
         fulltime_hours = float(config.get('TIMECLOCK_FULLTIME_HOURS', 40))
         
         period_entries = conn.execute('''
-            SELECT clock_in, clock_out FROM time_entries
-            WHERE user_id = ? AND type = 'shift'
+            SELECT type, clock_in, clock_out FROM time_entries
+            WHERE user_id = ? AND type IN ('shift', 'break')
             AND date(clock_in) >= ? AND date(clock_in) <= ?
         ''', (current_user.id, period_start.strftime('%Y-%m-%d'), period_end.strftime('%Y-%m-%d'))).fetchall()
-        
-        period_hours = 0.0
-        for entry in period_entries:
-            try:
-                c_in = datetime.datetime.strptime(entry['clock_in'], '%Y-%m-%d %H:%M:%S')
-                if entry['clock_out']:
-                    c_out = datetime.datetime.strptime(entry['clock_out'], '%Y-%m-%d %H:%M:%S')
-                else:
-                    c_out = datetime.datetime.now()
-                period_hours += (c_out - c_in).total_seconds() / 3600
-            except:
-                pass
-                
-        period_hours = round(period_hours, 2)
-        ot_hours = round(max(0, period_hours - fulltime_hours), 2)
-        reg_hours = round(min(period_hours, fulltime_hours), 2)
+
+        totals = summarize_hours(period_entries, _workweek_anchor(), fulltime_hours, _paid_breaks())
+        period_hours = round(totals['regular'] + totals['overtime'], 2)
+        ot_hours = totals['overtime']
+        reg_hours = totals['regular']
             
     except Exception as e:
         logger.error(f"Schedule Check Error: {e}")
@@ -400,116 +403,86 @@ def delete_shift(shift_id):
         conn.close()
     return redirect(url_for('timeclock.shifts'))
 
-@timeclock_bp.route('/clock_in', methods=['POST'])
-@login_required
-def clock_in():
+def _open_entry(conn, user_id):
+    return conn.execute('SELECT id, type FROM time_entries WHERE user_id = ? AND clock_out IS NULL '
+                        'ORDER BY clock_in DESC LIMIT 1', (user_id,)).fetchone()
+
+
+def _clock_transition(expected_open, close_type, open_type, ok_msg, wrong_state_msg):
+    """Run one clock state change atomically.
+
+    expected_open: None (must be clocked out), 'shift' or 'break' (the open
+    entry's required type). Closes the open entry if close_type is set and
+    opens a new `open_type` entry if set. The check and the writes share one
+    write lock (BEGIN IMMEDIATE), so a double-tap cannot create two open
+    shifts.
+    """
     conn = get_db_connection()
+    conn.isolation_level = None
     try:
-        # Verify not already clocked in
-        existing = conn.execute('SELECT id FROM time_entries WHERE user_id = ? AND clock_out IS NULL', 
-                              (current_user.id,)).fetchone()
-        if existing:
-            flash("You are already clocked in!")
+        conn.execute('BEGIN IMMEDIATE')
+        current = _open_entry(conn, current_user.id)
+        current_type = current['type'] if current else None
+        if current_type != expected_open:
+            conn.execute('ROLLBACK')
+            flash(wrong_state_msg)
             return redirect(url_for('timeclock.index'))
-            
+
         now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        conn.execute('''
-            INSERT INTO time_entries (user_id, type, clock_in)
-            VALUES (?, 'shift', ?)
-        ''', (current_user.id, now))
-        conn.commit()
-        flash("Clocked In Successfully")
+        if close_type:
+            conn.execute('UPDATE time_entries SET clock_out = ? WHERE id = ?', (now, current['id']))
+        if open_type:
+            conn.execute('INSERT INTO time_entries (user_id, type, clock_in) VALUES (?, ?, ?)',
+                         (current_user.id, open_type, now))
+        conn.execute('COMMIT')
+        flash(ok_msg)
     except Exception as e:
-        logger.error(f"Clock In Error: {e}")
-        flash("Error clocking in.")
+        if conn.in_transaction:
+            conn.execute('ROLLBACK')
+        logger.error(f"Timeclock error ({ok_msg}): {e}")
+        flash("Timeclock error, please try again.")
     finally:
         conn.close()
     return redirect(url_for('timeclock.index'))
+
+
+@timeclock_bp.route('/clock_in', methods=['POST'])
+@login_required
+def clock_in():
+    return _clock_transition(None, None, 'shift', "Clocked In Successfully",
+                             "You are already clocked in!")
+
 
 @timeclock_bp.route('/clock_out', methods=['POST'])
 @login_required
 def clock_out():
     conn = get_db_connection()
     try:
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        conn.execute('''
-            UPDATE time_entries 
-            SET clock_out = ? 
-            WHERE user_id = ? AND clock_out IS NULL
-        ''', (now, current_user.id))
-        conn.commit()
-        flash("Clocked Out Successfully")
-    except Exception as e:
-        logger.error(f"Clock Out Error: {e}")
-        flash("Error clocking out.")
+        current = _open_entry(conn, current_user.id)
     finally:
         conn.close()
-    return redirect(url_for('timeclock.index'))
+    if not current:
+        flash("You are not clocked in.")
+        return redirect(url_for('timeclock.index'))
+    # Clocking out ends whatever is open (a shift, or a break)
+    return _clock_transition(current['type'], current['type'], None, "Clocked Out Successfully",
+                             "Your clock status changed; please try again.")
+
 
 @timeclock_bp.route('/break_start', methods=['POST'])
 @login_required
 def break_start():
-    # To start a break, we essentially PAUSE the shift? 
-    # OR we treat break as a separate entry type?
-    # Design doc said: "Active Break: A record where clock_out is NULL and type is 'break'."
-    # BUT we also need to end the 'shift' entry? Or do we nest them?
-    # Simpler: End 'shift', Start 'break'. 
-    # When break ends: End 'break', Start 'shift'.
-    
-    conn = get_db_connection()
-    try:
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        # 1. End current shift
-        conn.execute('''
-            UPDATE time_entries 
-            SET clock_out = ? 
-            WHERE user_id = ? AND type = 'shift' AND clock_out IS NULL
-        ''', (now, current_user.id))
-        
-        # 2. Start break
-        conn.execute('''
-            INSERT INTO time_entries (user_id, type, clock_in)
-            VALUES (?, 'break', ?)
-        ''', (current_user.id, now))
-        
-        conn.commit()
-        flash("Break Started")
-    except Exception as e:
-        logger.error(f"Break Start Error: {e}")
-        flash("Error starting break")
-    finally:
-        conn.close()
-    return redirect(url_for('timeclock.index'))
+    # A break ends the open shift entry and opens a 'break' entry; ending the
+    # break closes it and opens a new shift entry.
+    return _clock_transition('shift', 'shift', 'break', "Break Started",
+                             "You need to be clocked in to start a break.")
+
 
 @timeclock_bp.route('/break_end', methods=['POST'])
 @login_required
 def break_end():
-    conn = get_db_connection()
-    try:
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        
-        # 1. End break
-        conn.execute('''
-            UPDATE time_entries 
-            SET clock_out = ? 
-            WHERE user_id = ? AND type = 'break' AND clock_out IS NULL
-        ''', (now, current_user.id))
-        
-        # 2. Start shift (resume)
-        conn.execute('''
-            INSERT INTO time_entries (user_id, type, clock_in)
-            VALUES (?, 'shift', ?)
-        ''', (current_user.id, now))
-        
-        conn.commit()
-        flash("Break Ended - Back to Work")
-    except Exception as e:
-        logger.error(f"Break End Error: {e}")
-        flash("Error ending break")
-    finally:
-        conn.close()
-    return redirect(url_for('timeclock.index'))
+    return _clock_transition('break', 'break', 'shift', "Break Ended - Back to Work",
+                             "You are not on a break.")
 
 @timeclock_bp.route('/manager/recurring/add', methods=['POST'])
 @login_required
@@ -691,8 +664,8 @@ def manager_dashboard():
                 start = datetime.datetime.strptime(entry['clock_in'], '%Y-%m-%d %H:%M:%S')
                 now = datetime.datetime.now()
                 diff = now - start
-                hours = diff.seconds // 3600
-                minutes = (diff.seconds % 3600) // 60
+                hours = int(diff.total_seconds()) // 3600
+                minutes = (int(diff.total_seconds()) % 3600) // 60
                 entry['duration'] = f"{hours}h {minutes}m"
                 # Format start time
                 entry['clock_in'] = start.strftime('%I:%M %p')
@@ -823,15 +796,15 @@ def export_csv():
                 time_out = c_out.strftime('%I:%M %p')
                 
                 diff = c_out - c_in
-                hours = diff.seconds // 3600
-                minutes = (diff.seconds % 3600) // 60
+                hours = int(diff.total_seconds()) // 3600
+                minutes = (int(diff.total_seconds()) % 3600) // 60
                 duration = f"{hours}h {minutes}m"
             else:
                 time_out = "Active"
                 now = datetime.datetime.now()
                 diff = now - c_in
-                hours = diff.seconds // 3600
-                minutes = (diff.seconds % 3600) // 60
+                hours = int(diff.total_seconds()) // 3600
+                minutes = (int(diff.total_seconds()) % 3600) // 60
                 duration = f"{hours}h {minutes}m (Running)"
             
             cw.writerow([
@@ -916,15 +889,15 @@ def timesheets():
                     p_end = end.strftime('%p')
                     entry['clock_out_fmt'] = f"{end.strftime('%m/%d')} {h_end}:{m_end} {p_end}"
                     diff = end - start
-                    hours = diff.seconds // 3600
-                    minutes = (diff.seconds % 3600) // 60
+                    hours = int(diff.total_seconds()) // 3600
+                    minutes = (int(diff.total_seconds()) % 3600) // 60
                     entry['duration'] = f"{hours}h {minutes}m"
                 else:
                     entry['clock_out_fmt'] = "Active"
                     now = datetime.datetime.now()
                     diff = now - start
-                    hours = diff.seconds // 3600
-                    minutes = (diff.seconds % 3600) // 60
+                    hours = int(diff.total_seconds()) // 3600
+                    minutes = (int(diff.total_seconds()) % 3600) // 60
                     entry['duration'] = f"{hours}h {minutes}m (Run)"
             except Exception as e:
                 entry['duration'] = "Err"
@@ -1250,7 +1223,30 @@ def edit_entry(entry_id):
             # If seconds missing, append :00
             if c_in_clean and len(c_in_clean) == 16: c_in_clean += ':00'
             if c_out_clean and len(c_out_clean) == 16: c_out_clean += ':00'
-            
+
+            try:
+                start = datetime.datetime.strptime(c_in_clean or '', '%Y-%m-%d %H:%M:%S')
+                end = datetime.datetime.strptime(c_out_clean, '%Y-%m-%d %H:%M:%S') if c_out_clean else None
+            except ValueError:
+                flash("Please enter a valid clock-in (and clock-out) time.")
+                return redirect(url_for('timeclock.edit_entry', entry_id=entry_id))
+            if end and end <= start:
+                flash("Clock-out must be after clock-in.")
+                return redirect(url_for('timeclock.edit_entry', entry_id=entry_id))
+
+            # Keep a record of what the entry said before the edit
+            old = conn.execute('SELECT * FROM time_entries WHERE id = ?', (entry_id,)).fetchone()
+            if old:
+                import json
+                conn.execute('''
+                    INSERT INTO pos_audit_log (action, user_id, user_name, target_type, target_id, details, ip_address)
+                    VALUES ('timeclock_edit', ?, ?, 'time_entry', ?, ?, ?)
+                ''', (current_user.id, current_user.username, str(entry_id), json.dumps({
+                    'employee_id': old['user_id'],
+                    'before': {'clock_in': old['clock_in'], 'clock_out': old['clock_out'], 'notes': old['notes']},
+                    'after': {'clock_in': c_in_clean, 'clock_out': c_out_clean, 'notes': notes},
+                }), request.remote_addr))
+
             conn.execute('''
                 UPDATE time_entries 
                 SET clock_in = ?, clock_out = ?, notes = ?, edited_by = ?
@@ -1426,17 +1422,15 @@ def export_report():
             except Exception as e:
                 logger.error(f"Report entry error: {e}")
                 
-        # Round totals and calculate OT
+        # Totals and overtime per workweek (see app/services/timeclock_hours.py)
         fulltime_hours = float(load_config().get('TIMECLOCK_FULLTIME_HOURS', 40))
+        anchor, paid_breaks = _workweek_anchor(), _paid_breaks()
         for uid in report_data:
-            report_data[uid]['total_hours'] = round(report_data[uid]['total_hours'], 2)
-            report_data[uid]['reg_hours'] = round(report_data[uid]['reg_hours'], 2)
-            report_data[uid]['pto_hours'] = round(report_data[uid]['pto_hours'], 2)
-            # OT = reg_hours that exceed threshold (PTO doesn't count toward OT)
-            report_data[uid]['ot_hours'] = round(max(0, report_data[uid]['reg_hours'] - fulltime_hours), 2)
-            # Adjust reg_hours to cap at threshold for display
-            if report_data[uid]['reg_hours'] > fulltime_hours:
-                report_data[uid]['reg_hours'] = round(fulltime_hours, 2)
+            totals = summarize_hours(report_data[uid]['entries'], anchor, fulltime_hours, paid_breaks)
+            report_data[uid]['reg_hours'] = totals['regular']
+            report_data[uid]['ot_hours'] = totals['overtime']
+            report_data[uid]['pto_hours'] = totals['pto']
+            report_data[uid]['total_hours'] = totals['total']
             
         return render_template('timeclock/report_print.html', 
                              report_data=report_data, 

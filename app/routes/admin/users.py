@@ -97,7 +97,7 @@ def delete_user_action(username):
     if error:
         return error
     
-    if username == session.get('user'):
+    if username == current_user.username:
         flash("Cannot delete yourself.")
     elif username.lower() == 'admin':
         flash("Cannot delete the built-in Admin account.")

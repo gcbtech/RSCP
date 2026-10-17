@@ -357,6 +357,9 @@ def cart_discount():
     if discount_value < 0 or (discount_type == 'percent' and discount_value > 100):
         flash('Invalid discount amount.')
         return redirect(url_for('pos.sales'))
+    if discount_value > 0 and (cart.get('applied_coupon') or {}).get('cannot_combine'):
+        flash('The applied coupon cannot be combined with other discounts.')
+        return redirect(url_for('pos.sales'))
     
     # Check if discount exceeds thresholds
     needs_approval = False

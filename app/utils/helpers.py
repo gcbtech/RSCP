@@ -126,15 +126,13 @@ def local_date_to_utc_range(local_date_str: str):
         # Parse the local date
         local_date = datetime.strptime(local_date_str, '%Y-%m-%d')
         
-        # Create local midnight as timezone-aware (using system local timezone)
+        # A naive datetime's .astimezone() is interpreted in the system
+        # timezone using the offset in force ON THAT DATE (DST-aware), the
+        # same rule SQLite's 'localtime' uses. (Attaching today's offset
+        # instead shifted every report for the other half of the year.)
         local_start = local_date.replace(hour=0, minute=0, second=0, microsecond=0)
-        local_end = local_date.replace(hour=23, minute=59, second=59, microsecond=999999)
-        
-        # Get local timezone offset using astimezone trick
-        local_tz = datetime.now().astimezone().tzinfo
-        local_start = local_start.replace(tzinfo=local_tz)
-        local_end = local_end.replace(tzinfo=local_tz)
-        
+        local_end = local_date.replace(hour=23, minute=59, second=59, microsecond=0)
+
         # Convert to UTC
         utc_start = local_start.astimezone(timezone.utc)
         utc_end = local_end.astimezone(timezone.utc)
@@ -146,6 +144,30 @@ def local_date_to_utc_range(local_date_str: str):
     except Exception:
         # Fallback: assume the input is already in the right format
         return (f"{local_date_str} 00:00:00", f"{local_date_str} 23:59:59")
+
+def local_to_utc_str(local_str: str) -> str:
+    """'YYYY-MM-DD HH:MM[:SS]' in business-local time -> UTC 'YYYY-MM-DD HH:MM:SS'.
+
+    The business timezone is the server's system timezone (set it with
+    timedatectl); timestamps are stored in UTC (SQLite CURRENT_TIMESTAMP).
+    """
+    from datetime import datetime, timezone
+    fmt = '%Y-%m-%d %H:%M:%S' if local_str.count(':') == 2 else '%Y-%m-%d %H:%M'
+    local_dt = datetime.strptime(local_str, fmt)
+    return local_dt.astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+
+
+def utc_to_local_dt(utc_str):
+    """UTC 'YYYY-MM-DD HH:MM:SS' string -> naive business-local datetime (or None)."""
+    from datetime import datetime, timezone
+    if not utc_str:
+        return None
+    try:
+        dt = datetime.strptime(str(utc_str)[:19], '%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=timezone.utc).astimezone().replace(tzinfo=None)
+
 
 def guess_shipper(tracking: str) -> str:
     """Guess the shipper based on tracking number format."""

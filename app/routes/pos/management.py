@@ -1170,6 +1170,52 @@ def daily_items_report():
                            sort=sort)
 
 
+def _sale_adjustments(conn, order):
+    """The order-level adjustments of a completed sale, as recorded at checkout.
+
+    Re-pricing an edited sale must reuse these (not today's settings):
+      discount_pct    - order discount as a fraction of the subtotal, when it
+                        was entered as a percentage (stored in dollars)
+      discount_fixed  - order discount in dollars, when entered as dollars
+      coupon          - coupon dollars redeemed on this order
+      cash_discount   - cash discount dollars from payment_details
+      tax_rate        - the tax rate in force at the time of sale
+    """
+    discount_dollars = float(order['discount_amount'] or 0)
+    subtotal = float(order['subtotal'] or 0)
+    pct = None
+    if discount_dollars and order['discount_type'] == 'percent' and subtotal > 0:
+        pct = discount_dollars / subtotal
+    coupon = conn.execute(
+        'SELECT COALESCE(SUM(discount_applied), 0) AS c FROM pos_coupon_redemptions WHERE order_id = ?',
+        (order['id'],)).fetchone()['c']
+    try:
+        cash_discount = float((json.loads(order['payment_details'] or '{}') or {}).get('cash_discount') or 0)
+    except (ValueError, TypeError, AttributeError):
+        cash_discount = 0.0
+    return {
+        'discount_pct': pct,
+        'discount_fixed': 0.0 if pct is not None else discount_dollars,
+        'coupon': float(coupon or 0),
+        'cash_discount': cash_discount,
+        'tax_rate': float(order['tax_rate'] if order['tax_rate'] is not None else get_tax_rate()),
+    }
+
+
+def _reprice_sale(new_subtotal, adj):
+    """(order_discount, tax, total) for an edited sale; mirrors edit_sale.html's preview."""
+    from app.routes.pos.core import round_money
+    from decimal import Decimal, ROUND_HALF_UP
+    if adj['discount_pct'] is not None:
+        order_discount = round_money(new_subtotal * adj['discount_pct'])
+    else:
+        order_discount = round_money(min(adj['discount_fixed'], new_subtotal))
+    after = max(0.0, new_subtotal - order_discount - min(adj['coupon'], max(0.0, new_subtotal - order_discount)))
+    tax = float((Decimal(str(after)) * Decimal(str(adj['tax_rate']))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+    total = round_money(max(0.0, after + tax - adj['cash_discount']))
+    return order_discount, tax, total
+
+
 @pos_bp.route('/management/edit-sale/<int:order_id>')
 @login_required
 @require_admin
@@ -1191,13 +1237,27 @@ def edit_sale(order_id):
     items = conn.execute('''
         SELECT * FROM pos_order_items WHERE order_id = ?
     ''', (order_id,)).fetchall()
-    
-    tax_rate = get_tax_rate()
-    
+
+    if _sale_has_refunds(conn, order_id):
+        flash("This sale has refunds and can no longer be edited. Use a refund instead.")
+        return redirect(url_for('pos.sales_history'))
+
+    adj = _sale_adjustments(conn, order)
+    from app.utils.helpers import utc_to_local_dt
+    local_dt = utc_to_local_dt(order['created_at'])
+
     return render_template('pos/edit_sale.html',
                            order=order,
                            items=items,
-                           tax_rate=tax_rate * 100)
+                           tax_rate=adj['tax_rate'] * 100,
+                           adjustments=adj,
+                           local_date=local_dt.strftime('%Y-%m-%d') if local_dt else '',
+                           local_time=local_dt.strftime('%H:%M:%S') if local_dt else '')
+
+
+def _sale_has_refunds(conn, order_id):
+    return conn.execute('SELECT 1 FROM pos_refunds WHERE order_id = ? LIMIT 1',
+                        (order_id,)).fetchone() is not None
 
 
 @pos_bp.route('/management/edit-sale/<int:order_id>', methods=['POST'])
@@ -1212,6 +1272,10 @@ def edit_sale_post(order_id):
         flash("Order not found.")
         return redirect(url_for('pos.sales_history'))
     
+    if _sale_has_refunds(conn, order_id):
+        flash("This sale has refunds and can no longer be edited. Use a refund instead.")
+        return redirect(url_for('pos.sales_history'))
+
     old_items = conn.execute('SELECT * FROM pos_order_items WHERE order_id = ?', (order_id,)).fetchall()
     old_items_map = {item['id']: dict(item) for item in old_items}
     
@@ -1227,9 +1291,24 @@ def edit_sale_post(order_id):
     item_skus = request.form.getlist('item_sku')
     deleted_ids = request.form.getlist('deleted_items')
     
-    tax_rate = get_tax_rate()
+    # Validate everything before touching stock or the order
+    try:
+        parsed_items = []
+        for i in range(len(item_ids)):
+            qty = int(item_quantities[i])
+            price = round(float(item_prices[i]), 2)
+            if qty < 1 or price < 0:
+                raise ValueError
+            parsed_items.append((int(item_ids[i]), qty, price))
+    except (ValueError, IndexError):
+        flash("Quantities must be whole numbers of at least 1 and prices cannot be negative. "
+              "Use the remove button to take an item off the sale.")
+        return redirect(url_for('pos.edit_sale', order_id=order_id))
+
+    from app.routes.pos.core import calculate_line_total
+    adj = _sale_adjustments(conn, order)
     changes = []
-    
+
     # 1. Handle deleted items — restore inventory
     for del_id_str in deleted_ids:
         if not del_id_str:
@@ -1252,10 +1331,7 @@ def edit_sale_post(order_id):
     
     # 2. Update remaining items
     new_subtotal = 0
-    for i in range(len(item_ids)):
-        item_id = int(item_ids[i])
-        new_qty = int(item_quantities[i])
-        new_price = round(float(item_prices[i]), 2)
+    for i, (item_id, new_qty, new_price) in enumerate(parsed_items):
         new_name = item_names[i] if i < len(item_names) else ''
         
         if item_id in old_items_map:
@@ -1277,7 +1353,10 @@ def edit_sale_post(order_id):
                     (old_item['inventory_item_id'], qty_diff, reason, current_user.username, order['order_number'])
                 )
             
-            line_total = round(new_qty * new_price, 2)
+            # Keep the line's own discount (it was part of what was charged)
+            line_total = calculate_line_total(new_price, new_qty,
+                                              old_item.get('discount_amount') or 0,
+                                              old_item.get('discount_type'))
             new_subtotal += line_total
             
             conn.execute('''
@@ -1294,36 +1373,28 @@ def edit_sale_post(order_id):
             if new_name and new_name != old_item['name']:
                 changes.append(f"Renamed: {old_item['name']} → {new_name}")
     
-    # 3. Calculate new totals
-    # Apply existing discount
-    discount_amount = 0
-    if order['discount_amount'] and order['discount_type']:
-        if order['discount_type'] == 'percent':
-            discount_amount = new_subtotal * (order['discount_amount'] / 100)
-        else:
-            discount_amount = order['discount_amount']
+    # 3. Re-price with the sale's own discount, coupon, cash discount and
+    # tax rate. (The order discount is stored in dollars even when it was
+    # entered as a percentage; reading it as a percent used to turn $20 off
+    # into 20% off on any edit.)
+    new_subtotal = round(new_subtotal, 2)
+    new_discount, new_tax, new_total = _reprice_sale(new_subtotal, adj)
     
-    discounted_subtotal = max(0, new_subtotal - discount_amount)
-    from app.routes.pos.core import calculate_tax
-    new_tax = calculate_tax(discounted_subtotal)
-    new_total = round(discounted_subtotal + new_tax, 2)
-    
-    # 4. Update date/time if provided
+    # 4. Date/time: the form shows and accepts store-local time; created_at
+    # is stored in UTC like every other timestamp.
+    from app.utils.helpers import local_to_utc_str, utc_to_local_dt
     new_timestamp = order['created_at']
-    if new_date and new_time:
+    if new_date:
+        old_local = utc_to_local_dt(order['created_at'])
+        local_time = new_time or (old_local.strftime('%H:%M:%S') if old_local else '00:00:00')
         try:
-            new_timestamp = f"{new_date} {new_time}"
-            changes.append(f"Date: {order['created_at']} → {new_timestamp}")
-        except Exception:
-            pass
-    elif new_date:
-        # Keep original time
-        try:
-            original_time = order['created_at'].split(' ')[1] if ' ' in str(order['created_at']) else '00:00:00'
-            new_timestamp = f"{new_date} {original_time}"
-            changes.append(f"Date changed to {new_date}")
-        except Exception:
-            pass
+            candidate = local_to_utc_str(f"{new_date} {local_time}")
+            if candidate != str(order['created_at'])[:19]:
+                new_timestamp = candidate
+                old_txt = old_local.strftime('%Y-%m-%d %H:%M:%S') if old_local else order['created_at']
+                changes.append(f"Date: {old_txt} → {new_date} {local_time}")
+        except ValueError:
+            flash("Invalid date or time; the sale date was not changed.")
     
     # 5. Log totals changes
     if abs(new_total - order['total']) > 0.001:
@@ -1331,10 +1402,10 @@ def edit_sale_post(order_id):
     
     # 6. Update order header
     conn.execute('''
-        UPDATE pos_orders 
-        SET subtotal = ?, tax_amount = ?, total = ?, created_at = ?
+        UPDATE pos_orders
+        SET subtotal = ?, discount_amount = ?, tax_amount = ?, total = ?, created_at = ?
         WHERE id = ?
-    ''', (round(new_subtotal, 2), new_tax, new_total, new_timestamp, order_id))
+    ''', (new_subtotal, new_discount, new_tax, new_total, new_timestamp, order_id))
     
     # 7. Audit log
     if changes:

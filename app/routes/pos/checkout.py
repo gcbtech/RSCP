@@ -4,6 +4,7 @@ Payment processing, order finalization, and receipt generation.
 """
 import logging
 import json
+import secrets
 import traceback
 from datetime import datetime
 from flask import request, redirect, url_for, flash, render_template, make_response
@@ -11,8 +12,8 @@ from flask_login import current_user, login_required
 
 from app.routes.pos import pos_bp, PAYMENT_METHODS
 from app.routes.pos.core import (
-    get_cart, clear_cart, get_tax_rate, calculate_tax,
-    generate_order_number, round_money, calculate_percentage
+    get_cart, save_cart, clear_cart, get_tax_rate, calculate_tax,
+    generate_order_number, round_money, calculate_percentage, compute_cart_totals
 )
 from app.services.db import get_db_connection, get_request_db
 
@@ -29,175 +30,171 @@ def checkout():
         flash('Cart is empty.')
         return redirect(url_for('pos.sales'))
     
-    tax_rate = get_tax_rate()
-    subtotal = sum(item.get('line_total', 0) for item in cart['items'])
-    
-    # Apply order-level discount
-    order_discount = 0
-    if cart.get('discount_amount') and cart.get('discount_type'):
-        if cart['discount_type'] == 'percent':
-            order_discount = calculate_percentage(subtotal, cart['discount_amount'])
-        else:
-            order_discount = cart['discount_amount']
-    
-    # Apply coupon discount
-    coupon_discount = 0
-    if cart.get('applied_coupon'):
-        try:
-            coupon_discount = float(cart['applied_coupon'].get('discount', 0))
-        except (ValueError, TypeError):
-            logger.error(f"Invalid coupon discount in session: {cart['applied_coupon']}")
-            cart['applied_coupon'] = None
-            from app.routes.pos.core import save_cart
-            save_cart(cart)
-    
-    discounted_subtotal = max(0, subtotal - order_discount - coupon_discount)
-    tax_amount = calculate_tax(discounted_subtotal)
-    total = discounted_subtotal + tax_amount
-    
-    # Get cash discount settings to show on checkout
+    # Same math as every other screen (compute_cart_totals), so the page,
+    # the customer display and the recorded sale cannot disagree.
+    totals = compute_cart_totals(cart)
+
     from app.routes.pos.core import get_pos_setting
-    cash_discount_enabled = get_pos_setting('CASH_DISCOUNT_ENABLED', 'false') == 'true'
     cash_discount_amount = float(get_pos_setting('CASH_DISCOUNT_AMOUNT', '0') or 0)
     cash_discount_type = get_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
-    
-    # Calculate what the cash discount would be
-    cash_discount_value = 0
-    if cash_discount_enabled and cash_discount_amount > 0:
-        if cash_discount_type == 'percent':
-            cash_discount_value = calculate_percentage(discounted_subtotal, cash_discount_amount)
-        else:
-            cash_discount_value = round_money(min(cash_discount_amount, discounted_subtotal))
-    
+
     return render_template('pos/checkout.html',
                            cart=cart,
-                           subtotal=round(subtotal, 2),
-                           order_discount=round(order_discount, 2),
-                           coupon_discount=round(coupon_discount, 2),
-                           tax_rate=tax_rate * 100,
-                           tax_amount=round(tax_amount, 2),
-                           total=round(total, 2),
+                           subtotal=totals['subtotal'],
+                           order_discount=totals['order_discount'],
+                           coupon_discount=totals['coupon_discount'],
+                           tax_rate=totals['tax_rate_pct'],
+                           tax_amount=totals['tax_amount'],
+                           total=totals['card_total'],
                            payment_methods=PAYMENT_METHODS,
-                           cash_discount_enabled=cash_discount_enabled,
+                           cash_discount_enabled=totals['cash_discount_enabled'],
                            cash_discount_amount=cash_discount_amount,
                            cash_discount_type=cash_discount_type,
-                           cash_discount_value=cash_discount_value)
+                           cash_discount_value=totals['cash_discount_value'],
+                           # One token per rendered checkout: a double-click or a
+                           # retried POST records the sale once.
+                           checkout_token=secrets.token_urlsafe(16))
 
 
 @pos_bp.route('/checkout/process', methods=['POST'])
 @login_required
 def checkout_process():
-    """Process the checkout and create order."""
+    """Record the sale.
+
+    Everything from re-validating the coupon to decrementing stock happens in
+    one write transaction (BEGIN IMMEDIATE), so concurrent registers cannot
+    interleave: order numbers stay unique, a single-use coupon is redeemed
+    once, and a resubmitted form (same checkout_token) is recorded once.
+    """
     cart = get_cart()
-    
+
     if not cart['items']:
         flash('Cart is empty.')
         return redirect(url_for('pos.sales'))
-    
+
     payment_method = request.form.get('payment_method', 'cash')
-    
-    # Calculate totals
-    tax_rate = get_tax_rate()
-    subtotal = sum(item.get('line_total', 0) for item in cart['items'])
-    
-    order_discount = 0
-    if cart.get('discount_amount') and cart.get('discount_type'):
-        if cart['discount_type'] == 'percent':
-            order_discount = calculate_percentage(subtotal, cart['discount_amount'])
-        else:
-            order_discount = cart['discount_amount']
-    
-    # Apply coupon discount
-    coupon_discount = 0
-    if cart.get('applied_coupon'):
-        try:
-            coupon_discount = float(cart['applied_coupon'].get('discount', 0))
-        except (ValueError, TypeError):
-            # If invalid here, just ignore it to allow checkout to proceed
-            coupon_discount = 0
-            
-    discounted_subtotal = max(0, subtotal - order_discount - coupon_discount)
-    tax_amount = calculate_tax(discounted_subtotal)
-    total = round(discounted_subtotal + tax_amount, 2)
-    
-    # Apply cash discount if enabled and payment is cash
-    cash_discount_applied = 0
-    from app.routes.pos.core import get_pos_setting
-    if payment_method == 'cash':
-        cash_discount_enabled = get_pos_setting('CASH_DISCOUNT_ENABLED', 'false') == 'true'
-        if cash_discount_enabled:
-            cash_discount_amount = float(get_pos_setting('CASH_DISCOUNT_AMOUNT', '0') or 0)
-            cash_discount_type = get_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
-            
-            if cash_discount_amount > 0:
-                if cash_discount_type == 'percent':
-                    cash_discount_applied = calculate_percentage(discounted_subtotal, cash_discount_amount)
-                else:
-                    cash_discount_applied = round_money(min(cash_discount_amount, discounted_subtotal))
-                
-                total = round(total - cash_discount_applied, 2)
-    
-    # Build payment details
-    payment_details = {}
-    
-    if payment_method == 'cash':
-        tendered = float(request.form.get('tendered', total))
-        change = round(tendered - total, 2)
-        payment_details = {
-            'tendered': tendered, 
-            'change': max(0, change),
-            'cash_discount': cash_discount_applied
-        }
-    elif payment_method == 'split':
-        # Parse split payment details
-        cash_amount = float(request.form.get('cash_amount', 0))
-        card_amounts = request.form.getlist('card_amount')
-        card_amounts = [float(a) for a in card_amounts if a]
-        
-        # Apply cash discount to the cash portion of split payment
-        split_cash_discount = 0
-        cash_discount_enabled = get_pos_setting('CASH_DISCOUNT_ENABLED', 'false') == 'true'
-        if cash_discount_enabled and cash_amount > 0:
-            cash_discount_amount = float(get_pos_setting('CASH_DISCOUNT_AMOUNT', '0') or 0)
-            cash_discount_type = get_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
-            
-            if cash_discount_amount > 0:
-                if cash_discount_type == 'percent':
-                    # Apply percentage discount to cash portion only
-                    split_cash_discount = calculate_percentage(cash_amount, cash_discount_amount)
-                else:
-                    # Apply fixed discount proportionally to cash portion
-                    cash_proportion = cash_amount / total if total > 0 else 0
-                    split_cash_discount = round_money(min(cash_discount_amount * cash_proportion, cash_amount))
-                
-                total = round(total - split_cash_discount, 2)
-        
-        payment_details = {
-            'cash': cash_amount,
-            'cards': card_amounts,
-            'total_tendered': cash_amount + sum(card_amounts),
-            'cash_discount': split_cash_discount
-        }
-    
-    # Generate order number
-    order_number = generate_order_number()
-    
+    if payment_method not in PAYMENT_METHODS:
+        flash('Unknown payment method.')
+        return redirect(url_for('pos.checkout'))
+    checkout_token = (request.form.get('checkout_token') or '').strip() or None
+
     conn = get_db_connection()
+    conn.isolation_level = None
     try:
+        conn.execute('BEGIN IMMEDIATE')
+
+        # Already recorded? (double-click, or a retry after a lost response)
+        if checkout_token:
+            existing = conn.execute('SELECT order_number FROM pos_orders WHERE checkout_token = ?',
+                                    (checkout_token,)).fetchone()
+            if existing:
+                conn.execute('ROLLBACK')
+                flash(f"Order {existing['order_number']} was already completed.")
+                return redirect(url_for('pos.receipt', order_number=existing['order_number']))
+
+        # Re-validate the coupon against the cart as it is NOW. The discount
+        # stored on the cart was computed when the coupon was applied; items
+        # may have been removed since, and limits must be checked under the lock.
+        coupon = cart.get('applied_coupon')
+        if coupon:
+            from app.routes.pos.coupons import evaluate_coupon
+            subtotal_now = sum(item.get('line_total', 0) for item in cart['items'])
+            result = evaluate_coupon(coupon.get('code'), cart['items'], subtotal_now, conn, cart=cart)
+            if not result.get('valid'):
+                conn.execute('ROLLBACK')
+                cart['applied_coupon'] = None
+                save_cart(cart)
+                flash(f"Coupon removed: {result.get('error', 'no longer valid')} Please review the total.")
+                return redirect(url_for('pos.checkout'))
+            coupon['discount'] = result['discount_amount']
+
+        totals = compute_cart_totals(cart)
+        subtotal = totals['subtotal']
+        order_discount = totals['order_discount']
+        coupon_discount = totals['coupon_discount']
+        tax_amount = totals['tax_amount']
+        tax_rate = get_tax_rate()
+        total = totals['card_total']
+
+        # The cashier quoted the total shown on the checkout page. If the cart
+        # changed since (e.g. a paired scanner added an item, or the coupon
+        # was recomputed), stop rather than record a different amount.
+        expected = request.form.get('expected_total')
+        if expected:
+            try:
+                if abs(float(expected) - total) > 0.005:
+                    conn.execute('ROLLBACK')
+                    flash('The cart changed since this checkout page opened. Please review the new total.')
+                    return redirect(url_for('pos.checkout'))
+            except ValueError:
+                pass
+
+        payment_details = {}
+        if payment_method == 'cash':
+            cash_discount_applied = totals['cash_discount_value'] if totals['cash_discount_enabled'] else 0
+            total = round_money(total - cash_discount_applied)
+            tendered = _money_field('tendered', default=total)
+            if tendered is None or tendered < total - 0.01:
+                conn.execute('ROLLBACK')
+                flash(f'Cash tendered must be at least ${total:.2f}.')
+                return redirect(url_for('pos.checkout'))
+            payment_details = {
+                'tendered': tendered,
+                'change': round_money(max(0, tendered - total)),
+                'cash_discount': cash_discount_applied,
+            }
+        elif payment_method == 'split':
+            cash_amount = _money_field('cash_amount', default=0)
+            card_amounts = [_money_value(a) for a in request.form.getlist('card_amount') if a]
+            if cash_amount is None or any(a is None for a in card_amounts):
+                conn.execute('ROLLBACK')
+                flash('Invalid split payment amounts.')
+                return redirect(url_for('pos.checkout'))
+
+            # Cash discount applies to the cash portion only
+            split_cash_discount = 0
+            if totals['cash_discount_enabled'] and cash_amount > 0:
+                from app.routes.pos.core import get_pos_setting
+                cd_amount = float(get_pos_setting('CASH_DISCOUNT_AMOUNT', '0') or 0)
+                cd_type = get_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
+                if cd_amount > 0:
+                    if cd_type == 'percent':
+                        split_cash_discount = calculate_percentage(cash_amount, cd_amount)
+                    else:
+                        cash_proportion = cash_amount / total if total > 0 else 0
+                        split_cash_discount = round_money(min(cd_amount * cash_proportion, cash_amount))
+                    total = round_money(total - split_cash_discount)
+
+            total_tendered = round_money(cash_amount + sum(card_amounts))
+            if total_tendered < total - 0.01:
+                conn.execute('ROLLBACK')
+                flash(f'Split payments add up to ${total_tendered:.2f}, less than the ${total:.2f} total.')
+                return redirect(url_for('pos.checkout'))
+            payment_details = {
+                'cash': cash_amount,
+                'cards': card_amounts,
+                'total_tendered': total_tendered,
+                'change': round_money(min(cash_amount, max(0, total_tendered - total))),
+                'cash_discount': split_cash_discount,
+            }
+
+        order_number = generate_order_number(conn=conn)
+
         # Create order
         cursor = conn.execute('''
             INSERT INTO pos_orders (
                 order_number, status, subtotal, tax_rate, tax_amount,
                 discount_amount, discount_type, discount_reason, total,
-                payment_method, payment_details, operator_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                payment_method, payment_details, operator_id, checkout_token
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             order_number, 'completed', round(subtotal, 2), tax_rate, round(tax_amount, 2),
-            round(order_discount, 2), cart.get('discount_type'), cart.get('discount_reason', ''),
-            total, payment_method, json.dumps(payment_details), current_user.id
+            round(order_discount, 2), cart.get('discount_type') if order_discount else None,
+            cart.get('discount_reason', ''),
+            total, payment_method, json.dumps(payment_details), current_user.id, checkout_token
         ))
         order_id = cursor.lastrowid
-        
+
         # Create order items and decrement inventory
         for item in cart['items']:
             conn.execute('''
@@ -253,11 +250,15 @@ def checkout_process():
                     ) VALUES (?, ?, ?, ?, ?)
                 ''', (coupon_id, order_id, coupon_code, round(coupon_discount, 2), current_user.id))
                 
-                conn.execute('''
-                    UPDATE pos_coupons 
-                    SET current_uses = COALESCE(current_uses, 0) + 1 
+                used = conn.execute('''
+                    UPDATE pos_coupons
+                    SET current_uses = COALESCE(current_uses, 0) + 1
                     WHERE id = ?
-                ''', (coupon_id,))
+                      AND (max_uses IS NULL OR max_uses = '' OR CAST(max_uses AS INTEGER) <= 0
+                           OR COALESCE(current_uses, 0) < CAST(max_uses AS INTEGER))
+                ''', (coupon_id,)).rowcount
+                if not used:
+                    raise ValueError('Coupon has reached its maximum number of uses.')
                 logger.info(f"Recorded redemption of coupon ID {coupon_id} for order {order_number}")
         
         conn.commit()
@@ -288,13 +289,32 @@ def checkout_process():
             return redirect(url_for('pos.receipt', order_number=order_number, **redirect_params))
         
     except Exception as e:
-        conn.rollback()
+        if conn.in_transaction:
+            conn.execute('ROLLBACK')
         error_details = traceback.format_exc()
         logger.error(f"Checkout error: {e}\n{error_details}")
         flash(f'Error processing order: {str(e)}')
         return redirect(url_for('pos.checkout'))
     finally:
         conn.close()
+
+
+def _money_value(raw):
+    """Parse a money form value; None if it is not a finite, non-negative number."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value != value or value < 0 or value == float('inf'):
+        return None
+    return round_money(value)
+
+
+def _money_field(name, default=None):
+    raw = request.form.get(name)
+    if raw is None or str(raw).strip() == '':
+        return default
+    return _money_value(raw)
 
 
 def _prepare_receipt_data(conn, order):
@@ -491,35 +511,55 @@ def delete_order(order_number):
         
         order_id = order['id']
         
-        # If restoring inventory, get the order items and restore quantities
+        # If restoring inventory, put back what actually left the shelf: the
+        # units sold minus any a refund already restocked. Match on the
+        # inventory item id (the order line's sku is whatever code was
+        # scanned, often a UPC, so matching on it silently restored nothing).
         if restore_inventory:
             order_items = conn.execute('''
-                SELECT sku, quantity FROM pos_order_items WHERE order_id = ?
+                SELECT oi.inventory_item_id, oi.quantity,
+                       COALESCE((SELECT SUM(ri.quantity) FROM pos_refund_items ri
+                                 WHERE ri.order_item_id = oi.id AND ri.restock_action = 'restock'), 0)
+                           AS restocked
+                FROM pos_order_items oi WHERE oi.order_id = ?
             ''', (order_id,)).fetchall()
-            
+
             restored_count = 0
             for item in order_items:
-                if item['sku']:
-                    # Add quantity back to inventory
+                units = item['quantity'] - item['restocked']
+                if item['inventory_item_id'] and units > 0:
+                    conn.execute('UPDATE inventory_items SET quantity = quantity + ? WHERE id = ?',
+                                 (units, item['inventory_item_id']))
                     conn.execute('''
-                        UPDATE inventory_items 
-                        SET quantity = quantity + ? 
-                        WHERE sku = ?
-                    ''', (item['quantity'], item['sku']))
-                    restored_count += item['quantity']
-            
+                        INSERT INTO inventory_transactions
+                            (inventory_item_id, quantity_change, reason, user_id, source_tracking)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (item['inventory_item_id'], units, 'Order Deleted', str(current_user.id), order_number))
+                    restored_count += units
+
             logger = logging.getLogger(__name__)
             logger.info(f"Restored {restored_count} units to inventory for order {order_number}")
-        
-        # Delete associated items
-        conn.execute('DELETE FROM pos_order_items WHERE order_id = ?', (order_id,))
-        
-        # Delete associated refunds
+
+        # Delete everything that hangs off the order (foreign keys are not
+        # enforced, so nothing cascades on its own)
+        conn.execute('''DELETE FROM pos_refund_items
+                        WHERE refund_id IN (SELECT id FROM pos_refunds WHERE order_id = ?)''', (order_id,))
         conn.execute('DELETE FROM pos_refunds WHERE order_id = ?', (order_id,))
-        
-        # Delete the order
+        for r in conn.execute('SELECT coupon_id FROM pos_coupon_redemptions WHERE order_id = ?',
+                              (order_id,)).fetchall():
+            conn.execute('''UPDATE pos_coupons SET current_uses = MAX(COALESCE(current_uses, 0) - 1, 0)
+                            WHERE id = ?''', (r['coupon_id'],))
+        conn.execute('DELETE FROM pos_coupon_redemptions WHERE order_id = ?', (order_id,))
+        conn.execute('DELETE FROM pos_order_items WHERE order_id = ?', (order_id,))
         conn.execute('DELETE FROM pos_orders WHERE id = ?', (order_id,))
-        
+
+        # Audit trail: a hard delete otherwise leaves no record at all
+        conn.execute('''
+            INSERT INTO pos_audit_log (action, user_id, user_name, target_type, target_id, details, ip_address)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', ('delete_order', current_user.id, current_user.username, 'order', order_number,
+              json.dumps({'restore_inventory': restore_inventory}), request.remote_addr))
+
         conn.commit()
         
         logger = logging.getLogger(__name__)
