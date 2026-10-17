@@ -16,10 +16,6 @@ logger = logging.getLogger(__name__)
 @admin_bp.route('/logs')
 def admin_logs():
     """View error logs with filtering and pagination."""
-    error = require_admin()
-    if error:
-        return error
-    
     # Filters
     level_filter = request.args.get('level', '')
     source_filter = request.args.get('source', '')
@@ -71,10 +67,6 @@ def admin_logs():
 @admin_bp.route('/logs/clear', methods=['POST'])
 def clear_logs():
     """Clear old error logs (older than 7 days)."""
-    error = require_admin()
-    if error:
-        return error
-    
     conn = get_db_connection()
     try:
         result = conn.execute(
@@ -98,10 +90,6 @@ def clear_logs():
 @admin_bp.route('/logs/export')
 def export_logs():
     """Export error logs as CSV."""
-    error = require_admin()
-    if error:
-        return error
-    
     conn = get_db_connection()
     logs = conn.execute("SELECT * FROM error_logs ORDER BY timestamp DESC").fetchall()
     conn.close()

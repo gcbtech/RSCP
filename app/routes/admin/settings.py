@@ -4,11 +4,7 @@ from app.services.data_manager import save_config
 
 @admin_bp.route('/settings', methods=['GET', 'POST'])
 def settings():
-    # 1. Auth Check
-    auth_err = require_admin()
-    if auth_err: return auth_err
-
-    # 2. Handle Save
+    # Handle Save
     if request.method == 'POST':
         try:
             # SSO Settings
@@ -73,10 +69,6 @@ def save_network_settings():
 
     Takes effect after a restart: the proxy middleware is built at startup.
     """
-    auth_err = require_admin()
-    if auth_err:
-        return auth_err
-
     import ipaddress
     raw = request.form.get('trusted_proxies', '')
     entries = [e.strip() for e in raw.replace('\n', ',').split(',') if e.strip()]

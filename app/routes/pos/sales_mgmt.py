@@ -12,16 +12,12 @@ from app.services.db import get_db_connection
 
 logger = logging.getLogger(__name__)
 
-from app.routes.pos.coupons import require_pos_admin
+from app.utils.permissions import require_permission
 
 @pos_bp.route('/sales-manager')
-@login_required
+@require_permission('pos.manage')
 def sales_manager():
     """Sales management dashboard."""
-    if not require_pos_admin():
-        flash('Access denied. POS Admin required.')
-        return redirect(url_for('pos.index'))
-        
     conn = get_db_connection()
     try:
         # Get active sales
@@ -46,13 +42,9 @@ def sales_manager():
         conn.close()
 
 @pos_bp.route('/sales-manager/add', methods=['POST'])
-@login_required
+@require_permission('pos.manage')
 def add_sale():
     """Enable a sale for an item."""
-    if not require_pos_admin():
-        flash('Access denied. POS Admin required.')
-        return redirect(url_for('pos.index'))
-        
     sku = request.form.get('sku', '').strip()
     price = request.form.get('sale_price')
     start = request.form.get('sale_start')
@@ -88,13 +80,9 @@ def add_sale():
     return redirect(url_for('pos.sales_manager'))
 
 @pos_bp.route('/sales-manager/stop/<int:item_id>', methods=['POST'])
-@login_required
+@require_permission('pos.manage')
 def stop_sale(item_id):
     """Stop a sale for an item."""
-    if not require_pos_admin():
-        flash('Access denied. POS Admin required.')
-        return redirect(url_for('pos.index'))
-        
     conn = get_db_connection()
     try:
         conn.execute('''

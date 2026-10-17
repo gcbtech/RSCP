@@ -238,36 +238,7 @@ def get_inventory_stats():
         conn.close()
 
 
-@inventory_bp.before_request
-def check_inventory_enabled():
-    """Redirect if inventory module is disabled or user lacks role."""
-    from flask_login import current_user
-    
-    if request.endpoint and 'api' in request.endpoint:
-        return
-    
-    # Enforce authentication for all inventory routes (except API above if needed, but really API should be auth'd too)
-    # The 'api' check above might be risky if APIs are public. 
-    # Let's remove the api check skip if those APIs expose sensitive data.
-    # But for now, let's just Enforce Login.
-    
-    if not current_user.is_authenticated:
-        return redirect(url_for('auth.login', next=request.url))
-
-    if not is_inventory_enabled():
-        flash("Inventory module is not enabled.")
-        return redirect(url_for('main.index'))
-    
-    # Check user role (admins bypass role check)
-    if not current_user.is_admin:
-        from app.utils.permissions import has_permission
-        if not has_permission(current_user, 'inventory.view'):
-            flash("You don't have access to the Inventory module.")
-            return redirect(url_for('main.index'))
-
-
 @inventory_bp.route('/')
-@login_required
 def overview():
     """Inventory analytics overview page."""
     stats = get_inventory_stats()
@@ -352,7 +323,6 @@ ATTENTION_SNOOZE_DAYS = 5
 
 
 @inventory_bp.route('/attention/<int:item_id>/snooze', methods=['POST'])
-@login_required
 @require_permission('inventory.manage')
 def snooze_attention_item(item_id):
     """Hide an item from 'Items Needing Attention' for ATTENTION_SNOOZE_DAYS days."""
@@ -373,14 +343,12 @@ def snooze_attention_item(item_id):
 
 
 @inventory_bp.route('/api/overview')
-@login_required
 def overview_api():
     """API to get current stats for auto-refresh."""
     return jsonify(get_inventory_stats())
 
 
 @inventory_bp.route('/generate-sku')
-@login_required
 def generate_sku_api():
     """API endpoint to generate a new SKU for a given category."""
     category = request.args.get('category', 'ATO')
@@ -393,7 +361,6 @@ def generate_sku_api():
 
 
 @inventory_bp.route('/check-sku-exists')
-@login_required
 def check_sku_exists():
     """API endpoint to check if a SKU already exists."""
     sku = request.args.get('sku', '').strip()
@@ -468,7 +435,7 @@ def validate_url_safe(url):
 
 
 @inventory_bp.route('/fetch-image-from-url', methods=['POST'])
-@login_required
+@require_permission('inventory.manage')
 def fetch_image_from_url():
     """API endpoint to fetch product image from eBay/Amazon URL."""
     import re

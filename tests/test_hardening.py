@@ -158,6 +158,6 @@ def test_template_config_strips_secrets():
 # --- federation is gone -----------------------------------------------------
 
 def test_federation_endpoints_removed(fresh_client):
-    assert fresh_client.get('/api/federation/ping').status_code in (302, 404)
+    assert fresh_client.get('/api/federation/ping').status_code in (302, 401, 404)
     login(fresh_client, 1)
     assert fresh_client.get('/api/federation/ping').status_code == 404

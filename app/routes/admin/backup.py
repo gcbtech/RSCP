@@ -21,10 +21,6 @@ logger = logging.getLogger(__name__)
 @admin_bp.route('/export_backup')
 def export_backup():
     """Export system backup as ZIP file."""
-    from flask_login import current_user
-    if not current_user.is_authenticated or not current_user.is_admin:
-        return redirect(url_for('auth.login'))
-    
     import tempfile
     import sqlite3
     from app.services.db import get_db_connection
@@ -75,10 +71,6 @@ def export_backup():
 @admin_bp.route('/import_backup', methods=['POST'])
 def import_backup():
     """Import system backup from ZIP file."""
-    error = require_admin()
-    if error:
-        return error
-    
     file = request.files.get('backup_file')
     force_restore = request.form.get('force_restore') == 'true'
     
@@ -236,9 +228,6 @@ def _atomic_replace(target, data):
 @admin_bp.route('/toggle_trim', methods=['POST'])
 def toggle_trim():
     """Toggle auto-trim setting."""
-    error = require_admin()
-    if error:
-        return error
     new_state = request.form.get('trim_state') == 'on'
     save_config_value('AUTO_TRIM', new_state)
     return redirect(url_for('admin.admin_panel'))
@@ -247,9 +236,6 @@ def toggle_trim():
 @admin_bp.route('/toggle_inventory', methods=['POST'])
 def toggle_inventory():
     """Toggle inventory module on/off."""
-    error = require_admin()
-    if error:
-        return error
     new_state = request.form.get('enabled') == 'on'
     save_config_value('INVENTORY_ENABLED', new_state)
     flash(f"Inventory module {'enabled' if new_state else 'disabled'}.")
@@ -259,10 +245,6 @@ def toggle_inventory():
 @admin_bp.route('/save_margin_settings', methods=['POST'])
 def save_margin_settings():
     """Save preferred margin settings for inventory pricing."""
-    error = require_admin()
-    if error:
-        return error
-    
     enabled = request.form.get('margin_enabled') == 'on'
     try:
         percent = float(request.form.get('margin_percent', 20))
@@ -285,10 +267,6 @@ def save_margin_settings():
 @admin_bp.route('/save_inventory_general', methods=['POST'])
 def save_inventory_general():
     """Save general inventory settings."""
-    error = require_admin()
-    if error:
-        return error
-    
     auto_copy = request.form.get('auto_copy_sku') == 'on'
     quick_add = request.form.get('quick_add_enabled') == 'on'
     track_dates = request.form.get('track_first_stock_date') == 'on'
@@ -304,9 +282,6 @@ def save_inventory_general():
 @admin_bp.route('/toggle_pos', methods=['POST'])
 def toggle_pos():
     """Toggle POS module on/off."""
-    error = require_admin()
-    if error:
-        return error
     new_state = request.form.get('enabled') == 'on'
     save_config_value('POS_ENABLED', new_state)
     flash(f"POS module {'enabled' if new_state else 'disabled'}.")
@@ -316,9 +291,6 @@ def toggle_pos():
 @admin_bp.route('/toggle_timeclock', methods=['POST'])
 def toggle_timeclock():
     """Toggle Timeclock module on/off."""
-    error = require_admin()
-    if error:
-        return error
     enabled = request.form.get('enabled') == 'on'
     save_config_value('TIMECLOCK_ENABLED', enabled)
     flash(f"Timeclock module {'enabled' if enabled else 'disabled'}.")
@@ -326,9 +298,6 @@ def toggle_timeclock():
 
 @admin_bp.route('/update_timeclock_settings', methods=['POST'])
 def update_timeclock_settings():
-    error = require_admin()
-    if error:
-        return error
     try:
         grace = int(request.form.get('grace_period', 15))
         save_config_value('TIMECLOCK_GRACE_PERIOD', grace)
@@ -341,10 +310,6 @@ def update_timeclock_settings():
 @admin_bp.route('/save_location_labels', methods=['POST'])
 def save_location_labels():
     """Save custom inventory location labels."""
-    error = require_admin()
-    if error:
-        return error
-    
     location_labels = {
         'area': request.form.get('location_label_1', 'Area').strip() or 'Area',
         'aisle': request.form.get('location_label_2', 'Aisle').strip() or 'Aisle',
@@ -360,10 +325,6 @@ def save_location_labels():
 @admin_bp.route('/save_item_addons', methods=['POST'])
 def save_item_addons():
     """Save item addon settings (warranty/disclaimer text)."""
-    error = require_admin()
-    if error:
-        return error
-    
     # Addon 1
     save_config_value('ITEM_ADDON_1_ENABLED', request.form.get('addon_1_enabled') == 'on')
     save_config_value('ITEM_ADDON_1_LABEL', request.form.get('addon_1_label', '').strip())
@@ -381,10 +342,6 @@ def save_item_addons():
 @admin_bp.route('/save_location_options', methods=['POST'])
 def save_location_options():
     """Save location dropdown options for each field."""
-    error = require_admin()
-    if error:
-        return error
-    
     # Parse comma-separated values into arrays
     def parse_options(raw):
         if not raw:
@@ -410,10 +367,6 @@ def save_location_options():
 @admin_bp.route('/save_pos_approval_settings', methods=['POST'])
 def save_pos_approval_settings():
     """Save POS manager approval settings."""
-    error = require_admin()
-    if error:
-        return error
-    
     try:
         max_discount_percent = float(request.form.get('max_discount_percent', 10))
     except ValueError:
@@ -437,9 +390,6 @@ def save_pos_approval_settings():
 @admin_bp.route('/toggle_date_format', methods=['POST'])
 def toggle_date_format():
     """Toggle between US and UK date formats."""
-    error = require_admin()
-    if error:
-        return error
     c = load_config() or {}
     current = c.get('DATE_FORMAT', 'US')
     new_fmt = 'UK' if current == 'US' else 'US'
@@ -450,10 +400,6 @@ def toggle_date_format():
 @admin_bp.route('/save_notifications', methods=['POST'])
 def save_notifications():
     """Save webhook notification settings for both Receiving and Inventory."""
-    error = require_admin()
-    if error:
-        return error
-    
     from app.utils.helpers import obscure_string
     key = current_app.secret_key
     
@@ -482,10 +428,6 @@ def save_notifications():
 @admin_bp.route('/save_inapp_notifications', methods=['POST'])
 def save_inapp_notifications():
     """Save in-app notification toggle settings."""
-    error = require_admin()
-    if error:
-        return error
-    
     # Get form values
     low_stock = request.form.get('notify_low_stock') == 'on'
     oos = request.form.get('notify_oos') == 'on'
@@ -507,10 +449,6 @@ def save_inapp_notifications():
 @admin_bp.route('/save_session_timeout', methods=['POST'])
 def save_session_timeout():
     """Save session timeout settings."""
-    error = require_admin()
-    if error:
-        return error
-    
     enabled = request.form.get('timeout_enabled') == 'on'
     minutes = int(request.form.get('timeout_minutes', 30))
     
@@ -528,10 +466,6 @@ def save_session_timeout():
 @admin_bp.route('/save_auto_confirm', methods=['POST'])
 def save_auto_confirm():
     """Save auto-confirm import setting."""
-    error = require_admin()
-    if error:
-        return jsonify({"error": "Unauthorized"}), 403
-    
     try:
         data = request.get_json() or {}
         enabled = data.get('enabled', False)

@@ -834,6 +834,54 @@ def _m5_checkout_token(conn):
                  'ON pos_orders(checkout_token) WHERE checkout_token IS NOT NULL')
 
 
+def _m9_unify_admin_roles(conn):
+    """One permission model: admin == the super_admin role.
+
+    Every user with is_admin=1 gets super_admin; roles JSON is normalized
+    (lower-case, known roles only, de-duplicated, canonical order); legacy
+    'user' (SSO auto-provisioning) becomes 'operator'; an account left with
+    no known role gets 'operator' (least privilege); is_admin is rewritten as
+    a mirror of super_admin. The role list is frozen here on purpose, so this
+    step keeps meaning the same thing if the live permission map changes.
+    """
+    import json
+    known = ('super_admin', 'inventory_admin', 'pos_admin', 'receiving_admin',
+             'timeclock_admin', 'operator')
+    aliases = {'user': 'operator'}
+
+    def flag(value):
+        if isinstance(value, str):
+            return value.strip().lower() in ('1', 'true', 't', 'yes')
+        return bool(value)
+
+    for uid, is_admin, raw in conn.execute('SELECT id, is_admin, roles FROM users').fetchall():
+        try:
+            parsed = json.loads(raw) if raw else []
+        except (ValueError, TypeError):
+            parsed = []
+        if isinstance(parsed, str):
+            parsed = [parsed]
+        if not isinstance(parsed, list):
+            parsed = []
+        found = set()
+        for role in parsed:
+            if isinstance(role, str):
+                role = role.strip().lower()
+                role = aliases.get(role, role)
+                if role in known:
+                    found.add(role)
+        if flag(is_admin):
+            found.add('super_admin')
+        if not found:
+            found.add('operator')
+        roles = [r for r in known if r in found]
+        new_raw = json.dumps(roles)
+        new_admin = 1 if 'super_admin' in roles else 0
+        if new_raw != raw or new_admin != is_admin:
+            conn.execute('UPDATE users SET roles = ?, is_admin = ? WHERE id = ?',
+                         (new_raw, new_admin, uid))
+
+
 def _add_column_in_txn(conn, table, column, column_def):
     cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
     if column not in cols:
@@ -846,6 +894,7 @@ SCHEMA_MIGRATIONS = [
     (3, 'hot-path indexes', _m3_hot_path_indexes),
     (4, 'rate_events table', _m4_rate_events),
     (5, 'pos_orders.checkout_token', _m5_checkout_token),
+    (9, 'admin flag folded into super_admin role', _m9_unify_admin_roles),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 

@@ -10,24 +10,18 @@ def load_users():
     import json
     conn = get_db_connection()
     try:
+        from app.utils.permissions import normalize_roles
         rows = conn.execute("SELECT * FROM users").fetchall()
         users = {}
         for r in rows:
-            # Parse roles from JSON (handle missing column gracefully)
-            roles = []
-            try:
-                roles_str = r['roles'] if 'roles' in r.keys() else None
-                if roles_str:
-                    roles = json.loads(roles_str)
-            except Exception as e:
-                logger.warning(f"Failed to parse roles for user {r['username']}: {e}")
-                roles = []
-            
+            roles = normalize_roles(r['roles'] if 'roles' in r.keys() else None)
             users[r['username']] = {
                 "pin": r['password_hash'], # Legacy code might expect 'pin' key
                 "password_hash": r['password_hash'],
                 "pin_hash": r['pin_hash'] if 'pin_hash' in r.keys() else None,
-                "is_admin": bool(r['is_admin']),
+                # Derived from roles; the users.is_admin column is only a
+                # mirror kept for rollback to pre-3.0 code.
+                "is_admin": 'super_admin' in roles,
                 "roles": roles,
                 "badge_id": r['badge_id'] if 'badge_id' in r.keys() else ''
             }
@@ -79,12 +73,23 @@ def create_first_admin(username, password_hash):
         conn.close()
 
 
+def _roles_with_admin(roles, is_admin):
+    """`roles` with super_admin added or removed; the is_admin column mirrors it."""
+    import json
+    from app.utils.permissions import normalize_roles
+    roles = [r for r in normalize_roles(roles) if r != 'super_admin']
+    if is_admin:
+        roles.append('super_admin')
+    return json.dumps(normalize_roles(roles)), 1 if is_admin else 0
+
+
 def create_user(username, password_hash, is_admin=False):
-    """Legacy function used by main.py setup wizard."""
+    """Create a staff account (operator), or an administrator (super_admin)."""
+    roles_json, admin_flag = _roles_with_admin(None, is_admin)
     conn = get_db_connection()
     try:
-        conn.execute("INSERT INTO users (username, password_hash, is_admin) VALUES (?, ?, ?)", 
-                    (username, password_hash, is_admin))
+        conn.execute("INSERT INTO users (username, password_hash, is_admin, roles) VALUES (?, ?, ?, ?)",
+                    (username, password_hash, admin_flag, roles_json))
         conn.commit()
     except Exception as e:
         logger.error(f"Failed to create user '{username}': {e}")
@@ -114,10 +119,15 @@ def update_user_password(username, password_hash):
         conn.close()
 
 def update_user_admin_status(username, is_admin):
-    """Legacy function used by admin.py."""
+    """Grant or revoke the super_admin role (and mirror it into is_admin)."""
     conn = get_db_connection()
     try:
-        conn.execute("UPDATE users SET is_admin = ? WHERE username = ?", (is_admin, username))
+        row = conn.execute("SELECT roles FROM users WHERE username = ?", (username,)).fetchone()
+        if not row:
+            return
+        roles_json, admin_flag = _roles_with_admin(row['roles'], is_admin)
+        conn.execute("UPDATE users SET roles = ?, is_admin = ? WHERE username = ?",
+                     (roles_json, admin_flag, username))
         conn.commit()
     except Exception as e:
         logger.error(f"Failed to update admin status for user '{username}': {e}")
@@ -126,18 +136,25 @@ def update_user_admin_status(username, is_admin):
 # -------------------------------------------------------
 
 class User(UserMixin):
-    def __init__(self, id, username, is_admin=False, roles=None, email=None, auth_provider=None):
+    def __init__(self, id, username, is_admin=None, roles=None, email=None, auth_provider=None):
+        # `is_admin` is accepted for call compatibility but ignored: admin
+        # status is derived from roles (super_admin), never stored apart.
+        from app.utils.permissions import normalize_roles
         self.id = str(id)
         self.username = username
-        self.is_admin = bool(is_admin)
-        self._roles = roles or []
+        self._roles = normalize_roles(roles)
         self.email = email
         self.auth_provider = auth_provider
 
     @property
     def roles(self):
-        return self._roles
-    
+        return list(self._roles)
+
+    @property
+    def is_admin(self):
+        """Read-only: True for the super_admin role."""
+        return 'super_admin' in self._roles
+
     def has_role(self, role):
         """Check if user has a specific role. Admins have all roles."""
         if self.is_admin:
@@ -154,20 +171,13 @@ class User(UserMixin):
         if not user:
             return None
         
-        # Parse roles
-        roles = []
-        try:
-            if user['roles']:
-                roles = json.loads(user['roles'])
-        except Exception as e:
-            logger.warning(f"Failed to parse roles for user ID {user_id}: {e}")
-            roles = []
-        
+        roles = user['roles'] if 'roles' in user.keys() else None  # normalized by User()
+
         # Safely get new columns (might handle migration lag)
         email = user['email'] if 'email' in user.keys() else None
         auth_provider = user['auth_provider'] if 'auth_provider' in user.keys() else None
         
-        return User(user['id'], user['username'], user['is_admin'], roles, email, auth_provider)
+        return User(user['id'], user['username'], roles=roles, email=email, auth_provider=auth_provider)
 
     @staticmethod
     def get_by_email(email):
@@ -207,7 +217,7 @@ class User(UserMixin):
             
             conn.execute("""
                 INSERT INTO users (username, password_hash, is_admin, roles, email, auth_provider) 
-                VALUES (?, ?, 0, '["user"]', ?, ?)
+                VALUES (?, ?, 0, '["operator"]', ?, ?)
             """, (username, pwd_hash, email, provider))
             conn.commit()
             

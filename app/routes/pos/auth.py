@@ -12,6 +12,7 @@ from werkzeug.security import check_password_hash
 from app.routes.pos import pos_bp
 from app.services.db import get_db_connection, get_request_db
 from app.services.auth import load_users, User
+from app.utils.permissions import has_permission
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,7 @@ def pos_login():
                 user_data = users.get(username)
                 
                 if user_data and check_password_hash(user_data['password_hash'], password):
-                    user = User(username, user_data)
+                    user = User.get_by_username(username)
                     login_user(user)
                     session['login_time'] = time.time()
                     logger.info(f"POS password login: {username}")
@@ -111,19 +112,10 @@ def authenticate_by_badge(badge_id):
     """Authenticate user by badge ID."""
     try:
         conn = get_request_db()
-        result = conn.execute('''
-            SELECT username, password_hash, is_admin, pin_hash, badge_id
-            FROM users WHERE badge_id = ?
-        ''', (badge_id,)).fetchone()
-        
+        result = conn.execute('SELECT username FROM users WHERE badge_id = ?',
+                              (badge_id,)).fetchone()
         if result:
-            user_data = {
-                'password_hash': result['password_hash'],
-                'is_admin': result['is_admin'],
-                'pin_hash': result['pin_hash'],
-                'badge_id': result['badge_id']
-            }
-            return User(result['username'], user_data)
+            return User.get_by_username(result['username'])
     except Exception as e:
         logger.error(f"Badge auth error: {e}")
     
@@ -137,7 +129,7 @@ def authenticate_by_pin(username, pin):
     
     if user_data and user_data.get('pin_hash'):
         if check_password_hash(user_data['pin_hash'], pin):
-            return User(username, user_data)
+            return User.get_by_username(username)
     
     return None
 
@@ -210,6 +202,8 @@ def pos_unlock():
             return render_template('pos/lock_screen.html', 
                                    locked_by=session.get('pos_locked_by', 'Unknown'))
         
+        if user and not has_permission(user, 'pos.view'):
+            user = None  # valid credentials, but not allowed to run the POS
         if user:
             # Unlock and set operator
             session['pos_locked'] = False

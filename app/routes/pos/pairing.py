@@ -198,7 +198,6 @@ def peripheral_unpair():
 # =====================================================================
 
 @pos_bp.route('/api/register/hello', methods=['POST'])
-@login_required
 def register_hello():
     """The sales page announces itself: upserts the register row and binds
     the register id to the Flask session so plain form posts resolve to
@@ -221,7 +220,6 @@ def register_hello():
 
 
 @pos_bp.route('/api/register/claim-code', methods=['POST'])
-@login_required
 def register_claim_code():
     """Staff type a peripheral's 6-digit code into the register to pair it."""
     data = request.get_json() or {}
@@ -260,7 +258,6 @@ def register_claim_code():
 
 
 @pos_bp.route('/api/register/peripherals')
-@login_required
 def register_peripherals():
     """Everything paired to this register, with live connected status."""
     register_id = (request.args.get('register_id') or
@@ -277,7 +274,6 @@ def register_peripherals():
 
 
 @pos_bp.route('/api/register/unpair', methods=['POST'])
-@login_required
 def register_unpair():
     """Unpair a peripheral from the register's device list."""
     data = request.get_json() or {}
@@ -302,7 +298,6 @@ def register_unpair():
 
 
 @pos_bp.route('/api/scanner/enter-slave', methods=['POST'])
-@login_required
 def scanner_enter_slave():
     """A logged-in handheld with a scanner pairing token asks to run the
     full POS page "slaved" to its register. Validates the token and binds
@@ -335,7 +330,6 @@ def scanner_enter_slave():
 
 
 @pos_bp.route('/api/scanner/exit-slave', methods=['POST'])
-@login_required
 def scanner_exit_slave():
     """Stop slaving this session to a register. If unpair=true, also delete
     the scanner pairing so the device is fully released back to normal use."""
@@ -351,7 +345,6 @@ def scanner_exit_slave():
 
 
 @pos_bp.route('/api/register/poll')
-@login_required
 def register_poll():
     """Lightweight version check so the register picks up cart changes
     made by paired scanners; the page fetches /pos/cart/fragment when the
@@ -380,7 +373,6 @@ def register_poll():
 # =====================================================================
 
 @pos_bp.route('/scan')
-@login_required
 def scan_page():
     """Mobile line-busting page for handheld scanners (e.g. FZ-N1)."""
     return render_template('pos/scan.html')

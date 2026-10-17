@@ -131,10 +131,6 @@ def version_is_newer(remote_version, local_version):
 @admin_bp.route('/check_update')
 def check_update():
     """Check if updates are available from GitHub for both branches."""
-    error = require_admin()
-    if error:
-        return {"error": "Admin required"}, 403
-    
     try:
         current_version = get_current_version()
         
@@ -784,10 +780,6 @@ def run_update_in_background(branch_name, branch_info):
 @admin_bp.route('/update', methods=['POST'])
 def perform_update():
     """Download and apply updates from GitHub asynchronously."""
-    error = require_admin()
-    if error:
-        return jsonify({"error": "Admin required"}), 403
-    
     # Check if an update is already in progress
     status = get_update_status()
     if status.get("status") == "updating":
@@ -812,10 +804,6 @@ def perform_update():
 @admin_bp.route('/update_status')
 def update_status():
     """Get the current update progress status."""
-    error = require_admin()
-    if error:
-        return jsonify({"error": "Admin required"}), 403
-
     status = get_update_status()
     return jsonify(status)
 
@@ -824,10 +812,6 @@ def update_status():
 def rollback_update():
     """Roll back to the previous release (atomic-release layout only) and
     restart. Instant; note the shared DB is not reverted."""
-    error = require_admin()
-    if error:
-        return jsonify({"error": "Admin required"}), 403
-
     if not _is_release_layout():
         return jsonify({"error": "Rollback requires the atomic-release layout."}), 400
 
@@ -846,10 +830,6 @@ def rollback_update():
 @admin_bp.route('/release_info')
 def release_info():
     """Report the current layout and available releases (for the admin UI)."""
-    error = require_admin()
-    if error:
-        return jsonify({"error": "Admin required"}), 403
-
     if not _is_release_layout():
         return jsonify({"layout": "flat", "releases": []})
     try:

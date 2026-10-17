@@ -17,14 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Use the existing pos_bp from core
 from app.routes.pos.core import pos_bp
-
-
-def require_pos_admin():
-    """Check if current user is POS admin or super admin."""
-    if not current_user.is_authenticated:
-        return False
-    from app.utils.permissions import has_permission
-    return has_permission(current_user, 'pos.manage')
+from app.utils.permissions import require_permission
 
 
 def generate_serial_code(prefix="SAVE"):
@@ -39,13 +32,9 @@ def generate_serial_code(prefix="SAVE"):
 # ========================================
 
 @pos_bp.route('/coupons')
-@login_required
+@require_permission('pos.manage')
 def coupons():
     """List all coupons (admin only)."""
-    if not require_pos_admin():
-        flash('Access denied. POS Admin required.')
-        return redirect(url_for('pos.index'))
-    
     conn = get_db_connection()
     
     coupons = conn.execute('''
@@ -65,13 +54,9 @@ def coupons():
 
 
 @pos_bp.route('/coupons/create', methods=['GET', 'POST'])
-@login_required
+@require_permission('pos.manage')
 def create_coupon():
     """Create a new coupon."""
-    if not require_pos_admin():
-        flash('Access denied. POS Admin required.')
-        return redirect(url_for('pos.index'))
-    
     conn = get_db_connection()
     
     if request.method == 'POST':
@@ -169,13 +154,9 @@ def create_coupon():
 
 
 @pos_bp.route('/coupons/<int:coupon_id>/edit', methods=['GET', 'POST'])
-@login_required
+@require_permission('pos.manage')
 def edit_coupon(coupon_id):
     """Edit an existing coupon."""
-    if not require_pos_admin():
-        flash('Access denied. POS Admin required.')
-        return redirect(url_for('pos.index'))
-    
     conn = get_db_connection()
     
     coupon = conn.execute('SELECT * FROM pos_coupons WHERE id = ?', (coupon_id,)).fetchone()
@@ -266,12 +247,9 @@ def edit_coupon(coupon_id):
 
 
 @pos_bp.route('/coupons/<int:coupon_id>/toggle', methods=['POST'])
-@login_required
+@require_permission('pos.manage')
 def toggle_coupon(coupon_id):
     """Activate/deactivate a coupon."""
-    if not require_pos_admin():
-        return jsonify({'error': 'Access denied'}), 403
-    
     conn = get_db_connection()
     
     coupon = conn.execute('SELECT active FROM pos_coupons WHERE id = ?', (coupon_id,)).fetchone()
@@ -288,12 +266,9 @@ def toggle_coupon(coupon_id):
 
 
 @pos_bp.route('/coupons/<int:coupon_id>/delete', methods=['POST'])
-@login_required
+@require_permission('pos.manage')
 def delete_coupon(coupon_id):
     """Delete a coupon."""
-    if not require_pos_admin():
-        return jsonify({'error': 'Access denied'}), 403
-    
     conn = get_db_connection()
     
     conn.execute('DELETE FROM pos_coupon_items WHERE coupon_id = ?', (coupon_id,))
@@ -436,7 +411,6 @@ def evaluate_coupon(code, cart_items, cart_subtotal, conn, cart=None):
 
 
 @pos_bp.route('/api/coupon/validate', methods=['POST'])
-@login_required
 def validate_coupon():
     """Validate a coupon code and return details."""
     data = request.get_json()
@@ -591,7 +565,6 @@ def calculate_coupon_discount(coupon, cart_items, cart_subtotal, conn):
 
 
 @pos_bp.route('/api/coupon/apply', methods=['POST'])
-@login_required
 def apply_coupon():
     """Apply a coupon to the cart, re-validating and recomputing the discount
     server-side. Only the coupon CODE from the client is trusted; the posted
@@ -627,7 +600,6 @@ def apply_coupon():
 
 
 @pos_bp.route('/api/coupon/remove', methods=['POST'])
-@login_required
 def remove_coupon():
     """Remove applied coupon from cart session."""
     from app.routes.pos.core import get_cart, save_cart
