@@ -840,12 +840,123 @@ def _add_column_in_txn(conn, table, column, column_def):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_def}")
 
 
+# --- v7: timeclock times from naive local to UTC -----------------------------
+# Business timezone the old values were written in. None = the server's system
+# timezone (which is the business timezone). Tests set a zoneinfo.ZoneInfo.
+_M7_LOCAL_TZ = None
+_M7_COLUMNS = {
+    'time_entries': ('clock_in', 'clock_out', 'created_at'),
+    'scheduled_shifts': ('start_time', 'end_time', 'created_at'),
+}
+_M7_LOCALTIME_DEFAULT = r"\(\s*datetime\(\s*'now'\s*,\s*'localtime'\s*\)\s*\)"
+
+
+def _m7_local_to_utc(value):
+    """Naive business-local timestamp -> UTC 'YYYY-MM-DD HH:MM:SS' (None if unparseable).
+
+    Uses the UTC offset in force on the value's own date, so January rows
+    shift by 7 hours (MST) and July rows by 6 (MDT).
+    """
+    import datetime as dt
+    if not isinstance(value, str):
+        return None
+    for fmt in ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M',
+                '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%f', '%Y-%m-%dT%H:%M'):
+        try:
+            naive = dt.datetime.strptime(value.strip(), fmt).replace(microsecond=0)
+            break
+        except ValueError:
+            continue
+    else:
+        return None
+    if _M7_LOCAL_TZ is not None:
+        aware = naive.replace(tzinfo=_M7_LOCAL_TZ)
+    else:
+        aware = naive.astimezone()  # system timezone rules for that date
+    return aware.astimezone(dt.timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+
+
+def _m7_rebuild_with_utc_default(conn, table, create_sql):
+    """Recreate `table` with created_at DEFAULT CURRENT_TIMESTAMP (SQLite cannot ALTER a default)."""
+    import re
+    tmp = f'{table}__m7'
+    new_sql = re.sub(_M7_LOCALTIME_DEFAULT, 'CURRENT_TIMESTAMP', create_sql, flags=re.I)
+    new_sql, n = re.subn(r'^\s*CREATE\s+TABLE\s+(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|[^\s(]+)',
+                         f'CREATE TABLE "{tmp}"', new_sql, count=1, flags=re.I)
+    if n != 1:
+        logger.warning(f"[Schema v7] Could not rebuild {table}; created_at default left as localtime")
+        return
+    extras = [r[0] for r in conn.execute(
+        "SELECT sql FROM sqlite_master WHERE tbl_name = ? AND type IN ('index', 'trigger') "
+        "AND sql IS NOT NULL", (table,)).fetchall()]
+    cols = ', '.join(f'"{r[1]}"' for r in conn.execute(f'PRAGMA table_info({table})').fetchall())
+    seq = None
+    try:
+        seq = conn.execute('SELECT seq FROM sqlite_sequence WHERE name = ?', (table,)).fetchone()
+    except sqlite3.OperationalError:
+        pass  # no AUTOINCREMENT tables yet
+    conn.execute(f'DROP TABLE IF EXISTS "{tmp}"')
+    conn.execute(new_sql)
+    conn.execute(f'INSERT INTO "{tmp}" ({cols}) SELECT {cols} FROM {table}')
+    conn.execute(f'DROP TABLE {table}')
+    conn.execute(f'ALTER TABLE "{tmp}" RENAME TO {table}')
+    for sql in extras:
+        conn.execute(sql)
+    if seq:
+        conn.execute('UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?', (seq[0], table))
+
+
+def _m7_timeclock_utc(conn):
+    """Timeclock times were naive local (datetime.now()); store UTC like everything else.
+
+    Converts time_entries.clock_in/clock_out and scheduled_shifts.start_time/
+    end_time, plus created_at where the column default was localtime. NULLs
+    stay NULL; unparseable values are left unchanged and logged. The tables are
+    then rebuilt so created_at defaults to CURRENT_TIMESTAMP (UTC). PTO dates
+    and recurring-rule wall-clock times are local by design and not touched.
+    """
+    import re
+    for table, wanted in _M7_COLUMNS.items():
+        row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+                           (table,)).fetchone()
+        if not row:
+            continue
+        create_sql = row[0] or ''
+        local_default = re.search(_M7_LOCALTIME_DEFAULT, create_sql, flags=re.I) is not None
+        present = {r[1] for r in conn.execute(f'PRAGMA table_info({table})').fetchall()}
+        cols = [c for c in wanted if c in present and (c != 'created_at' or local_default)]
+        converted = bad = 0
+        if cols:
+            rows = conn.execute(f"SELECT rowid, {', '.join(cols)} FROM {table}").fetchall()
+            for r in rows:
+                updates = {}
+                for col, value in zip(cols, r[1:]):
+                    if value is None:
+                        continue
+                    new = _m7_local_to_utc(value)
+                    if new is None:
+                        bad += 1
+                        logger.warning(f"[Schema v7] {table} rowid {r[0]}: {col}={value!r} "
+                                       f"is not a timestamp; left unchanged")
+                        continue
+                    updates[col] = new
+                if updates:
+                    sets = ', '.join(f'{c} = ?' for c in updates)
+                    conn.execute(f'UPDATE {table} SET {sets} WHERE rowid = ?', (*updates.values(), r[0]))
+                    converted += 1
+        logger.info(f"[Schema v7] {table}: converted {converted} row(s) to UTC, "
+                    f"{bad} value(s) left unchanged")
+        if local_default:
+            _m7_rebuild_with_utc_default(conn, table, create_sql)
+
+
 # (version, description, function). Version 1 is the ensure_db_ready() baseline.
 SCHEMA_MIGRATIONS = [
     (2, 'PTO tables', _m2_pto_tables),
     (3, 'hot-path indexes', _m3_hot_path_indexes),
     (4, 'rate_events table', _m4_rate_events),
     (5, 'pos_orders.checkout_token', _m5_checkout_token),
+    (7, 'timeclock times to UTC', _m7_timeclock_utc),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 
