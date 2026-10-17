@@ -247,9 +247,6 @@
                                 {% if manual_item_discount > 0.005 %}
                                 <span class="text-warning">(Discount: −${{ "%.2f"|format(manual_item_discount) }})</span>
                                 {% endif %}
-                                {% if item.coupon_discount and item.coupon_discount > 0.005 %}
-                                <span class="text-warning">(Coupon: −${{ "%.2f"|format(item.coupon_discount) }})</span>
-                                {% endif %}
                         </div>
                         {% if item.addon_1 and config and config.get('ITEM_ADDON_1_TEXT') %}
                         <div class="receipt-addon-text"
@@ -295,38 +292,47 @@
                         <span>Tax ({{ "%.2f"|format(order.tax_rate * 100) }}%)</span>
                         <span>${{ "%.2f"|format(order.tax_amount) }}</span>
                     </div>
+                    {% if cash_discount > 0.005 %}
+                    <div class="receipt-row text-warning">
+                        <span>Cash Discount</span>
+                        <span>−${{ "%.2f"|format(cash_discount) }}</span>
+                    </div>
+                    {% endif %}
                     <div class="receipt-row total">
                         <span>Total</span>
                         <span>${{ "%.2f"|format(order.total) }}</span>
                     </div>
                 </div>
 
-                <!-- Payment Details -->
-                {% if payment_details %}
+                <!-- Payment Details (from the payments ledger) -->
+                {% if payments %}
                 <div class="receipt-section">
-                    {% if order.payment_method == 'cash' %}
+                    {% set card_rows = payments|selectattr('method', 'equalto', 'card')|list %}
+                    {% for p in payments %}
+                    {% if p.method == 'cash' %}
+                    {% if payments|length > 1 %}
+                    <div class="receipt-row">
+                        <span>Cash</span>
+                        <span>${{ "%.2f"|format(p.amount) }}</span>
+                    </div>
+                    {% endif %}
+                    {% if p.tendered is not none %}
                     <div class="receipt-row">
                         <span>Cash Tendered</span>
-                        <span>${{ "%.2f"|format(payment_details.tendered) }}</span>
+                        <span>${{ "%.2f"|format(p.tendered) }}</span>
                     </div>
                     <div class="receipt-row">
                         <span>Change</span>
-                        <span>${{ "%.2f"|format(payment_details.change) }}</span>
-                    </div>
-                    {% elif order.payment_method == 'split' %}
-                    {% if payment_details.cash > 0 %}
-                    <div class="receipt-row">
-                        <span>Cash</span>
-                        <span>${{ "%.2f"|format(payment_details.cash) }}</span>
+                        <span>${{ "%.2f"|format(p.change_given or 0) }}</span>
                     </div>
                     {% endif %}
-                    {% for amount in payment_details.cards %}
+                    {% elif payments|length > 1 %}
                     <div class="receipt-row">
-                        <span>Card {{ loop.index }}</span>
-                        <span>${{ "%.2f"|format(amount) }}</span>
+                        <span>{{ p.method|capitalize }}{% if card_rows|length > 1 and p.method == 'card' %} {{ loop.index }}{% endif %}</span>
+                        <span>${{ "%.2f"|format(p.amount) }}</span>
                     </div>
+                    {% endif %}
                     {% endfor %}
-                    {% endif %}
                 </div>
                 {% endif %}
             </div>

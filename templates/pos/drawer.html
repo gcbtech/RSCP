@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>RSCP | Cash Drawer</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+    <link rel="icon" href="{{ favicon }}">
+    <style>
+        body {
+            background: #f1f5f9;
+        }
+
+        .card {
+            border: none;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+
+<body>
+    {% include '_nav.html' %}
+
+    <div class="container py-4" style="max-width: 900px;">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <h2 class="mb-0">💵 Cash Drawer</h2>
+            <div class="d-flex gap-2">
+                <a href="{{ url_for('pos.daily_report') }}" class="btn btn-outline-secondary btn-sm">End of Day Report</a>
+                <a href="{{ url_for('pos.sales') }}" class="btn btn-outline-secondary btn-sm">Back to Sales</a>
+            </div>
+        </div>
+
+        {% include 'pos/_flashes.html' %}
+
+        {% if current %}
+        <div class="card mb-4 border-start border-success border-3">
+            <div class="card-body">
+                <h5 class="card-title">Drawer #{{ current.id }} is open</h5>
+                <p class="text-muted small mb-3">Opened {{ current.opened_at | local_time }} by {{ current.opened_by_name or 'manager' }}
+                    {% if current.notes %}&bull; {{ current.notes }}{% endif %}</p>
+                <table class="table table-sm mb-3" style="max-width: 420px;">
+                    <tbody>
+                        <tr><td>Starting float</td><td class="text-end">${{ "%.2f"|format(current.opening_float or 0) }}</td></tr>
+                        <tr><td>+ Cash sales</td><td class="text-end">${{ "%.2f"|format(current.cash_sales) }}</td></tr>
+                        <tr><td>&minus; Cash refunds</td><td class="text-end">${{ "%.2f"|format(current.cash_refunds) }}</td></tr>
+                        <tr class="fw-bold"><td>Expected in drawer now</td><td class="text-end">${{ "%.2f"|format(current.expected_cash) }}</td></tr>
+                    </tbody>
+                </table>
+                <form action="{{ url_for('pos.drawer_close') }}" method="POST" class="row g-2 align-items-end"
+                    onsubmit="return confirm('Close the drawer with this counted amount?');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="session_id" value="{{ current.id }}">
+                    <div class="col-sm-4">
+                        <label class="form-label fw-bold">Counted cash</label>
+                        <div class="input-group">
+                            <span class="input-group-text">$</span>
+                            <input type="number" step="0.01" min="0" name="counted_cash" class="form-control" required>
+                        </div>
+                    </div>
+                    <div class="col-sm-5">
+                        <label class="form-label">Notes</label>
+                        <input type="text" name="notes" class="form-control" maxlength="500">
+                    </div>
+                    <div class="col-sm-3">
+                        <button type="submit" class="btn btn-danger w-100">Close Drawer</button>
+                    </div>
+                </form>
+                <div class="form-text">Count everything in the drawer, including the float. Over/short is shown once you close.</div>
+            </div>
+        </div>
+        {% else %}
+        <div class="card mb-4">
+            <div class="card-body">
+                <h5 class="card-title">No drawer is open</h5>
+                <p class="text-muted small">Selling works without a drawer session. Open one to track the float and
+                    see over/short when you close.</p>
+                <form action="{{ url_for('pos.drawer_open') }}" method="POST" class="row g-2 align-items-end">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <div class="col-sm-4">
+                        <label class="form-label fw-bold">Starting float</label>
+                        <div class="input-group">
+                            <span class="input-group-text">$</span>
+                            <input type="number" step="0.01" min="0" name="opening_float" class="form-control" required>
+                        </div>
+                    </div>
+                    <div class="col-sm-5">
+                        <label class="form-label">Notes</label>
+                        <input type="text" name="notes" class="form-control" maxlength="500">
+                    </div>
+                    <div class="col-sm-3">
+                        <button type="submit" class="btn btn-success w-100">Open Drawer</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        {% endif %}
+
+        <div class="card">
+            <div class="card-header bg-white"><strong>Recent sessions</strong></div>
+            <div class="card-body p-0">
+                {% if recent %}
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0 align-middle">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="ps-3">#</th>
+                                <th>Opened</th>
+                                <th>Closed</th>
+                                <th class="text-end">Float</th>
+                                <th class="text-end">Expected</th>
+                                <th class="text-end">Counted</th>
+                                <th class="text-end pe-3">Over / Short</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for s in recent %}
+                            <tr>
+                                <td class="ps-3">{{ s.id }}</td>
+                                <td class="small">{{ s.opened_at | local_time }}<br><span class="text-muted">{{ s.opened_by_name or '' }}</span></td>
+                                <td class="small">{{ s.closed_at | local_time }}<br><span class="text-muted">{{ s.closed_by_name or '' }}</span></td>
+                                <td class="text-end">${{ "%.2f"|format(s.opening_float or 0) }}</td>
+                                <td class="text-end">${{ "%.2f"|format(s.expected_cash or 0) }}</td>
+                                <td class="text-end">${{ "%.2f"|format(s.counted_cash or 0) }}</td>
+                                <td class="text-end pe-3 fw-bold">
+                                    {% set d = s.over_short or 0 %}
+                                    {% if d > 0.004 %}<span class="text-warning">+${{ "%.2f"|format(d) }}</span>
+                                    {% elif d < -0.004 %}<span class="text-danger">&minus;${{ "%.2f"|format(-d) }}</span>
+                                    {% else %}<span class="text-success">$0.00</span>{% endif %}
+                                </td>
+                            </tr>
+                            {% if s.notes %}
+                            <tr><td></td><td colspan="6" class="small text-muted">{{ s.notes }}</td></tr>
+                            {% endif %}
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <p class="text-muted text-center py-4 mb-0">No closed drawer sessions yet.</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>

@@ -10,6 +10,7 @@ from flask_login import current_user, login_required
 
 from app.routes.pos import pos_bp, REFUND_REASONS
 from app.services.db import get_db_connection, get_request_db
+from app.services.pos_ledger import REFUND_METHODS, default_refund_method, order_payments, money
 
 logger = logging.getLogger(__name__)
 
@@ -283,6 +284,9 @@ def refund_order(order_number):
                            items=items,
                            refunds=refunds,
                            payment_details=payment_details,
+                           payments=order_payments(conn, order['id']),
+                           refund_methods=REFUND_METHODS,
+                           default_refund_method=default_refund_method(order['payment_method']),
                            refund_reasons=REFUND_REASONS)
 
 
@@ -295,7 +299,11 @@ def refund_process():
     refund_type = request.form.get('refund_type', 'partial')
     reason = request.form.get('reason', 'other')
     reason_notes = request.form.get('reason_notes', '')
-    
+    refund_method = request.form.get('refund_method') or None
+    if refund_method is not None and refund_method not in REFUND_METHODS:
+        flash('Unknown refund method.')
+        return redirect(url_for('pos.refunds'))
+
     if not order_id:
         flash('Invalid order.')
         return redirect(url_for('pos.refunds'))
@@ -327,10 +335,13 @@ def refund_process():
             WHERE oi.order_id = ?
         ''', (order_id,)).fetchall()
         refunded_map = {row['id']: row for row in refunded_rows}
-        already_refunded_total = conn.execute(
-            'SELECT COALESCE(SUM(amount), 0) AS t FROM pos_refunds WHERE order_id = ?',
-            (order_id,)
-        ).fetchone()['t']
+        already = conn.execute('''
+            SELECT COALESCE(SUM(amount), 0) AS t,
+                   COALESCE(SUM(COALESCE(tax_refunded, CASE WHEN ? > 0 THEN amount * ? / ? ELSE 0 END)), 0) AS tax
+            FROM pos_refunds WHERE order_id = ?
+        ''', (order['total'], order['tax_amount'], order['total'], order_id)).fetchone()
+        already_refunded_total = already['t']
+        already_tax_refunded = already['tax']
         remaining_paid = round(order['total'] - already_refunded_total, 2)
 
         # What the customer actually paid per $1 of line value: folds in the
@@ -430,8 +441,21 @@ def refund_process():
         if not items_to_refund or refund_amount <= 0:
             flash('No items available to refund (order may already be fully refunded).')
             return redirect(url_for('pos.refund_order', order_number=order['order_number']))
-        
-        # Get manager info
+
+        # The tax inside this refund: the order's tax share of the amount, or
+        # exactly the tax not yet refunded when this refund empties the order.
+        refund_amount = money(refund_amount)
+        tax_left = max(0.0, money(order['tax_amount'] - already_tax_refunded))
+        if refund_amount >= remaining_paid:
+            tax_refunded = tax_left
+        elif order['total'] > 0:
+            tax_refunded = money(refund_amount * order['tax_amount'] / order['total'])
+        else:
+            tax_refunded = 0.0
+        tax_refunded = min(tax_refunded, tax_left, refund_amount)
+        refund_method = refund_method or default_refund_method(order['payment_method'])
+
+# Get manager info
         manager_auth = session.get('pos_refund_manager_auth', {})
         manager_username = manager_auth.get('username', current_user.username)
         manager = conn.execute('SELECT id FROM users WHERE username = ?', (manager_username,)).fetchone()
@@ -441,11 +465,11 @@ def refund_process():
         cursor = conn.execute('''
             INSERT INTO pos_refunds (
                 order_id, refund_type, amount, reason, reason_notes,
-                items_restocked, items_damaged, manager_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                items_restocked, items_damaged, manager_id, refund_method, tax_refunded
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             order_id, refund_type, round(refund_amount, 2), reason, reason_notes,
-            items_restocked, items_damaged, manager_id
+            items_restocked, items_damaged, manager_id, refund_method, tax_refunded
         ))
         refund_id = cursor.lastrowid
         
@@ -477,7 +501,8 @@ def refund_process():
         conn.commit()
         
         logger.info(f"Refund processed: Order {order['order_number']}, Amount: ${refund_amount:.2f}, Manager: {manager_username}")
-        flash(f'Refund of ${refund_amount:.2f} processed successfully.')
+        flash(f'Refund of ${refund_amount:.2f} processed successfully '
+              f'({REFUND_METHODS.get(refund_method, refund_method)}).')
         
         return redirect(url_for('pos.refund_order', order_number=order['order_number']))
         

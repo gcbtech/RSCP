@@ -100,44 +100,48 @@
         <div style="margin-top: 4px;">{{ report_date.strftime('%Y-%m-%d') }}</div>
     </div>
 
+    {% set r = report %}
     <!-- SALES -->
     <div class="section">
-        <div class="row">
-            <span>Orders:</span>
-            <span>{{ summary.total_orders }}</span>
-        </div>
-        <div class="row">
-            <span>Gross Sales:</span>
-            <span>${{ "%.2f"|format(summary.gross_sales) }}</span>
-        </div>
-        <div class="row">
-            <span>Tax Collected:</span>
-            <span>${{ "%.2f"|format(summary.total_tax) }}</span>
-        </div>
+        <div class="row"><span>Orders:</span><span>{{ r.order_count }}</span></div>
+        <div class="row"><span>Gross Sales:</span><span>${{ "%.2f"|format(r.gross_sales) }}</span></div>
+        <div class="row"><span>&nbsp;Line Disc:</span><span>-${{ "%.2f"|format(r.discounts.line) }}</span></div>
+        <div class="row"><span>&nbsp;Order Disc:</span><span>-${{ "%.2f"|format(r.discounts.order) }}</span></div>
+        <div class="row"><span>&nbsp;Coupons:</span><span>-${{ "%.2f"|format(r.discounts.coupon) }}</span></div>
+        <div class="row"><span>&nbsp;Cash Disc:</span><span>-${{ "%.2f"|format(r.discounts.cash) }}</span></div>
+        <div class="row"><span>Net Sales:</span><span>${{ "%.2f"|format(r.net_sales) }}</span></div>
+        <div class="row"><span>Tax Collected:</span><span>${{ "%.2f"|format(r.tax_collected) }}</span></div>
+        <div class="row"><span>Sales Total:</span><span>${{ "%.2f"|format(r.sales_total) }}</span></div>
     </div>
 
-    <!-- PAYMENT BREAKDOWN -->
+    <!-- REFUNDS -->
     <div class="section">
-        <div class="row">
-            <span>Cash Total:</span>
-            <span>${{ "%.2f"|format(total_cash) }}</span>
-        </div>
-        <div class="row">
-            <span>Card Total:</span>
-            <span>${{ "%.2f"|format(total_card) }}</span>
-        </div>
+        <div class="row"><span>Refunds ({{ r.refunds.count }}):</span><span>-${{ "%.2f"|format(r.refunds.total) }}</span></div>
+        <div class="row"><span>&nbsp;Tax Refunded:</span><span>-${{ "%.2f"|format(r.refunds.tax) }}</span></div>
+        <div class="row"><span>Tax (net):</span><span>${{ "%.2f"|format(r.tax_net) }}</span></div>
+        <div class="row total-row"><span>NET REVENUE:</span><span>${{ "%.2f"|format(r.net_revenue) }}</span></div>
     </div>
 
-    <!-- REFUNDS & NET -->
+    <!-- TENDERS (net of refunds) -->
     <div class="section">
-        <div class="row">
-            <span>Refunds ({{ refunds.count }}):</span>
-            <span>-${{ "%.2f"|format(refunds.total) }}</span>
-        </div>
-        <div class="row total-row">
-            <span>NET REVENUE:</span>
-            <span>${{ "%.2f"|format(net_revenue) }}</span>
-        </div>
+        {% for t in r.tenders %}
+        <div class="row"><span>{{ t.label }} (net):</span><span>${{ "%.2f"|format(t.net) }}</span></div>
+        {% if t.refunded %}
+        <div class="row"><span>&nbsp;taken ${{ "%.2f"|format(t.collected) }}</span><span>ref. -${{ "%.2f"|format(t.refunded) }}</span></div>
+        {% endif %}
+        {% endfor %}
+    </div>
+
+    <!-- CASH -->
+    <div class="section">
+        <div class="row"><span>Opening Float:</span><span>${{ "%.2f"|format(r.expected_cash.opening_float) }}</span></div>
+        <div class="row"><span>+ Cash Sales:</span><span>${{ "%.2f"|format(r.expected_cash.cash_sales) }}</span></div>
+        <div class="row"><span>- Cash Refunds:</span><span>${{ "%.2f"|format(r.expected_cash.cash_refunds) }}</span></div>
+        <div class="row total-row"><span>EXPECTED CASH:</span><span>${{ "%.2f"|format(r.expected_cash.total) }}</span></div>
+        {% for s in r.drawer_sessions if not s.is_open %}
+        <div class="row"><span>Drawer #{{ s.id }} counted:</span><span>${{ "%.2f"|format(s.counted_cash or 0) }}</span></div>
+        <div class="row"><span>&nbsp;{{ 'Over' if (s.over_short or 0) >= 0 else 'Short' }}:</span><span>${{ "%.2f"|format((s.over_short or 0)|abs) }}</span></div>
+        {% endfor %}
     </div>
 
     <div class="footer">

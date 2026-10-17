@@ -50,7 +50,19 @@ def sales():
         except Exception as e:
             logger.warning(f"Could not load held orders: {e}")
 
+    # Gentle reminder for managers when no cash drawer session is open
+    # (selling works either way)
+    drawer_banner = False
+    try:
+        from app.utils.permissions import has_permission
+        if has_permission(current_user, 'pos.manage'):
+            from app.services.pos_ledger import get_open_session
+            drawer_banner = get_open_session(get_request_db()) is None
+    except Exception as e:
+        logger.warning(f"Could not check drawer session: {e}")
+
     return render_template('pos/sales.html',
+                           drawer_banner=drawer_banner,
                            cart=cart,
                            subtotal=totals['subtotal'],
                            order_discount=totals['order_discount'],

@@ -627,79 +627,12 @@ def daily_report_print():
         report_date = date.today()
         report_date_str = report_date.strftime('%Y-%m-%d')
     
-    # Convert local date to UTC range for correct database queries
-    from app.utils.helpers import local_date_to_utc_range
-    start_dt, end_dt = local_date_to_utc_range(report_date_str)
-
-    # 1. Summary Stats
-    summary = conn.execute('''
-        SELECT 
-            COUNT(*) as total_orders,
-            COALESCE(SUM(total), 0) as gross_sales,
-            COALESCE(SUM(tax_amount), 0) as total_tax
-        FROM pos_orders
-        WHERE created_at BETWEEN ? AND ? AND status != 'held'
-    ''', (start_dt, end_dt)).fetchone()
-
-    # 2. Refunds
-    refunds_summary = conn.execute('''
-        SELECT 
-            COUNT(*) as count,
-            COALESCE(SUM(amount), 0) as total
-        FROM pos_refunds
-        WHERE created_at BETWEEN ? AND ?
-    ''', (start_dt, end_dt)).fetchone()
-    
-    net_revenue = (summary['gross_sales'] or 0) - (refunds_summary['total'] or 0)
-
-    # 3. Payment Breakdown (Simplified for receipt)
-    payments = conn.execute('''
-        SELECT 
-            payment_method, 
-            SUM(total) as total_amount
-        FROM pos_orders
-        WHERE created_at BETWEEN ? AND ? AND status != 'held'
-        GROUP BY payment_method
-    ''', (start_dt, end_dt)).fetchall()
-    
-    # Calculate simple cash/card totals
-    total_cash = 0
-    total_card = 0
-    
-    # Fetch split details inline
-    split_orders = conn.execute('''
-        SELECT payment_details
-        FROM pos_orders
-        WHERE created_at BETWEEN ? AND ? AND status != 'held' AND payment_method = 'split'
-    ''', (start_dt, end_dt)).fetchall()
-    
-    split_cash_total = 0
-    split_card_total = 0
-    
-    for sp in split_orders:
-        try:
-            details = json.loads(sp['payment_details'])
-            split_cash_total += float(details.get('cash', 0))
-            split_card_total += sum(float(x) for x in details.get('cards', []))
-        except:
-            pass
-    
-    for p in payments:
-        if p['payment_method'] == 'cash':
-            total_cash += p['total_amount']
-        elif p['payment_method'] == 'split':
-            total_cash += split_cash_total
-            total_card += split_card_total
-        else:
-            total_card += p['total_amount']
+    from app.services.pos_reports import generate_daily_report_data
+    report_data = generate_daily_report_data(report_date)
 
     return render_template('pos/daily_report_print.html',
                            report_date=report_date,
-                           summary=summary,
-                           refunds=refunds_summary,
-                           net_revenue=net_revenue,
-                           total_cash=total_cash,
-                           total_card=total_card)
+                           **report_data)
 
 
 @pos_bp.route('/management/reports/valuation')
@@ -862,20 +795,7 @@ def reorder_report():
 @login_required
 @require_admin
 def send_eod_email():
-    """Send Detailed End of Day Report via Email."""
-    # 1. Get Settings
-    host = get_pos_setting('POS_EMAIL_HOST')
-    port = get_pos_setting('POS_EMAIL_PORT') or '587'
-    user = get_pos_setting('POS_EMAIL_USER')
-    from app.services.security import decrypt
-    password = decrypt(get_pos_setting('POS_EMAIL_PASSWORD'))
-    recipients = get_pos_setting('POS_EMAIL_RECIPIENTS') # Comma separated
-    
-    if not all([host, user, password, recipients]):
-        flash("Email settings incomplete. Please configure in Admin Panel.")
-        return redirect(url_for('pos.daily_report'))
-        
-    # 2. Get Date
+    """Send the End of Day Report via Email (same email as the automatic one)."""
     report_date_str = request.form.get('date') or request.args.get('date') or date.today().strftime('%Y-%m-%d')
     try:
         report_date = datetime.strptime(report_date_str, '%Y-%m-%d').date()
@@ -883,163 +803,9 @@ def send_eod_email():
         report_date = date.today()
         report_date_str = report_date.strftime('%Y-%m-%d')
 
-    # Convert to UTC range
-    from app.utils.helpers import local_date_to_utc_range
-    start_dt, end_dt = local_date_to_utc_range(report_date_str)
-        
-    # 3. Fetch Data (Detailed)
-    conn = get_request_db()
-    
-    # A. Summary
-    summary = conn.execute('''
-        SELECT 
-            COUNT(*) as total_orders,
-            COALESCE(SUM(total), 0) as gross_sales,
-            COALESCE(SUM(tax_amount), 0) as total_tax
-        FROM pos_orders
-        WHERE created_at BETWEEN ? AND ? AND status != 'held'
-    ''', (start_dt, end_dt)).fetchone()
-    
-    # B. Refunds
-    refunds = conn.execute('''
-        SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total
-        FROM pos_refunds WHERE created_at BETWEEN ? AND ?
-    ''', (start_dt, end_dt)).fetchone()
-    
-    net_revenue = (summary['gross_sales'] or 0) - (refunds['total'] or 0)
-    
-    # C. Payments Breakdown
-    payments = conn.execute('''
-        SELECT 
-            payment_method, 
-            COUNT(*) as count,
-            SUM(total) as total_amount
-        FROM pos_orders
-        WHERE created_at BETWEEN ? AND ? AND status != 'held'
-        GROUP BY payment_method
-    ''', (start_dt, end_dt)).fetchall()
-
-    # Calculate Cash/Card totals for summary
-    total_cash = sum(p['total_amount'] for p in payments if p['payment_method'] == 'cash')
-    total_card = sum(p['total_amount'] for p in payments if p['payment_method'] != 'cash')
-
-    # D. Top Items (Limit 5 for email)
-    top_items = conn.execute('''
-        SELECT oi.name, SUM(oi.quantity) as qty, SUM(oi.line_total) as total
-        FROM pos_order_items oi
-        JOIN pos_orders o ON oi.order_id = o.id
-        WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held'
-        GROUP BY oi.sku
-        ORDER BY total DESC
-        LIMIT 5
-    ''', (start_dt, end_dt)).fetchall()
-
-    # 4. Build Email Body (HTML)
-    # Styles
-    th_style = "padding: 8px; border-bottom: 2px solid #ddd; text-align: left;"
-    td_style = "padding: 8px; border-bottom: 1px solid #eee;"
-    td_num = "padding: 8px; border-bottom: 1px solid #eee; text-align: right;"
-    
-    # Tables Construction
-    payment_rows = ""
-    for p in payments:
-        payment_rows += f"<tr><td style='{td_style}'>{p['payment_method'].upper()}</td><td style='{td_num}'>${p['total_amount']:,.2f}</td></tr>"
-        
-    item_rows = ""
-    for i in top_items:
-        item_rows += f"<tr><td style='{td_style}'>{i['name']}</td><td style='{td_num}'>{i['qty']}</td><td style='{td_num}'>${i['total']:,.2f}</td></tr>"
-
-    html_content = f"""
-    <html>
-    <body style="font-family: 'Segoe UI', sans-serif; color: #333; line-height: 1.5;">
-        <div style="max-width: 600px; margin: 0 auto; border: 1px solid #eee; padding: 20px; border-radius: 8px;">
-            <h2 style="color: #2c3e50; margin-bottom: 5px;">📊 End of Day Report</h2>
-            <p style="color: #7f8c8d; margin-top: 0;">Date: <strong>{report_date.strftime('%B %d, %Y')}</strong></p>
-            
-            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;">
-
-            <!-- Financial Summary -->
-            <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-                <tr>
-                    <td style="padding: 10px;"><strong>Gross Sales</strong></td>
-                    <td style="padding: 10px; text-align: right; font-size: 1.2em;">${summary['gross_sales']:,.2f}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px; color: #7f8c8d;">Tax Collected</td>
-                    <td style="padding: 10px; text-align: right; color: #7f8c8d;">${summary['total_tax']:,.2f}</td>
-                </tr>
-                <tr>
-                    <td style="padding: 10px; color: #dc3545;">Refunds ({refunds['count']})</td>
-                    <td style="padding: 10px; text-align: right; color: #dc3545;">-${refunds['total']:,.2f}</td>
-                </tr>
-                <tr style="background-color: #f8f9fa;">
-                    <td style="padding: 15px; border-top: 2px solid #2c3e50;"><strong>NET REVENUE</strong></td>
-                    <td style="padding: 15px; border-top: 2px solid #2c3e50; text-align: right; font-size: 1.4em; color: #198754;">
-                        <strong>${net_revenue:,.2f}</strong>
-                    </td>
-                </tr>
-            </table>
-
-            <div style="display: flex; gap: 10px; margin-bottom: 30px;">
-                <div style="flex: 1; background: #f8f9fa; padding: 10px; border-radius: 4px; text-align: center;">
-                    <small style="color: #7f8c8d;">CASH</small><br>
-                    <strong>${total_cash:,.2f}</strong>
-                </div>
-                <div style="flex: 1; background: #f8f9fa; padding: 10px; border-radius: 4px; text-align: center;">
-                    <small style="color: #7f8c8d;">CARD</small><br>
-                    <strong>${total_card:,.2f}</strong>
-                </div>
-                <div style="flex: 1; background: #f8f9fa; padding: 10px; border-radius: 4px; text-align: center;">
-                    <small style="color: #7f8c8d;">ORDERS</small><br>
-                    <strong>{summary['total_orders']}</strong>
-                </div>
-            </div>
-
-            <!-- Payment Methods -->
-            <h4 style="border-bottom: 2px solid #eee; padding-bottom: 10px;">💳 Payment Breakdown</h4>
-            <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
-                {payment_rows}
-            </table>
-
-            <!-- Top Items -->
-            <h4 style="border-bottom: 2px solid #eee; padding-bottom: 10px;">🏆 Top Selling Items (Top 5)</h4>
-            <table style="width: 100%; border-collapse: collapse; margin-bottom: 30px;">
-                <tr>
-                    <th style="{th_style}">Item</th>
-                    <th style="{th_style} text-align: right;">Qty</th>
-                    <th style="{th_style} text-align: right;">Total</th>
-                </tr>
-                {item_rows}
-            </table>
-
-            <p style="font-size: 0.8em; color: #999; text-align: center; margin-top: 30px;">
-                Generated by RSCP Point of Sale • {datetime.now().strftime('%Y-%m-%d %H:%M')}
-            </p>
-        </div>
-    </body>
-    </html>
-    """
-    
-    # 5. Send Email
-    try:
-        msg = MIMEMultipart()
-        msg['Subject'] = f"RSCP EOD Report - {report_date.strftime('%Y-%m-%d')}"
-        msg['From'] = user
-        msg['To'] = recipients
-        msg.attach(MIMEText(html_content, 'html'))
-        
-        context = ssl.create_default_context()
-        with smtplib.SMTP(host, int(port)) as server:
-            server.starttls(context=context)
-            server.login(user, password)
-            server.send_message(msg)
-            
-        flash(f"Detailed EOD Report sent to {len(recipients.split(','))} recipients.")
-        
-    except Exception as e:
-        logger.error(f"Failed to send email: {e}")
-        flash(f"Error sending email: {str(e)}")
-        
+    from app.services.pos_email import deliver_eod_email
+    ok, message = deliver_eod_email(report_date)
+    flash(message)
     return redirect(url_for('pos.daily_report', date=report_date_str))
 
 
@@ -1379,6 +1145,8 @@ def edit_sale_post(order_id):
         SET subtotal = ?, discount_amount = ?, tax_amount = ?, total = ?, created_at = ?
         WHERE id = ?
     ''', (new_subtotal, new_discount, new_tax, new_total, new_timestamp, order_id))
+    from app.services.pos_ledger import rebuild_order_payments
+    rebuild_order_payments(conn, order_id)
     
     # 7. Audit log
     if changes:

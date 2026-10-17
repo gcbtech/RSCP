@@ -13,9 +13,11 @@ from flask_login import current_user, login_required
 from app.routes.pos import pos_bp, PAYMENT_METHODS
 from app.routes.pos.core import (
     get_cart, save_cart, clear_cart, get_tax_rate, calculate_tax,
-    generate_order_number, round_money, calculate_percentage, compute_cart_totals
+    generate_order_number, round_money, calculate_percentage, compute_cart_totals,
+    get_pos_setting
 )
 from app.services.db import get_db_connection, get_request_db
+from app.services.pos_ledger import allocate_payments, write_payments, order_payments
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +132,7 @@ def checkout_process():
                 pass
 
         payment_details = {}
+        cash_discount_applied = 0.0
         if payment_method == 'cash':
             cash_discount_applied = totals['cash_discount_value'] if totals['cash_discount_enabled'] else 0
             total = round_money(total - cash_discount_applied)
@@ -154,7 +157,6 @@ def checkout_process():
             # Cash discount applies to the cash portion only
             split_cash_discount = 0
             if totals['cash_discount_enabled'] and cash_amount > 0:
-                from app.routes.pos.core import get_pos_setting
                 cd_amount = float(get_pos_setting('CASH_DISCOUNT_AMOUNT', '0') or 0)
                 cd_type = get_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
                 if cd_amount > 0:
@@ -170,6 +172,12 @@ def checkout_process():
                 conn.execute('ROLLBACK')
                 flash(f'Split payments add up to ${total_tendered:.2f}, less than the ${total:.2f} total.')
                 return redirect(url_for('pos.checkout'))
+            # Change can only be given in cash: cards may not exceed the total
+            if round_money(sum(card_amounts)) > total + 0.005:
+                conn.execute('ROLLBACK')
+                flash(f'Card amounts add up to more than the ${total:.2f} total.')
+                return redirect(url_for('pos.checkout'))
+            cash_discount_applied = split_cash_discount
             payment_details = {
                 'cash': cash_amount,
                 'cards': card_amounts,
@@ -185,15 +193,20 @@ def checkout_process():
             INSERT INTO pos_orders (
                 order_number, status, subtotal, tax_rate, tax_amount,
                 discount_amount, discount_type, discount_reason, total,
-                payment_method, payment_details, operator_id, checkout_token
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                payment_method, payment_details, operator_id, checkout_token, cash_discount
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             order_number, 'completed', round(subtotal, 2), tax_rate, round(tax_amount, 2),
             round(order_discount, 2), cart.get('discount_type') if order_discount else None,
             cart.get('discount_reason', ''),
-            total, payment_method, json.dumps(payment_details), current_user.id, checkout_token
+            total, payment_method, json.dumps(payment_details), current_user.id, checkout_token,
+            round_money(cash_discount_applied)
         ))
         order_id = cursor.lastrowid
+
+        # Payments ledger: what each tender paid toward the sale, plus cash
+        # tendered and change given
+        write_payments(conn, order_id, allocate_payments(payment_method, payment_details, total))
 
         # Create order items and decrement inventory
         for item in cart['items']:
@@ -318,70 +331,85 @@ def _money_field(name, default=None):
 
 
 def _prepare_receipt_data(conn, order):
-    """Helper to load items, coupon, and calculate discount details for receipts."""
-    # Load items and convert to list of dicts to allow custom properties
-    items_rows = conn.execute('''
+    """Everything a receipt shows, from what was stored at the time of sale.
+
+    Discounts come from the order itself: line discounts from each line's
+    stored line_total, the coupon from pos_coupon_redemptions.discount_applied,
+    the cash discount from pos_orders.cash_discount -- never from today's
+    coupon or settings definitions. Tenders come from the payments ledger.
+    """
+    items = [dict(row) for row in conn.execute('''
         SELECT oi.*, ii.addon_1, ii.addon_2, ii.sell_price as current_reg_price
         FROM pos_order_items oi
         LEFT JOIN inventory_items ii ON oi.inventory_item_id = ii.id
         WHERE oi.order_id = ?
-    ''', (order['id'],)).fetchall()
-    
-    items = [dict(row) for row in items_rows]
-    
-    # Fetch coupon redemption if any
+    ''', (order['id'],)).fetchall()]
+
     redemption_row = conn.execute('''
-        SELECT cr.*, c.name as coupon_name, c.code as coupon_code, c.discount_type as coupon_discount_type, c.discount_value as coupon_discount_value,
-               c.buy_quantity, c.get_quantity, c.reward_item_id
+        SELECT cr.*, c.name as coupon_name, COALESCE(cr.serial_used, c.code) as coupon_code
         FROM pos_coupon_redemptions cr
-        JOIN pos_coupons c ON cr.coupon_id = c.id
+        LEFT JOIN pos_coupons c ON cr.coupon_id = c.id
         WHERE cr.order_id = ?
     ''', (order['id'],)).fetchone()
-    
     coupon_redemption = dict(redemption_row) if redemption_row else None
-    
-    # Track item coupon discounts if coupon is item-specific
-    if coupon_redemption and coupon_redemption['coupon_discount_type'] in ('item_dollar', 'item_percent', 'bogo_free', 'bogo_percent', 'bogo_cross'):
+
+    payment_details = {}
+    if order['payment_details']:
         try:
-            targets = conn.execute('''
-                SELECT item_id FROM pos_coupon_items WHERE coupon_id = ?
-            ''', (coupon_redemption['coupon_id'],)).fetchall()
-            target_ids = [t['item_id'] for t in targets]
-        except Exception as e:
-            logger.error(f"Error loading target items for coupon: {e}")
-            target_ids = []
-            
-        # Calculate individual item coupon discounts
-        for item in items:
-            item['coupon_discount'] = 0
-            if coupon_redemption['coupon_discount_type'] == 'bogo_cross':
-                if item['inventory_item_id'] == coupon_redemption['reward_item_id']:
-                    item['coupon_discount'] = item['unit_price']
-            elif item['inventory_item_id'] in target_ids:
-                item_total = item['unit_price'] * item['quantity']
-                if coupon_redemption['coupon_discount_type'] == 'item_dollar':
-                    item['coupon_discount'] = min(coupon_redemption['coupon_discount_value'], item_total)
-                elif coupon_redemption['coupon_discount_type'] == 'item_percent':
-                    item['coupon_discount'] = round((item_total * coupon_redemption['coupon_discount_value']) / 100, 2)
-                elif coupon_redemption['coupon_discount_type'] == 'bogo_free':
-                    free_qty = item['quantity'] // (coupon_redemption['buy_quantity'] + 1)
-                    item['coupon_discount'] = round(free_qty * item['unit_price'], 2)
-                elif coupon_redemption['coupon_discount_type'] == 'bogo_percent':
-                    discounted_qty = item['quantity'] // (coupon_redemption['buy_quantity'] + 1)
-                    base_amount = discounted_qty * item['unit_price']
-                    item['coupon_discount'] = round((base_amount * coupon_redemption['coupon_discount_value']) / 100, 2)
-    else:
-        for item in items:
-            item['coupon_discount'] = 0
-            
-    # Calculate receipt-level summary statistics
-    # True subtotal is before any item-level manual discounts
+            payment_details = json.loads(order['payment_details']) or {}
+        except (json.JSONDecodeError, TypeError):
+            payment_details = {}  # Invalid payment details JSON
+
+    try:
+        cash_discount = float(order['cash_discount'] or 0)
+    except (IndexError, KeyError, TypeError, ValueError):
+        cash_discount = 0.0
+    if not cash_discount and isinstance(payment_details, dict):
+        try:
+            cash_discount = float(payment_details.get('cash_discount') or 0)
+        except (TypeError, ValueError):
+            cash_discount = 0.0
+
+    # Subtotal before any line discount, and the line discounts as stored
     subtotal_before_discounts = sum(item['unit_price'] * item['quantity'] for item in items)
-    
-    # Total item discount is the sum of manual item discounts
     total_item_discount = sum((item['unit_price'] * item['quantity']) - item['line_total'] for item in items)
-    
-    return items, coupon_redemption, subtotal_before_discounts, total_item_discount
+
+    return {
+        'items': items,
+        'coupon_redemption': coupon_redemption,
+        'subtotal_before_discounts': round(subtotal_before_discounts, 2),
+        'total_item_discount': round(total_item_discount, 2),
+        'cash_discount': round(cash_discount, 2),
+        'payment_details': payment_details,
+        'payments': order_payments(conn, order['id']),
+    }
+
+
+def _receipt_branding():
+    from app.services.data_manager import load_config
+    config = load_config() or {}
+    return dict(
+        config=config,
+        org_name=config.get('ORGANIZATION_NAME', ''),
+        receipt_store_name=get_pos_setting('RECEIPT_STORE_NAME', ''),
+        receipt_header=get_pos_setting('RECEIPT_HEADER', ''),
+        receipt_footer=get_pos_setting('RECEIPT_FOOTER', ''),
+        receipt_store_name_bold=get_pos_setting('RECEIPT_STORE_NAME_BOLD', 'false') == 'true',
+        receipt_store_name_italic=get_pos_setting('RECEIPT_STORE_NAME_ITALIC', 'false') == 'true',
+        receipt_header_bold=get_pos_setting('RECEIPT_HEADER_BOLD', 'false') == 'true',
+        receipt_header_italic=get_pos_setting('RECEIPT_HEADER_ITALIC', 'false') == 'true',
+        receipt_footer_bold=get_pos_setting('RECEIPT_FOOTER_BOLD', 'false') == 'true',
+        receipt_footer_italic=get_pos_setting('RECEIPT_FOOTER_ITALIC', 'false') == 'true',
+    )
+
+
+def _load_receipt_order(conn, order_number):
+    return conn.execute('''
+        SELECT o.*, u.username as operator_name
+        FROM pos_orders o
+        LEFT JOIN users u ON o.operator_id = u.id
+        WHERE o.order_number = ?
+    ''', (order_number,)).fetchone()
 
 
 @pos_bp.route('/receipt/<order_number>')
@@ -389,51 +417,12 @@ def _prepare_receipt_data(conn, order):
 def receipt(order_number):
     """View order receipt."""
     conn = get_request_db()
-    
-    order = conn.execute('''
-        SELECT o.*, u.username as operator_name
-        FROM pos_orders o
-        LEFT JOIN users u ON o.operator_id = u.id
-        WHERE o.order_number = ?
-    ''', (order_number,)).fetchone()
-    
+    order = _load_receipt_order(conn, order_number)
     if not order:
         flash('Order not found.')
         return redirect(url_for('pos.sales'))
-    
-    items, coupon_redemption, subtotal_before_discounts, total_item_discount = _prepare_receipt_data(conn, order)
-    
-    # Parse payment details
-    payment_details = {}
-    if order['payment_details']:
-        try:
-            payment_details = json.loads(order['payment_details'])
-        except json.JSONDecodeError:
-            pass  # Invalid payment details JSON
-            
-    # Get branding settings
-    from app.routes.pos.core import get_pos_setting
-    from app.services.data_manager import load_config
-    config = load_config() or {}
-    
-    return render_template('pos/receipt.html',
-                           order=order,
-                           items=items,
-                           coupon_redemption=coupon_redemption,
-                           subtotal_before_discounts=round(subtotal_before_discounts, 2),
-                           total_item_discount=round(total_item_discount, 2),
-                           payment_details=payment_details,
-                           config=config,
-                           org_name=config.get('ORGANIZATION_NAME', ''),
-                           receipt_store_name=get_pos_setting('RECEIPT_STORE_NAME', ''),
-                           receipt_header=get_pos_setting('RECEIPT_HEADER', ''),
-                           receipt_footer=get_pos_setting('RECEIPT_FOOTER', ''),
-                           receipt_store_name_bold=get_pos_setting('RECEIPT_STORE_NAME_BOLD', 'false') == 'true',
-                           receipt_store_name_italic=get_pos_setting('RECEIPT_STORE_NAME_ITALIC', 'false') == 'true',
-                           receipt_header_bold=get_pos_setting('RECEIPT_HEADER_BOLD', 'false') == 'true',
-                           receipt_header_italic=get_pos_setting('RECEIPT_HEADER_ITALIC', 'false') == 'true',
-                           receipt_footer_bold=get_pos_setting('RECEIPT_FOOTER_BOLD', 'false') == 'true',
-                           receipt_footer_italic=get_pos_setting('RECEIPT_FOOTER_ITALIC', 'false') == 'true')
+    return render_template('pos/receipt.html', order=order,
+                           **_prepare_receipt_data(conn, order), **_receipt_branding())
 
 
 @pos_bp.route('/receipt/<order_number>/print')
@@ -441,50 +430,12 @@ def receipt(order_number):
 def receipt_print(order_number):
     """Printable receipt view."""
     conn = get_request_db()
-    
-    order = conn.execute('''
-        SELECT o.*, u.username as operator_name
-        FROM pos_orders o
-        LEFT JOIN users u ON o.operator_id = u.id
-        WHERE o.order_number = ?
-    ''', (order_number,)).fetchone()
-    
+    order = _load_receipt_order(conn, order_number)
     if not order:
         flash('Order not found.')
         return redirect(url_for('pos.sales'))
-    
-    items, coupon_redemption, subtotal_before_discounts, total_item_discount = _prepare_receipt_data(conn, order)
-    
-    payment_details = {}
-    if order['payment_details']:
-        try:
-            payment_details = json.loads(order['payment_details'])
-        except json.JSONDecodeError:
-            pass  # Invalid payment details JSON
-            
-    # Get branding settings
-    from app.routes.pos.core import get_pos_setting
-    from app.services.data_manager import load_config
-    config = load_config() or {}
-    
-    return render_template('pos/receipt_print.html',
-                           order=order,
-                           items=items,
-                           coupon_redemption=coupon_redemption,
-                           subtotal_before_discounts=round(subtotal_before_discounts, 2),
-                           total_item_discount=round(total_item_discount, 2),
-                           payment_details=payment_details,
-                           config=config,
-                           org_name=config.get('ORGANIZATION_NAME', ''),
-                           receipt_store_name=get_pos_setting('RECEIPT_STORE_NAME', ''),
-                           receipt_header=get_pos_setting('RECEIPT_HEADER', ''),
-                           receipt_footer=get_pos_setting('RECEIPT_FOOTER', ''),
-                           receipt_store_name_bold=get_pos_setting('RECEIPT_STORE_NAME_BOLD', 'false') == 'true',
-                           receipt_store_name_italic=get_pos_setting('RECEIPT_STORE_NAME_ITALIC', 'false') == 'true',
-                           receipt_header_bold=get_pos_setting('RECEIPT_HEADER_BOLD', 'false') == 'true',
-                           receipt_header_italic=get_pos_setting('RECEIPT_HEADER_ITALIC', 'false') == 'true',
-                           receipt_footer_bold=get_pos_setting('RECEIPT_FOOTER_BOLD', 'false') == 'true',
-                           receipt_footer_italic=get_pos_setting('RECEIPT_FOOTER_ITALIC', 'false') == 'true')
+    return render_template('pos/receipt_print.html', order=order,
+                           **_prepare_receipt_data(conn, order), **_receipt_branding())
 
 
 @pos_bp.route('/order/<order_number>/delete', methods=['POST'])
@@ -545,6 +496,7 @@ def delete_order(order_number):
         conn.execute('''DELETE FROM pos_refund_items
                         WHERE refund_id IN (SELECT id FROM pos_refunds WHERE order_id = ?)''', (order_id,))
         conn.execute('DELETE FROM pos_refunds WHERE order_id = ?', (order_id,))
+        conn.execute('DELETE FROM pos_payments WHERE order_id = ?', (order_id,))
         for r in conn.execute('SELECT coupon_id FROM pos_coupon_redemptions WHERE order_id = ?',
                               (order_id,)).fetchall():
             conn.execute('''UPDATE pos_coupons SET current_uses = MAX(COALESCE(current_uses, 0) - 1, 0)
