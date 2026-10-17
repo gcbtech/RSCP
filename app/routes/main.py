@@ -132,7 +132,7 @@ def report_issue():
 @main_bp.route('/scan', methods=['GET', 'POST'])
 @login_required
 def scan_page_legacy():
-    logger.info(f"[Scan] scan_page_legacy called. Method: {request.method}, Session: {dict(session)}")
+    logger.debug(f"[Scan] scan_page_legacy called. Method: {request.method}")
     if request.method == 'POST':
         tracking = request.form.get('tracking_input')
         user_input = request.form.get('user_input')
@@ -542,7 +542,7 @@ def mark_refunded(tracking):
                           (res['id'], current_user.username))
         conn.commit()
     except Exception as e:
-        print(e)
+        logger.error(f"mark_refunded failed for {tracking}: {e}")
     finally:
          conn.close()
     return redirect(url_for('main.open_returns_view'))

@@ -3,17 +3,11 @@
 Test File Generator for RSCP Import Preview Testing
 Generates various CSV and XLSX files with different column layouts and data.
 """
+import csv
 import random
 import string
 import os
 from datetime import datetime, timedelta
-
-# Try to import pandas and openpyxl
-try:
-    import pandas as pd
-except ImportError:
-    print("ERROR: pandas is required. Install with: pip install pandas")
-    exit(1)
 
 try:
     import openpyxl
@@ -108,29 +102,30 @@ def generate_rows(count=50):
 
 def create_test_file(filename, columns, data, file_format="csv"):
     """Create a test file with specified columns and data."""
-    df = pd.DataFrame(data)
-    
-    # Rename columns to match the specified column names
-    column_map = {}
-    for target, source in columns.items():
-        if source in df.columns:
-            column_map[source] = target
-    
-    df = df.rename(columns=column_map)
-    
-    # Only keep specified columns
-    df = df[[c for c in columns.keys() if c in df.columns]]
-    
+    # Output header -> source key, keeping only columns present in the data
+    present = set().union(*(row.keys() for row in data)) if data else set()
+    selected = [(target, source) for target, source in columns.items() if source in present]
+    header = [target for target, _ in selected]
+    rows = [[row.get(source, "") for _, source in selected] for row in data]
+
     filepath = os.path.join(OUTPUT_DIR, filename)
-    
+
     if file_format == "xlsx":
         if openpyxl:
-            df.to_excel(filepath, index=False)
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            ws.append(header)
+            for r in rows:
+                ws.append(r)
+            wb.save(filepath)
             print(f"  ✅ Created: {filename}")
         else:
             print(f"  ⚠️ Skipped XLSX (openpyxl not installed): {filename}")
     else:
-        df.to_csv(filepath, index=False)
+        with open(filepath, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(header)
+            writer.writerows(rows)
         print(f"  ✅ Created: {filename}")
 
 
