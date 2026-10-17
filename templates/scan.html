@@ -242,7 +242,7 @@
             </a>
 
             <!-- Link to existing (Manual) -->
-            <button onclick="openLinkModal('{{ item.subtext }}', '{{ item.name|replace("'", "\\'") }}')"
+            <button onclick="openLinkModal({{ item.subtext|js }}, {{ item.name|js }})"
                 class="btn btn-outline-primary btn-sm" style="padding: 8px 16px; font-size: 0.85rem;">
                 🔗 Link to Inventory
             </button>

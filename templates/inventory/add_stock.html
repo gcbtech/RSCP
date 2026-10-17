@@ -75,7 +75,7 @@
                                 <button type="submit" class="btn btn-success">
                                     ✓ Confirm - Add {{ qty_to_add }} to Stock
                                 </button>
-                                <button type="button" class="btn btn-primary" onclick="printAndSubmit(event, '{{ item.sku }}', {{ qty_to_add }})">
+                                <button type="button" class="btn btn-primary" onclick="printAndSubmit(event, {{ item.sku|js }}, {{ qty_to_add }})">
                                     🖨️ Save & Print Labels
                                 </button>
                             </div>

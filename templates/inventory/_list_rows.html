@@ -10,14 +10,14 @@
         <!-- Hidden searchable data for UPC/Part Number and Keywords -->
         <span style="display:none;">{{ item.secondary_ids or '' }} {{ item.keywords or '' }}</span>
         {% if item.image_url %}
-        <a href="#" onclick="showImage('{{ item.image_url }}', '{{ item.name }}'); return false;">
+        <a href="#" onclick="showImage({{ item.image_url|js }}, {{ item.name|js }}); return false;">
             <img src="{{ item.thumbnail_url or item.image_url }}" loading="lazy"
                 style="width: 40px; height: 40px; object-fit: contain; border-radius: 4px; cursor: pointer;">
         </a>
         {% endif %}
     </td>
     <td>
-        <code style="cursor: pointer;" onclick="copyToClipboard('{{ item.sku }}', this)"
+        <code style="cursor: pointer;" onclick="copyToClipboard({{ item.sku|js }}, this)"
             title="Click to copy">{{ item.sku }}</code>
     </td>
     <td>{{ item.name }}{% if item.is_legacy %} <span class="badge bg-secondary"
@@ -111,7 +111,7 @@
             <button class="btn btn-outline-secondary" disabled title="No purchase URL configured">🛒</button>
             {% endif %}
             <!-- Print Label -->
-            <button type="button" class="btn btn-outline-info" onclick="promptPrintLabel('{{ item.sku }}')" title="Print DYMO Label">🖨️</button>
+            <button type="button" class="btn btn-outline-info" onclick="promptPrintLabel({{ item.sku|js }})" title="Print DYMO Label">🖨️</button>
             <!-- Adjust Quantity -->
             <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#adjustModal{{ item.id }}">
                 ±
@@ -172,7 +172,7 @@
                         </div>
                         <div class="modal-footer">
                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                            <button type="button" class="btn btn-info text-white" onclick="printAndSubmitAdjust(event, '{{ item.sku }}', this.closest('form'))">🖨️ Save & Print</button>
+                            <button type="button" class="btn btn-info text-white" onclick="printAndSubmitAdjust(event, {{ item.sku|js }}, this.closest('form'))">🖨️ Save & Print</button>
                             <button type="submit" class="btn btn-primary">Apply</button>
                         </div>
                     </form>

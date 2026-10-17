@@ -73,13 +73,13 @@
                                 {% if item.image_url %}
                                 <img src="{{ item.image_url }}" alt=""
                                     style="width: 40px; height: 40px; object-fit: cover; border-radius: 4px; cursor: pointer;"
-                                    onclick="showImage('{{ item.image_url }}', '{{ item.name }}')">
+                                    onclick="showImage({{ item.image_url|js }}, {{ item.name|js }})">
                                 {% else %}
                                 <div class="bg-secondary text-white d-flex align-items-center justify-content-center"
                                     style="width: 40px; height: 40px; border-radius: 4px; font-size: 10px;">No Img</div>
                                 {% endif %}
                             </td>
-                            <td><code style="cursor: pointer;" onclick="copyToClipboard('{{ item.sku }}', this)"
+                            <td><code style="cursor: pointer;" onclick="copyToClipboard({{ item.sku|js }}, this)"
                                     title="Click to copy">{{ item.sku }}</code></td>
                             <td>
                                 <a href="{{ url_for('inventory.edit_item', item_id=item.id) }}"
