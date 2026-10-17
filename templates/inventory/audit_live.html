@@ -1,12 +1,10 @@
-<!DOCTYPE html>
-<html>
+{% extends 'base.html' %}
+{% block title %}Audit Live{% endblock %}
 
-<head>
-    <title>RSCP | Audit Live</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="icon" href="{{ favicon }}">
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+{# Full-screen scanning page: no nav. #}
+{% block nav %}{% endblock %}
+
+{% block head %}
     <style>
         body {
             background: #f8f9fa;
@@ -62,9 +60,9 @@
             font-size: 0.8rem;
         }
     </style>
-</head>
+{% endblock %}
 
-<body>
+{% block content %}
     <div class="container mt-3">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <div>
@@ -163,7 +161,9 @@
             </div>
         </div>
     </div>
+{% endblock %}
 
+{% block scripts %}
     <script>
         // State
         let currentItem = null;
@@ -439,6 +439,4 @@
             }, 300);
         }
     </script>
-</body>
-
-</html>
+{% endblock %}
