@@ -731,6 +731,21 @@ restart_and_check() {  # restart_and_check EXPECTED_VERSION
 # One-time migration from a 2.x install
 # --------------------------------------------------------------------------
 
+# A 2.x install (unit without RSCP_DATA_DIR) and no data here yet: a plain
+# install would replace its unit and start an EMPTY store. Require an
+# explicit --migrate-from instead.
+refuse_unmigrated_legacy() {
+    [ -e "$DATA_DIR/rscp.db" ] && return 0
+    local unit_file workdir
+    unit_file=$(legacy_unit_file)
+    [ -n "$unit_file" ] && [ -f "$unit_file" ] || return 0
+    grep -q 'RSCP_DATA_DIR=' "$unit_file" && return 0
+    workdir=$(sed -n 's/^WorkingDirectory=//p' "$unit_file" | head -n 1)
+    die "Found an existing RSCP 2.x service ($unit_file${workdir:+, app in $workdir}).
+    Re-run with --migrate-from ${workdir:-<its app directory>} to move its data into $DATA_DIR,
+    or remove that service first if you really want a fresh, empty install."
+}
+
 legacy_unit_file() {
     systemctl show -p FragmentPath --value "$LEGACY_UNIT.service" 2>/dev/null || true
 }
@@ -950,6 +965,8 @@ run_install() {
     fi
     if [ -n "$MIGRATE_FROM" ]; then
         check_migration
+    else
+        refuse_unmigrated_legacy
     fi
 
     choose_channel_interactively

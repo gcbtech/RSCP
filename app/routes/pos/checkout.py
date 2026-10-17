@@ -159,11 +159,14 @@ def checkout_process():
                 cd_amount = float(get_pos_setting('CASH_DISCOUNT_AMOUNT', '0') or 0)
                 cd_type = get_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
                 if cd_amount > 0:
+                    # Discount the cash that pays the sale, not the cash handed
+                    # over: $100 given for a $20 cash balance earns 3% of $20.
+                    cash_basis = min(cash_amount, max(0.0, total - sum(card_amounts)))
                     if cd_type == 'percent':
-                        split_cash_discount = calculate_percentage(cash_amount, cd_amount)
+                        split_cash_discount = calculate_percentage(cash_basis, cd_amount)
                     else:
-                        cash_proportion = cash_amount / total if total > 0 else 0
-                        split_cash_discount = round_money(min(cd_amount * cash_proportion, cash_amount))
+                        cash_proportion = cash_basis / total if total > 0 else 0
+                        split_cash_discount = round_money(min(cd_amount * cash_proportion, cash_basis))
                     total = round_money(total - split_cash_discount)
 
             total_tendered = round_money(cash_amount + sum(card_amounts))

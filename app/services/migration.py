@@ -840,6 +840,19 @@ def _m6_settings_store(conn):
     from app.services import settings as settings_store
     settings_store.create_tables(conn)
     settings_store.import_legacy(conn)
+
+
+def _m11_reimport_encoded_settings(conn):
+    """Re-run the legacy settings import for keys still missing.
+
+    Migration 6 originally rejected 2.x's encoded webhook URLs (validated as
+    plaintext URLs), leaving WEBHOOK_ENABLED on with no URL. INSERT OR IGNORE:
+    nothing already in the settings table is touched.
+    """
+    from app.services import settings as settings_store
+    settings_store.import_legacy(conn)
+
+
 def _m9_unify_admin_roles(conn):
     """One permission model: admin == the super_admin role.
 
@@ -1170,7 +1183,7 @@ def _m8_pos_ledger(conn):
     conn.execute('''
         CREATE TABLE IF NOT EXISTS drawer_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            register_id INTEGER,
+            register_id TEXT,   -- pos_registers.register_id is TEXT
             opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             opened_by INTEGER,
             opening_float REAL NOT NULL DEFAULT 0,
@@ -1229,15 +1242,19 @@ def _m8_pos_ledger(conn):
 
     # Backfill refunds (only rows not yet filled)
     refunds = conn.execute('''
-        SELECT r.id, r.amount, r.refund_method, r.tax_refunded, o.payment_method, o.tax_amount, o.total
+        SELECT r.id, r.amount, r.refund_method, r.tax_refunded, o.payment_method, o.tax_amount, o.total,
+               r.refund_type
         FROM pos_refunds r LEFT JOIN pos_orders o ON o.id = r.order_id
         WHERE r.refund_method IS NULL OR r.tax_refunded IS NULL
     ''').fetchall()
-    for rid, amount, r_method, r_tax, o_method, o_tax, o_total in refunds:
+    for rid, amount, r_method, r_tax, o_method, o_tax, o_total, r_type in refunds:
         if r_method is None:
             r_method = 'card' if o_method == 'card' else 'cash'
         if r_tax is None:
-            r_tax = money((amount or 0) * (o_tax or 0) / o_total) if o_total else 0.0
+            if r_type == 'partial':
+                r_tax = 0.0   # 2.x partial refunds paid the pre-tax line total
+            else:
+                r_tax = money((amount or 0) * (o_tax or 0) / o_total) if o_total else 0.0
         conn.execute('UPDATE pos_refunds SET refund_method = ?, tax_refunded = ? WHERE id = ?',
                      (r_method, r_tax, rid))
 
@@ -1253,6 +1270,7 @@ SCHEMA_MIGRATIONS = [
     (8, 'POS payments ledger, refund method/tax, drawer sessions', _m8_pos_ledger),
     (9, 'admin flag folded into super_admin role', _m9_unify_admin_roles),
     (10, 'packages: database is the only source (manifest.csv retired)', _m10_packages_db_only),
+    (11, 're-import encoded legacy settings (webhook URLs)', _m11_reimport_encoded_settings),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 assert len({v for v, _, _ in SCHEMA_MIGRATIONS}) == len(SCHEMA_MIGRATIONS), "duplicate schema version"

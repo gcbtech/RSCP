@@ -808,7 +808,12 @@ def import_legacy(conn, config_file=None):
     imported = 0
     for key, value in rows:
         s = SETTINGS.get(key)
-        if s is not None:
+        if s is not None and s.encode is not None:
+            # 2.x already stored these encoded (webhook URLs obscured,
+            # SMTP password encrypted) in the same form this store keeps;
+            # validating the encoded text as plaintext would reject it.
+            value = '' if value is None else str(value)
+        elif s is not None:
             try:
                 value = s.coerce(value)
             except SettingsError as e:

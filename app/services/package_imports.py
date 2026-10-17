@@ -731,6 +731,12 @@ def import_legacy_manifest(conn, path):
     import datetime as _dt
     cutoff = (_dt.date.today() - _dt.timedelta(days=30)).strftime('%Y-%m-%d')
     recent = [i for i in items if i['date'] == 'Pending' or i['date'] >= cutoff]
+    # Skip tracking numbers already in the database: under the old
+    # UNIQUE(tracking_number) index a second item on a known shipment never
+    # got in, and adding it now would show a phantom unscanned "past due"
+    # row on a shipment that was already received.
+    known = {r[0].upper() for r in conn.execute('SELECT tracking_number FROM packages')}
+    recent = [i for i in recent if (i['tracking'] or '').upper() not in known]
     if len(recent) < len(items):
         logger.info(f"Legacy manifest import: skipped {len(items) - len(recent)} rows dated before {cutoff}")
     added, _ = apply_items(conn, recent, source=SOURCE_UPLOAD, insert_only=True)

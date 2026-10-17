@@ -425,19 +425,21 @@
         const cashDiscountValue = {{ cash_discount_value }};
         const cashTotal = total - cashDiscountValue;  // Discounted total for cash payments
 
-        function getSplitCashDiscount(cash) {
+        // Cash discount on the cash that actually pays the sale (not change).
+        function getSplitCashDiscount(cash, cards) {
             let splitCashDiscount = 0;
             const cashDiscountEnabled = {% if cash_discount_enabled %} true{% else %} false{% endif %};
         const cashDiscountAmount = {{ cash_discount_amount }};
         const cashDiscountType = '{{ cash_discount_type }}';
 
-        if (cashDiscountEnabled && cash > 0 && cashDiscountAmount > 0) {
+        const cashBasis = Math.min(cash, Math.max(0, total - (cards || 0)));
+        if (cashDiscountEnabled && cashBasis > 0 && cashDiscountAmount > 0) {
             if (cashDiscountType === 'percent') {
-                splitCashDiscount = cash * (cashDiscountAmount / 100);
+                splitCashDiscount = cashBasis * (cashDiscountAmount / 100);
             } else {
-                // Fixed discount proportional to cash portion
-                const cashProportion = cash / total;
-                splitCashDiscount = Math.min(cashDiscountAmount * cashProportion, cash);
+                // Fixed discount proportional to the cash portion
+                const cashProportion = cashBasis / total;
+                splitCashDiscount = Math.min(cashDiscountAmount * cashProportion, cashBasis);
             }
             splitCashDiscount = Math.round(splitCashDiscount * 100) / 100;
         }
@@ -470,7 +472,7 @@
                     cards += parseFloat(i.value) || 0;
                 });
 
-                const discount = getSplitCashDiscount(cash);
+                const discount = getSplitCashDiscount(cash, cards);
                 const requiredTotal = total - discount;
 
                 if (cash + cards < requiredTotal - 0.01) {
@@ -624,7 +626,7 @@
                 cards += parseFloat(i.value) || 0;
             });
 
-            const splitCashDiscount = getSplitCashDiscount(cash);
+            const splitCashDiscount = getSplitCashDiscount(cash, cards);
             const adjustedTotal = total - splitCashDiscount;
             const remaining = adjustedTotal - cash - cards;
 
