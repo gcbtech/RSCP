@@ -32,6 +32,8 @@ def _parse_networks(entries):
 
 
 class TrustedProxyFix:
+    _warned = set()
+
     def __init__(self, wsgi_app, trusted=None):
         self.raw_app = wsgi_app
         self.proxied_app = ProxyFix(wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
@@ -45,6 +47,14 @@ class TrustedProxyFix:
         return any(ip in net for net in self.networks)
 
     def __call__(self, environ, start_response):
-        if self._is_trusted(environ.get('REMOTE_ADDR')):
+        peer = environ.get('REMOTE_ADDR')
+        if self._is_trusted(peer):
             return self.proxied_app(environ, start_response)
+        # Traffic relayed by Cloudflare/cloudflared from a peer we don't trust:
+        # every tunnelled user will look like this one IP. Say so once.
+        if 'HTTP_CF_CONNECTING_IP' in environ and peer not in self._warned:
+            self._warned.add(peer)
+            logger.warning(f"[Proxy] Cloudflare-relayed request from untrusted peer {peer}; "
+                           f"all tunnel users will appear as {peer}. If this is your cloudflared "
+                           f"host, add it under Admin > Settings > Reverse Proxy / Tunnel.")
         return self.raw_app(environ, start_response)

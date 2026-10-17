@@ -65,3 +65,28 @@ def settings():
 
     # 3. Redirect to Admin Panel (GET)
     return redirect(url_for('admin.admin_panel', tab='settings'))
+
+
+@admin_bp.route('/settings/network', methods=['POST'])
+def save_network_settings():
+    """Trusted reverse proxies (whose X-Forwarded-For is believed).
+
+    Takes effect after a restart: the proxy middleware is built at startup.
+    """
+    auth_err = require_admin()
+    if auth_err:
+        return auth_err
+
+    import ipaddress
+    raw = request.form.get('trusted_proxies', '')
+    entries = [e.strip() for e in raw.replace('\n', ',').split(',') if e.strip()]
+    for entry in entries:
+        try:
+            ipaddress.ip_network(entry, strict=False)
+        except ValueError:
+            flash(f'"{entry}" is not a valid IP address or network.', 'error')
+            return redirect(url_for('admin.admin_panel', tab='settings'))
+
+    save_config({'TRUSTED_PROXIES': entries or ['127.0.0.1', '::1']})
+    flash('Trusted proxies saved. Restart RSCP for the change to take effect.', 'success')
+    return redirect(url_for('admin.admin_panel', tab='settings'))

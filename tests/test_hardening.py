@@ -45,6 +45,16 @@ def test_forwarded_for_ignored_from_untrusted_peer():
     assert _remote_addr_seen('10.0.0.50', '1.2.3.4') == '10.0.0.50'
 
 
+def test_network_setting_validates_and_saves(fresh_app, fresh_client, monkeypatch):
+    saved = {}
+    monkeypatch.setattr('app.routes.admin.settings.save_config', lambda d: saved.update(d) or True)
+    login(fresh_client, 1)
+    fresh_client.post('/admin/settings/network', data={'trusted_proxies': 'not-an-ip'})
+    assert saved == {}
+    fresh_client.post('/admin/settings/network', data={'trusted_proxies': '127.0.0.1, 10.0.0.50'})
+    assert saved['TRUSTED_PROXIES'] == ['127.0.0.1', '10.0.0.50']
+
+
 def test_forwarded_for_honoured_from_trusted_proxy():
     assert _remote_addr_seen('127.0.0.1', '1.2.3.4') == '1.2.3.4'
     assert _remote_addr_seen('10.0.0.9', '5.6.7.8', trusted=['10.0.0.9']) == '5.6.7.8'

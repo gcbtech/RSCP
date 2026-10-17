@@ -1426,6 +1426,29 @@
                             </div>
                         </div>
 
+                        <!-- Network -->
+                        <div class="admin-card">
+                            <div class="card-header">
+                                <div class="icon">🌐</div>
+                                <span>Reverse Proxy / Tunnel</span>
+                            </div>
+                            <div class="card-body">
+                                <form action="/admin/settings/network" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <label class="form-label small fw-bold">Trusted proxy IPs (comma separated)</label>
+                                    <input type="text" name="trusted_proxies" class="form-control form-control-sm mb-1"
+                                        value="{{ (config.TRUSTED_PROXIES or ['127.0.0.1', '::1'])|join(', ') }}"
+                                        placeholder="127.0.0.1, ::1, 10.0.0.50">
+                                    <div class="form-text small mb-2">
+                                        Add the IP of the machine running cloudflared or nginx in front of RSCP,
+                                        so RSCP sees each user's real IP. Only list machines you control:
+                                        anyone at a listed address can claim any IP. Restart required.
+                                    </div>
+                                    <button class="btn btn-outline-primary btn-sm w-100" type="submit">Save</button>
+                                </form>
+                            </div>
+                        </div>
+
                         <!-- Automation -->
                         <div class="admin-card">
                             <div class="card-header">
