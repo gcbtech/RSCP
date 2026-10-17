@@ -276,7 +276,7 @@ def test_unit_files_match_layout():
     for line in ('User=rscp', 'StateDirectory=rscp', 'Environment=RSCP_DATA_DIR=/var/lib/rscp',
                  'WorkingDirectory=/opt/rscp/current',
                  'ExecStartPre=/opt/rscp/current/venv/bin/python -m app.migrate',
-                 'ExecStart=/opt/rscp/current/venv/bin/gunicorn -c /opt/rscp/current/gunicorn.conf.py wsgi:app',
+                 'ExecStart=/opt/rscp/current/venv/bin/python -m gunicorn -c /opt/rscp/current/gunicorn.conf.py wsgi:app',
                  'Restart=always', 'ProtectSystem=strict', 'ReadWritePaths=/var/lib/rscp',
                  'ProtectHome=true', 'PrivateTmp=true', 'NoNewPrivileges=true'):
         assert line in unit.splitlines(), line
