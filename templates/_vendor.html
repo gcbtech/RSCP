@@ -1,0 +1,14 @@
+{#
+  Page-specific third-party libraries, pinned in ONE place.
+  Usage inside a page:
+    {% import '_vendor.html' as vendor %}
+    {% block head %}{{ vendor.tom_select_css() }}{% endblock %}
+    {% block scripts %}{{ vendor.chartjs() }}{{ vendor.tom_select_js() }}<script>...</script>{% endblock %}
+  All URLs are on cdn.jsdelivr.net, which the Content-Security-Policy allows.
+#}
+{% macro chartjs() %}<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>{% endmacro %}
+{% macro tom_select_css() %}<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/css/tom-select.bootstrap5.min.css">{% endmacro %}
+{% macro tom_select_js() %}<script src="https://cdn.jsdelivr.net/npm/tom-select@2.2.2/dist/js/tom-select.complete.min.js"></script>{% endmacro %}
+{% macro jquery() %}<script src="https://cdn.jsdelivr.net/npm/jquery@3.7.0/dist/jquery.min.js"></script>{% endmacro %}
+{% macro datatables_css() %}<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/datatables.net-bs5@1.13.6/css/dataTables.bootstrap5.min.css">{% endmacro %}
+{% macro datatables_js() %}<script src="https://cdn.jsdelivr.net/npm/datatables.net@1.13.6/js/jquery.dataTables.min.js"></script><script src="https://cdn.jsdelivr.net/npm/datatables.net-bs5@1.13.6/js/dataTables.bootstrap5.min.js"></script>{% endmacro %}
