@@ -1,11 +1,10 @@
-<!DOCTYPE html>
-<html>
+{% extends 'base.html' %}
+{% block title %}Line Scanner{% endblock %}
+{% block nav %}{% endblock %}
+{% block bootstrap_js %}{% endblock %}
 
-<head>
-    <title>RSCP | Line Scanner</title>
+{% block head %}
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <link rel="icon" href="{{ favicon }}">
     <style>
         body {
             background: #0f172a;
@@ -228,9 +227,9 @@
             font-weight: 600;
         }
     </style>
-</head>
+{% endblock %}
 
-<body>
+{% block content %}
     <!-- ACTIVE SCANNER UI -->
     <div class="scan-app" id="scannerApp" style="display: none;">
         <div class="scan-header">
@@ -281,7 +280,9 @@
         <button type="button" style="background: #dc2626; color: white;" onclick="unpairScanner()">🔓 Unpair from Register</button>
         <button type="button" style="background: #334155; color: white;" onclick="toggleMenu()">Close</button>
     </div>
+{% endblock %}
 
+{% block scripts %}
     <script>
         'use strict';
 
@@ -380,7 +381,7 @@
                         </div>
                         <div class="qty-controls">
                             <button type="button" onclick="changeQty(${i}, ${item.quantity - 1})">−</button>
-                            <span class="qty">${item.quantity}</span>
+                            <span class="qty">${esc(String(item.quantity))}</span>
                             <button type="button" onclick="changeQty(${i}, ${item.quantity + 1})">+</button>
                             <button type="button" class="remove-btn" onclick="removeItem(${i})">✕</button>
                         </div>
@@ -693,6 +694,4 @@
             }
         })();
     </script>
-</body>
-
-</html>
+{% endblock %}
