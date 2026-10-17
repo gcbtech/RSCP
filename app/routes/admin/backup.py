@@ -45,8 +45,8 @@ def export_backup():
         
         memory_file = io.BytesIO()
         with zipfile.ZipFile(memory_file, 'w', zipfile.ZIP_DEFLATED) as zf:
-            # Zip config and manifest from their active files
-            for f_path in [CONFIG_FILE, MANIFEST_FILE]:
+            # Zip config from its active file (packages live in the database)
+            for f_path in [CONFIG_FILE]:
                 if os.path.exists(f_path):
                     zf.write(f_path, os.path.basename(f_path))
             
@@ -89,6 +89,7 @@ def import_backup():
     try:
         with zipfile.ZipFile(file, 'r') as zf:
             # Validate backup contents
+            # manifest.csv: accepted so pre-3.0 backups restore, but ignored
             allowed_files = ['config.json', 'rscp.db', 'manifest.csv']
             backup_files = zf.namelist()
             
@@ -131,7 +132,7 @@ def import_backup():
                 if restored_db and os.path.exists(restored_db):
                     os.remove(restored_db)
 
-            for name, target in (('config.json', CONFIG_FILE), ('manifest.csv', MANIFEST_FILE)):
+            for name, target in (('config.json', CONFIG_FILE),):
                 if name in backup_files:
                     _atomic_replace(target, zf.read(name))
             if 'config.json' in backup_files:

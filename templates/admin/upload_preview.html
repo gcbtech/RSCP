@@ -101,8 +101,8 @@
             <h5>📊 File Summary</h5>
             <p class="mb-1"><strong>Filename:</strong> {{ preview.filename }}</p>
             <p class="mb-1"><strong>Total Rows:</strong> {{ preview.total_rows }}</p>
-            <p class="mb-0"><strong>Mode:</strong> {{ 'Replace All' if preview.mode == 'replace' else 'Append to
-                Existing' }}</p>
+            <p class="mb-0 text-muted small">Rows are matched by tracking number + item name: new ones are
+                added, known ones updated. Received and manually added packages are not overwritten.</p>
         </div>
 
         <!-- Warnings -->

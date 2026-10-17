@@ -5,15 +5,14 @@ Handles package CRUD operations and the main admin panel view.
 import os
 import datetime
 import logging
-import pandas as pd
 from flask import render_template, request, redirect, url_for, session, flash, jsonify, has_app_context
 from flask_login import current_user
 
 from app.routes.admin import admin_bp, require_admin, save_config_value
 from app.services.db import get_db_connection, get_request_db
 from app.services.auth import load_users
-from app.services.data_manager import load_config, sync_manifest, get_analytics_stats, MANIFEST_FILE
-from app.services.file_handler import atomic_write
+from app.services.data_manager import load_config, get_analytics_stats
+from app.services import package_imports
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +26,6 @@ def admin_panel():
         flash("Administrator access required. Please login with an Admin account.")
         return redirect(url_for('auth.login', next=request.url, force=True))
         
-    # Sync Manifest first to ensure fresh data
-    sync_manifest()
-    
     users = load_users()
     
     # Sorting / Pagination parameters
@@ -197,6 +193,7 @@ def add_manual_item():
                 INSERT INTO packages (tracking_number, item_name, date_expected, quantity, status, source, priority, manual_date, sku)
                 VALUES (?, ?, ?, 1, ?, 'manual', ?, ?, ?)
             ''', (tracking, name, date_input, status, 1 if is_priority else 0, date_input, sku))
+            package_imports.record_import(conn, 'manual', None, 1, 0, current_user.username)
             conn.commit()
             
             # In-app notification for new package
@@ -326,16 +323,6 @@ def delete_package_from_db(package_id):
         if close_conn:
             conn.close()
     
-    # Also remove from Manifest if present
-    if tracking and os.path.exists(MANIFEST_FILE):
-        try:
-            df = pd.read_csv(MANIFEST_FILE, dtype=str)
-            df = df[df['TrackingNumber'].astype(str).str.strip() != tracking]
-            with atomic_write(MANIFEST_FILE, 'w') as f:
-                df.to_csv(f, index=False)
-        except Exception as e:
-            logger.warning(f"Could not remove package from manifest: {e}")
-        
     return redirect(url_for('admin.admin_panel'))
 
 
@@ -379,10 +366,10 @@ def set_date(tracking):
             conn = get_db_connection()
             close_conn = True
         try:
-            conn.execute("UPDATE packages SET manual_date = ?, date_expected = ? WHERE tracking_number = ?", 
+            conn.execute("UPDATE packages SET manual_date = ?, date_expected = ? WHERE tracking_number = ?",
                          (new_date, new_date, tracking))
+            package_imports.refresh_package_statuses(conn)
             conn.commit()
-            sync_manifest()  # Trigger status update check
         except Exception as e:
             logger.error(f"Set date error: {e}")
         finally:
@@ -457,31 +444,6 @@ def bulk_action():
             placeholders = ','.join(['?']*len(trackings))
             conn.execute(f"DELETE FROM packages WHERE tracking_number IN ({placeholders})", trackings)
             conn.commit()
-            
-            # Also remove from manifest.csv to prevent re-sync
-            try:
-                if os.path.exists(MANIFEST_FILE):
-                    df = pd.read_csv(MANIFEST_FILE)
-                    original_len = len(df)
-                    
-                    # Find ALL tracking columns (eBay has multiple like TrackingNumber, TrackingNumber.1)
-                    track_cols = [col for col in df.columns if 'tracking' in col.lower()]
-                    
-                    if track_cols:
-                        # Create a mask: row should be removed if ANY tracking column matches
-                        # Normalize Excel-quoted values like ="12345" -> 12345
-                        mask = pd.Series([False] * len(df))
-                        for col in track_cols:
-                            # Normalize: remove ="..." wrapping and quotes
-                            normalized = df[col].astype(str).str.replace(r'^="?', '', regex=True).str.replace(r'"$', '', regex=True).str.strip()
-                            mask = mask | normalized.isin(trackings)
-                        
-                        df = df[~mask]
-                        if len(df) < original_len:
-                            df.to_csv(MANIFEST_FILE, index=False)
-                            logger.info(f"Removed {original_len - len(df)} items from manifest.csv")
-            except Exception as csv_e:
-                logger.error(f"Error removing from manifest: {csv_e}")
              
         elif action == 'unreceive':
             for t in trackings:
@@ -549,50 +511,15 @@ def set_tracking(package_id):
             
         old_tracking = old_pkg['tracking_number']
         
-        # Check if new tracking already exists (to avoid unique constraint fail)
-        exists = conn.execute("SELECT id FROM packages WHERE tracking_number = ? AND id != ?", (new_tracking, package_id)).fetchone()
+        # Several items may share a tracking number; the same item may not appear twice
+        exists = conn.execute("SELECT id FROM packages WHERE tracking_number = ? AND item_name IS ? AND id != ?",
+                              (new_tracking, old_pkg['item_name'], package_id)).fetchone()
         if exists:
-             return jsonify({'success': False, 'error': 'Tracking number already exists'}), 409
- 
+             return jsonify({'success': False, 'error': 'This item already exists under that tracking number'}), 409
+
         conn.execute("UPDATE packages SET tracking_number = ? WHERE id = ?", (new_tracking, package_id))
         conn.commit()
         
-        # Update Manifest if exists
-        if os.path.exists(MANIFEST_FILE):
-            try:
-                # Use pandas like in delete/bulk_action
-                # We need to find the row with old_tracking and update it
-                df = pd.read_csv(MANIFEST_FILE, dtype=str)
-                
-                # Find columns that might hold the tracking number
-                track_cols = [col for col in df.columns if 'tracking' in col.lower()]
-                
-                updated = False
-                for col in track_cols:
-                    # Clean comparisons
-                    # If we find a match, update it
-                    # Note: This might be tricky if multiple rows have the same tracking (unlikely for manifest, but possible)
-                    # We will update ALL occurrences of the old tracking in the manifest
-                    
-                    # Normalize column for comparison
-                    normalized = df[col].astype(str).str.replace(r'^="?', '', regex=True).str.replace(r'"$', '', regex=True).str.strip()
-                    
-                    mask = normalized == old_tracking
-                    if mask.any():
-                        # Update the original column
-                        # If existing format was ="...", we should probably keep it? 
-                        # For simplicity, just write the raw number. sync_manifest handles raw numbers fine.
-                        df.loc[mask, col] = new_tracking
-                        updated = True
-                        
-                if updated:
-                    with atomic_write(MANIFEST_FILE, 'w') as f:
-                        df.to_csv(f, index=False)
-                    logger.info(f"Updated manifest tracking from {old_tracking} to {new_tracking}")
-                    
-            except Exception as e:
-                logger.error(f"Error updating manifest tracking: {e}")
-                
         return {'success': True}
     except Exception as e:
         logger.error(f"Error setting Tracking: {e}")

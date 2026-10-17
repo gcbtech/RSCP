@@ -47,6 +47,22 @@ def extract_order_id(text, subject):
     return None, None
 
 
+# Only an explicitly labelled number counts ("Tracking number: 1Z999...",
+# "Tracking ID TBA123..."), so order numbers and prices are never mistaken
+# for a carrier tracking number.
+TRACKING_LABEL_RE = re.compile(
+    r'tracking\s*(?:number|no\.?|#|id)\s*(?:is|:|#)?\s*([A-Z0-9]{10,34})\b', re.IGNORECASE)
+
+
+def extract_tracking_number(text):
+    """Carrier tracking number from a shipping email, or None."""
+    for m in TRACKING_LABEL_RE.finditer(text or ''):
+        candidate = m.group(1).upper()
+        if any(c.isdigit() for c in candidate):
+            return candidate
+    return None
+
+
 def extract_qty(text):
     """Attempt to find quantity in text like 'Qty: 2' or 'Quantity: 3'."""
     # Look for explicit label
@@ -294,6 +310,9 @@ def check_amazon_emails(imap_server, user, password):
                 
                 if order_id:
                     tracking_number = f"ORDER-{order_id}"
+                    # Shipping emails may name the carrier tracking; the
+                    # importer then gives it to the order's placeholder rows.
+                    carrier_tracking = extract_tracking_number(text_content)
                     
                     # 2. Extract Items
                     items = []
@@ -328,24 +347,24 @@ def check_amazon_emails(imap_server, user, password):
                             
                             results.append({
                                 'tracking': unique_tracking,
+                                'order_id': order_id,
+                                'carrier_tracking': carrier_tracking,
                                 'name': item['name'],
                                 'image_url': item['image_url'],
                                 'quantity': item['quantity'],
                                 'date': datetime.datetime.now().strftime('%Y-%m-%d'),
-                                'source': 'Auto-Email',
-                                'status': 'incoming'
                             })
                     else:
                         # Final Fallback
                         logger.warning(f"Failed to parse items for {tracking_number}. Using Subject line.")
                         results.append({
                             'tracking': tracking_number,
+                            'order_id': order_id,
+                            'carrier_tracking': carrier_tracking,
                             'name': subject, # User warned this is bad, but better than nothing?
                             'image_url': '',
                             'quantity': 1,
                             'date': datetime.datetime.now().strftime('%Y-%m-%d'),
-                            'source': 'Auto-Email',
-                            'status': 'incoming'
                         })
                     
             except Exception as e:

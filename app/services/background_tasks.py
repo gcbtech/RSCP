@@ -1,6 +1,6 @@
 """
 Background Tasks Module
-Handles scheduled background jobs for manifest sync and email ingestion.
+Handles scheduled background jobs: package status upkeep and email ingestion.
 
 Uses APScheduler for reliable job scheduling with:
 - Retry logic with exponential backoff
@@ -13,7 +13,7 @@ import logging
 import datetime
 import sqlite3
 import atexit
-from app.services.data_manager import load_config, MANIFEST_FILE, sync_manifest
+from app.services.data_manager import load_config
 from app.services.file_handler import SimpleFileLock, atomic_write
 
 logger = logging.getLogger(__name__)
@@ -27,25 +27,13 @@ except ImportError:
     APSCHEDULER_AVAILABLE = False
     logger.warning("[Background] APScheduler not installed, falling back to threading")
 
-# Email ingest import
-try:
-    import email_ingest
-except ImportError:
-    import sys
-    sys.path.append(os.getcwd())
-    try:
-        import email_ingest
-    except ImportError:
-        email_ingest = None
-        logger.warning("[Background] email_ingest module not available")
-
 # Background sync status (for monitoring)
 SYNC_STATUS = {
-    'last_manifest_sync': None,
+    'last_maintenance': None,
     'last_email_check': None,
-    'manifest_sync_count': 0,
+    'maintenance_count': 0,
     'email_check_count': 0,
-    'manifest_failures': 0,
+    'maintenance_failures': 0,
     'email_failures': 0,
     'errors': [],
     'scheduler_running': False
@@ -53,149 +41,60 @@ SYNC_STATUS = {
 
 # Configuration
 MAX_CONSECUTIVE_FAILURES = 5
-MANIFEST_SYNC_INTERVAL_MINUTES = 5
+MAINTENANCE_INTERVAL_MINUTES = 15
 EMAIL_CHECK_INTERVAL_MINUTES = 15
 
 # Global scheduler instance
 scheduler = None
 
 
-def manifest_sync_job():
-    """Background job to sync manifest.csv.
-    
-    This decouples manifest sync from the request cycle, improving
-    dashboard response times significantly.
-    """
-    global SYNC_STATUS
-    
+def _record_failure(job_id, counter, label, e):
+    SYNC_STATUS[counter] += 1
+    logger.error(f"{label} Error (failure {SYNC_STATUS[counter]}/{MAX_CONSECUTIVE_FAILURES}): {e}")
+    SYNC_STATUS['errors'].append({
+        'time': datetime.datetime.now().isoformat(),
+        'job': job_id,
+        'error': str(e)
+    })
+    # Keep only last 10 errors
+    if len(SYNC_STATUS['errors']) > 10:
+        SYNC_STATUS['errors'] = SYNC_STATUS['errors'][-10:]
+    # If too many failures, pause the job
+    if SYNC_STATUS[counter] >= MAX_CONSECUTIVE_FAILURES:
+        logger.error(f"{label} ⚠ Pausing job after {MAX_CONSECUTIVE_FAILURES} consecutive failures")
+        if scheduler and scheduler.get_job(job_id):
+            scheduler.pause_job(job_id)
+
+
+def package_maintenance_job():
+    """Keep package statuses in step with the calendar (on_time -> expected ->
+    past_due) and apply AUTO_TRIM. Imports write straight to the database,
+    so there is no file to sync any more."""
     try:
-        logger.debug("[Manifest Sync] Starting background sync...")
-        sync_manifest()
-        
-        # Success - reset failure count
-        SYNC_STATUS['last_manifest_sync'] = datetime.datetime.now().isoformat()
-        SYNC_STATUS['manifest_sync_count'] += 1
-        SYNC_STATUS['manifest_failures'] = 0
-        logger.debug("[Manifest Sync] ✓ Background sync completed.")
-        
+        from app.services.package_imports import run_package_maintenance
+        changed, trimmed = run_package_maintenance()
+        if changed or trimmed:
+            logger.info(f"[Packages] {changed} statuses refreshed, {trimmed} old packages trimmed")
+        SYNC_STATUS['last_maintenance'] = datetime.datetime.now().isoformat()
+        SYNC_STATUS['maintenance_count'] += 1
+        SYNC_STATUS['maintenance_failures'] = 0
     except Exception as e:
-        SYNC_STATUS['manifest_failures'] += 1
-        error_msg = f"[Manifest Sync] Error (failure {SYNC_STATUS['manifest_failures']}/{MAX_CONSECUTIVE_FAILURES}): {e}"
-        logger.error(error_msg)
-        
-        SYNC_STATUS['errors'].append({
-            'time': datetime.datetime.now().isoformat(),
-            'job': 'manifest_sync',
-            'error': str(e)
-        })
-        # Keep only last 10 errors
-        if len(SYNC_STATUS['errors']) > 10:
-            SYNC_STATUS['errors'] = SYNC_STATUS['errors'][-10:]
-        
-        # If too many failures, pause the job
-        if SYNC_STATUS['manifest_failures'] >= MAX_CONSECUTIVE_FAILURES:
-            logger.error(f"[Manifest Sync] ⚠ Pausing job after {MAX_CONSECUTIVE_FAILURES} consecutive failures")
-            if scheduler and scheduler.get_job('manifest_sync'):
-                scheduler.pause_job('manifest_sync')
+        _record_failure('package_maintenance', 'maintenance_failures', '[Packages]', e)
 
 
 def email_ingest_job():
-    """Background job to check for Amazon shipping emails."""
-    global SYNC_STATUS
-    from app.services.db import get_db_connection
-    
+    """Background job: import order emails straight into packages."""
     try:
-        conf = load_config()
-        if not conf or conf.get('EMAIL_INGEST_ENABLED') != True:
-            return  # Email ingestion not enabled
-            
-        srv = conf.get('IMAP_SERVER')
-        usr = conf.get('EMAIL_USER')
-        pwd = conf.get('EMAIL_PASS')
-        
-        if not (srv and usr and pwd):
-            return  # Missing credentials
-            
-        if email_ingest is None:
-            logger.warning("[Auto-Ingest] email_ingest module not available")
-            return
-            
-        logger.info(f"[Auto-Ingest] Checking {usr} on {srv}...")
-        items = email_ingest.check_amazon_emails(srv, usr, pwd)
-        
-        if items:
-            count = 0
-            conn = get_db_connection()
-            try:
-                today = datetime.date.today()
-                
-                for item in items:
-                    tracking = item['tracking']
-                    name = item.get('name', 'Amazon Item')
-                    date_str = item.get('date', 'Pending')
-                    image = item.get('image_url')
-                    
-                    # Determine Status
-                    status = 'on_time'
-                    try:
-                        if date_str != 'Pending':
-                            d_dt = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
-                            if d_dt == today: status = 'expected'
-                            elif d_dt < today: status = 'past_due'
-                    except ValueError:
-                        pass  # Date parsing failed
-                    
-                    # Insert or Ignore
-                    try:
-                        conn.execute('''
-                            INSERT INTO packages (tracking_number, item_name, date_expected, quantity, status, source, image_url)
-                            VALUES (?, ?, ?, 1, ?, 'auto-email', ?)
-                        ''', (tracking, name, date_str, status, image))
-                        count += 1
-                    except sqlite3.IntegrityError:
-                        pass  # Already exists
-                        
-                conn.commit()
-                
-                # Append to Manifest CSV for record keeping
-                if os.path.exists(MANIFEST_FILE) and count > 0:
-                    try:
-                        with open(MANIFEST_FILE, 'a') as f:
-                            for item in items:
-                                f.write(f"{item['tracking']},{item.get('name','Item')},1,{item.get('date','Pending')},{item.get('image_url','')}\n")
-                    except IOError as e:
-                        logger.warning(f"[Auto-Ingest] Could not update manifest CSV: {e}")
-                    
-            finally:
-                conn.close()
-
-            if count > 0:
-                logger.info(f"[Auto-Ingest] ✓ Added {count} new packages.")
-            else:
-                logger.info("[Auto-Ingest] No new packages found (Duplicates).")
-        
-        # Success - reset failure count
-        SYNC_STATUS['last_email_check'] = datetime.datetime.now().isoformat()
-        SYNC_STATUS['email_check_count'] += 1
+        from app.services.package_imports import run_email_ingest
+        result = run_email_ingest()
+        if result.get('failed'):
+            raise RuntimeError(result.get('message'))
+        if result['status'] == 'success':
+            SYNC_STATUS['last_email_check'] = datetime.datetime.now().isoformat()
+            SYNC_STATUS['email_check_count'] += 1
         SYNC_STATUS['email_failures'] = 0
-        
     except Exception as e:
-        SYNC_STATUS['email_failures'] += 1
-        error_msg = f"[Auto-Ingest] Error (failure {SYNC_STATUS['email_failures']}/{MAX_CONSECUTIVE_FAILURES}): {e}"
-        logger.error(error_msg)
-        
-        SYNC_STATUS['errors'].append({
-            'time': datetime.datetime.now().isoformat(),
-            'job': 'email_ingest',
-            'error': str(e)
-        })
-        if len(SYNC_STATUS['errors']) > 10:
-            SYNC_STATUS['errors'] = SYNC_STATUS['errors'][-10:]
-        
-        if SYNC_STATUS['email_failures'] >= MAX_CONSECUTIVE_FAILURES:
-            logger.error(f"[Auto-Ingest] ⚠ Pausing job after {MAX_CONSECUTIVE_FAILURES} consecutive failures")
-            if scheduler and scheduler.get_job('email_ingest'):
-                scheduler.pause_job('email_ingest')
+        _record_failure('email_ingest', 'email_failures', '[Auto-Ingest]', e)
 
 
 def eod_email_job():
@@ -310,11 +209,11 @@ def start_scheduler():
         
         # Add jobs
         scheduler.add_job(
-            manifest_sync_job,
+            package_maintenance_job,
             'interval',
-            minutes=MANIFEST_SYNC_INTERVAL_MINUTES,
-            id='manifest_sync',
-            name='Manifest CSV Sync'
+            minutes=MAINTENANCE_INTERVAL_MINUTES,
+            id='package_maintenance',
+            name='Package Status Upkeep'
         )
         
         scheduler.add_job(
@@ -336,13 +235,13 @@ def start_scheduler():
         # Start scheduler
         scheduler.start()
         SYNC_STATUS['scheduler_running'] = True
-        logger.info(f"[Background] APScheduler started (manifest: every {MANIFEST_SYNC_INTERVAL_MINUTES}min, email: every {EMAIL_CHECK_INTERVAL_MINUTES}min)")
+        logger.info(f"[Background] APScheduler started (packages: every {MAINTENANCE_INTERVAL_MINUTES}min, email: every {EMAIL_CHECK_INTERVAL_MINUTES}min)")
         
         # Register shutdown handler
         atexit.register(shutdown_scheduler)
         
-        # Run initial sync immediately
-        manifest_sync_job()
+        # Bring statuses up to date immediately
+        package_maintenance_job()
         
     else:
         # Fallback to threading
@@ -377,13 +276,13 @@ def _start_threading_fallback():
     
     global SYNC_STATUS
     
-    def manifest_loop():
+    def maintenance_loop():
         while True:
             try:
-                manifest_sync_job()
+                package_maintenance_job()
             except Exception as e:
-                logger.error(f"[Manifest Sync] Thread error: {e}")
-            time.sleep(MANIFEST_SYNC_INTERVAL_MINUTES * 60)
+                logger.error(f"[Packages] Thread error: {e}")
+            time.sleep(MAINTENANCE_INTERVAL_MINUTES * 60)
     
     def email_loop():
         while True:
@@ -393,8 +292,8 @@ def _start_threading_fallback():
                 logger.error(f"[Auto-Ingest] Thread error: {e}")
             time.sleep(EMAIL_CHECK_INTERVAL_MINUTES * 60)
     
-    manifest_thread = threading.Thread(target=manifest_loop, daemon=True, name="ManifestSync")
-    manifest_thread.start()
+    maintenance_thread = threading.Thread(target=maintenance_loop, daemon=True, name="PackageMaintenance")
+    maintenance_thread.start()
     
     email_thread = threading.Thread(target=email_loop, daemon=True, name="EmailIngest")
     email_thread.start()
@@ -444,8 +343,8 @@ def resume_job(job_id):
     
     if scheduler and scheduler.get_job(job_id):
         scheduler.resume_job(job_id)
-        if job_id == 'manifest_sync':
-            SYNC_STATUS['manifest_failures'] = 0
+        if job_id == 'package_maintenance':
+            SYNC_STATUS['maintenance_failures'] = 0
         elif job_id == 'email_ingest':
             SYNC_STATUS['email_failures'] = 0
         logger.info(f"[Background] Resumed job: {job_id}")

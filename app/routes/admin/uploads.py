@@ -1,37 +1,32 @@
 """
 Admin File Upload Routes
-Handles CSV/Excel manifest file imports with column mapping.
-Two-step flow: Preview → Confirm
+Handles CSV/Excel package imports with column mapping.
+Two-step flow: Preview → Confirm. Confirmed rows are upserted straight into
+the packages table (see app/services/package_imports.py); there is no
+manifest file any more.
 """
 import logging
-import pandas as pd
-import json
+import secrets
 import time
 import os
 from flask import request, redirect, url_for, flash, session, render_template
+from flask_login import current_user
 
 from app.routes.admin import admin_bp, require_admin
-from app.services.data_manager import sync_manifest, MANIFEST_FILE, BASE_DIR
+from app.services import package_imports
 
 logger = logging.getLogger(__name__)
 
 # Temp storage for preview data (file-based for large datasets)
 from app.paths import TEMP_DIR as PREVIEW_TEMP_DIR
 
-def detect_column_mapping(df):
-    """Auto-detect column mappings based on column names and data quality."""
+def detect_column_mapping(headers):
+    """Auto-detect column mappings based on column names."""
     mapping = {'tracking': None, 'name': None, 'date': None, 'quantity': None, 'asin': None, 'image': None, 'product_url': None}
-    
-    lower_cols = {c.lower(): c for c in df.columns}
-    
-    # helper to check valid count
-    def count_valid(col_name):
-        if not col_name or col_name not in df.columns: return 0
-        try:
-             non_empty = df[col_name].astype(str).str.strip().replace({'nan': '', 'None': '', 'none': ''}, regex=True)
-             return (non_empty != '').sum()
-        except:
-            return 0
+
+    lower_cols = {}
+    for c in headers:
+        lower_cols.setdefault(c.lower(), c)
 
     # Tracking detection (Enhanced for eBay)
     tracking_hints = [
@@ -91,21 +86,17 @@ def detect_column_mapping(df):
     return mapping
 
 
-def generate_warnings(df, mapping):
+def generate_warnings(headers, rows, mapping):
     """Generate warnings about data quality issues."""
     warnings = []
-    
+
     if not mapping['tracking']:
         warnings.append("⚠️ No tracking number column detected - this is required!")
     else:
-        # Check for empty tracking numbers
-        track_col = mapping['tracking']
-        if track_col in df.columns:
-            # Convert to string and normalize, then count empty values (only count once!)
-            col_as_str = df[track_col].astype(str).str.strip().str.lower()
-            empty_count = col_as_str.isin(['', 'nan', 'none']).sum()
-            if empty_count > 0:
-                warnings.append(f"{empty_count} rows have empty tracking numbers, these items will NOT be imported!")
+        # Rows that end up with no tracking (an order ID can stand in for one)
+        _, skipped = package_imports.items_from_mapping(headers, rows, mapping)
+        if skipped > 0:
+            warnings.append(f"{skipped} rows have empty tracking numbers, these items will NOT be imported!")
     
     if not mapping['name']:
         warnings.append("⚠️ No item name column detected - this is required!")
@@ -116,51 +107,31 @@ def generate_warnings(df, mapping):
     return warnings
 
 
-def process_import_directly(df, mapping, filename):
+def _preview_rows(headers, rows, limit=15):
+    return [dict(zip(headers, r + [''] * (len(headers) - len(r)))) for r in rows[:limit]]
+
+
+def run_import(headers, rows, mapping, filename):
+    """Upsert the mapped rows into packages and flash a summary."""
+    items, skipped = package_imports.items_from_mapping(headers, rows, mapping)
+    added, updated = package_imports.import_items(
+        items, 'upload', filename, current_user.username)
+    unchanged = len(items) - added - updated
+    msg = f"✅ Imported {filename}: {added} added, {updated} updated, {unchanged} unchanged"
+    if skipped:
+        msg += f", {skipped} skipped (no tracking number)"
+    flash(msg + ".")
+    return added, updated
+
+
+def process_import_directly(headers, rows, mapping, filename):
     """Process import directly without preview (auto-confirm mode)."""
     try:
-        # Build rename map from detected mapping
-        rename_map = {}
-        if mapping.get('tracking'):
-            rename_map[mapping['tracking']] = 'TrackingNumber'
-        if mapping.get('name'):
-            rename_map[mapping['name']] = 'ItemName'
-        if mapping.get('date'):
-            rename_map[mapping['date']] = 'Date'
-        if mapping.get('quantity'):
-            rename_map[mapping['quantity']] = 'Quantity'
-        if mapping.get('image'):
-            rename_map[mapping['image']] = 'Image'
-        if mapping.get('product_url'):
-            rename_map[mapping['product_url']] = 'ProductURL'
-        
-        df.rename(columns=rename_map, inplace=True)
-        
-        # Generate image URLs from ASIN if present
-        if mapping.get('asin') and mapping['asin'] in df.columns:
-            if 'Image' not in df.columns:
-                df['Image'] = None
-            
-            for index, row in df.iterrows():
-                asin = str(row.get(mapping['asin'], '')).strip().upper()
-                if asin and asin.lower() not in ['nan', 'none', ''] and len(asin) >= 10:
-                    current_img = str(row.get('Image', ''))
-                    if pd.isna(row.get('Image')) or current_img.lower() in ['nan', 'none'] or not current_img.strip():
-                        df.at[index, 'Image'] = f"https://images-na.ssl-images-amazon.com/images/P/{asin}.01._SX200_.jpg"
-        
-        # Save to manifest
-        df.to_csv(MANIFEST_FILE, index=False)
-        
-        # Sync to database
-        sync_manifest()
-        
-        flash(f"✅ Auto-imported {len(df)} packages from {filename}")
-        return redirect(url_for('admin.admin_panel'))
-        
+        run_import(headers, rows, mapping, filename)
     except Exception as e:
         logger.error(f"Auto-import error: {e}")
         flash(f"Import error: {e}")
-        return redirect(url_for('admin.admin_panel'))
+    return redirect(url_for('admin.admin_panel'))
 
 
 @admin_bp.route('/upload_file', methods=['POST'])
@@ -175,28 +146,19 @@ def upload_preview():
         flash("No file selected.")
         return redirect(url_for('admin.admin_panel'))
     
-    upload_mode = request.form.get('upload_mode', 'append')
-    
     try:
-        # Parse file
-        if file.filename.endswith('.xlsx'):
-            df = pd.read_excel(file)
-        else:
-            try:
-                df = pd.read_csv(file, encoding='utf-8')
-            except UnicodeDecodeError:
-                file.seek(0)
-                df = pd.read_csv(file, encoding='cp1252')
-        
-        if df.empty:
+        # Parse file (csv module / openpyxl; every cell becomes a string)
+        headers, rows = package_imports.read_table(file.read(), file.filename)
+
+        if not rows:
             flash("File is empty.")
             return redirect(url_for('admin.admin_panel'))
-        
+
         # Auto-detect mappings
-        mapping = detect_column_mapping(df)
-        
+        mapping = detect_column_mapping(headers)
+
         # Generate warnings
-        warnings = generate_warnings(df, mapping)
+        warnings = generate_warnings(headers, rows, mapping)
         
         # Check for auto-confirm setting
         from app.services.data_manager import load_config
@@ -206,27 +168,22 @@ def upload_preview():
         # Auto-confirm if: setting enabled AND both tracking AND name columns detected
         if auto_confirm and mapping['tracking'] and mapping['name']:
             # Directly process the import without preview
-            return process_import_directly(df, mapping, file.filename)
-        
-        # Prepare preview data - convert all values to strings to avoid JSON serialization issues
-        preview_df = df.head(15).fillna('')
-        for col in preview_df.columns:
-            preview_df[col] = preview_df[col].astype(str)
-        preview_rows = preview_df.to_dict('records')
-        
+            return process_import_directly(headers, rows, mapping, file.filename)
+
+        preview_rows = _preview_rows(headers, rows)
+
         # Save full data to temp file for confirmation step
         if not os.path.exists(PREVIEW_TEMP_DIR):
             os.makedirs(PREVIEW_TEMP_DIR)
-        
-        temp_file = os.path.join(PREVIEW_TEMP_DIR, f"preview_{int(time.time())}.csv")
-        df.to_csv(temp_file, index=False)
-        
+
+        temp_file = os.path.join(PREVIEW_TEMP_DIR, f"preview_{secrets.token_hex(8)}.json")
+        package_imports.save_table(temp_file, headers, rows)
+
         # Store MINIMAL info in session (cookie size limit)
         session['upload_preview'] = {
             'filename': file.filename,
-            'total_rows': len(df),
+            'total_rows': len(rows),
             'temp_file': temp_file,
-            'mode': upload_mode,
             'timestamp': time.time(),
             # Store mapping/warnings in session as they are small and needed for re-render
             'mapping': mapping,
@@ -235,11 +192,14 @@ def upload_preview():
         
         # Pass FULL data to template
         template_data = session['upload_preview'].copy()
-        template_data['original_columns'] = list(df.columns)
+        template_data['original_columns'] = headers
         template_data['preview_rows'] = preview_rows
-        
+
         return render_template('admin/upload_preview.html', preview=template_data)
-        
+
+    except package_imports.ImportFileError as e:
+        flash(str(e))
+        return redirect(url_for('admin.admin_panel'))
     except Exception as e:
         logger.error(f"Upload preview error: {e}")
         flash(f"Error reading file: {e}")
@@ -265,137 +225,43 @@ def upload_confirm():
     
     try:
         # Load the temp file
-        df = pd.read_csv(preview['temp_file'])
-        
-        # Get user-selected column mappings
-        col_tracking = request.form.get('col_tracking', '').strip()
-        col_name = request.form.get('col_name', '').strip()
-        col_date = request.form.get('col_date', '').strip()
-        col_asin = request.form.get('col_asin', '').strip()
-        col_image = request.form.get('col_image', '').strip()
-        col_product_url = request.form.get('col_product_url', '').strip()
-        col_quantity = request.form.get('col_quantity', '').strip()
-        
-        if not col_tracking or col_tracking not in df.columns:
-            flash("Tracking number column is required.")
-            # Re-hydrate template data
-            template_data = preview.copy()
-            template_data['original_columns'] = list(df.columns)
-            preview_df = df.head(15).fillna('')
-            for col in preview_df.columns:
-                preview_df[col] = preview_df[col].astype(str)
-            template_data['preview_rows'] = preview_df.to_dict('records')
-            
-            return render_template('admin/upload_preview.html', preview=template_data)
-        
-        if not col_name or col_name not in df.columns:
-            flash("Item name column is required.")
-            # Re-hydrate template data
-            template_data = preview.copy()
-            template_data['original_columns'] = list(df.columns)
-            preview_df = df.head(15).fillna('')
-            for col in preview_df.columns:
-                preview_df[col] = preview_df[col].astype(str)
-            template_data['preview_rows'] = preview_df.to_dict('records')
-            
-            return render_template('admin/upload_preview.html', preview=template_data)
-        
-        # Rename columns to standard names
-        rename_map = {}
-        if col_tracking:
-            rename_map[col_tracking] = 'TrackingNumber'
-        if col_name:
-            rename_map[col_name] = 'ItemName'
-        if col_date:
-            rename_map[col_date] = 'Date'
-        if col_quantity:
-            rename_map[col_quantity] = 'Quantity'
-        if col_image:
-            rename_map[col_image] = 'Image'
-        if col_product_url:
-            rename_map[col_product_url] = 'ProductURL'
-        # Note: ASIN doesn't need renaming, we use it directly for image generation
-        
-        # IMPORTANT: Before renaming, drop any OTHER columns that would have the same target name
-        # This prevents duplicate "TrackingNumber" columns when eBay has Order ID and Real Tracking both called TrackingNumber
-        columns_to_drop = []
-        for target_name in rename_map.values():
-            for col in df.columns:
-                # If this column would conflict with a renamed column AND it's not the one being renamed
-                if col == target_name and col not in rename_map:
-                    columns_to_drop.append(col)
-                # Also drop columns like "TrackingNumber.1" if we're renaming something to "TrackingNumber"
-                elif target_name == 'TrackingNumber' and 'tracking' in col.lower() and col not in rename_map:
-                    columns_to_drop.append(col)
-        
-        if columns_to_drop:
-            logger.info(f"Dropping conflicting columns: {columns_to_drop}")
-            df.drop(columns=columns_to_drop, inplace=True, errors='ignore')
-        
-        df.rename(columns=rename_map, inplace=True)
-        
-        # Generate image URLs from ASIN if user selected an ASIN column
-        if col_asin and col_asin in df.columns:
-            if 'Image' not in df.columns:
-                df['Image'] = None
-            
-            for index, row in df.iterrows():
-                asin = str(row.get(col_asin, '')).strip().upper()
-                if asin and asin.lower() not in ['nan', 'none', ''] and len(asin) >= 10:
-                    current_img = str(row.get('Image', ''))
-                    if pd.isna(row.get('Image')) or current_img.lower() in ['nan', 'none'] or not current_img.strip():
-                        df.at[index, 'Image'] = f"https://images-na.ssl-images-amazon.com/images/P/{asin}.01._SX200_.jpg"
-        
-        # Save to manifest
-        upload_mode = preview.get('mode', 'replace')
-        file_exists = os.path.exists(MANIFEST_FILE)
-        
-        # Schema Check for Append Mode
-        if upload_mode == 'append' and file_exists:
-            try:
-                existing_df = pd.read_csv(MANIFEST_FILE, nrows=1)
-                existing_cols = list(existing_df.columns)
-                new_cols = list(df.columns)
-                
-                # If columns don't match EXACTLY, fall back to 'replace' or re-index
-                # Re-indexing is safer: Add missing cols to new df, and ensure order matches
-                if existing_cols != new_cols:
-                    logger.warning("Manifest schema mismatch. Adaptation required.")
-                    # 1. Add missing specific columns from existing to new (padding with None)
-                    for col in existing_cols:
-                        if col not in df.columns:
-                            df[col] = None
-                    
-                    # 2. Reorder new df to match existing columns (ignore extra new cols? or add them?)
-                    # Safest: only keep columns that exist in target, or expand target.
-                    # Current simplifiction: Align to existing schema
-                    df = df.reindex(columns=existing_cols)
-                    
-            except Exception as e:
-                logger.error(f"Schema check failed: {e}")
-                # Fallback to replace if file is corrupt
-                upload_mode = 'replace'
+        headers, rows = package_imports.load_table(preview['temp_file'])
 
-        mode = 'a' if (upload_mode == 'append' and file_exists) else 'w'
-        write_header = not (upload_mode == 'append' and file_exists)
-        
-        df.to_csv(MANIFEST_FILE, mode=mode, header=write_header, index=False)
-        
-        # Sync to database
-        sync_manifest()
-        
+        # Get user-selected column mappings
+        mapping = {
+            'tracking': request.form.get('col_tracking', '').strip(),
+            'name': request.form.get('col_name', '').strip(),
+            'date': request.form.get('col_date', '').strip(),
+            'asin': request.form.get('col_asin', '').strip(),
+            'image': request.form.get('col_image', '').strip(),
+            'product_url': request.form.get('col_product_url', '').strip(),
+            'quantity': request.form.get('col_quantity', '').strip(),
+        }
+        mapping = {k: (v if v in headers else None) for k, v in mapping.items()}
+
+        for key, label in (('tracking', 'Tracking number'), ('name', 'Item name')):
+            if not mapping[key]:
+                flash(f"{label} column is required.")
+                # Re-hydrate template data
+                template_data = preview.copy()
+                template_data['original_columns'] = headers
+                template_data['preview_rows'] = _preview_rows(headers, rows)
+                return render_template('admin/upload_preview.html', preview=template_data)
+
+        # Upsert into packages (one transaction)
+        run_import(headers, rows, mapping, preview.get('filename'))
+
         # Cleanup temp file
         try:
             os.remove(preview['temp_file'])
         except OSError:
             pass  # Temp file already removed
-        
+
         # Clear session
         session.pop('upload_preview', None)
-        
-        flash(f"✅ Successfully imported {len(df)} packages.")
+
         return redirect(url_for('admin.admin_panel'))
-        
+
     except Exception as e:
         logger.error(f"Upload confirm error: {e}")
         flash(f"Import error: {e}")

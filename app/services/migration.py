@@ -840,12 +840,134 @@ def _add_column_in_txn(conn, table, column, column_def):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_def}")
 
 
+def _m10_legacy_manifest_paths():
+    import os
+    from app import paths
+    return [os.path.join(paths.DATA_DIR, 'manifest.csv'), os.path.join(paths.APP_DIR, 'manifest.csv')]
+
+
+def _m10_tracking_alone_is_unique(conn):
+    for idx in conn.execute("PRAGMA index_list(packages)").fetchall():
+        if idx[2]:  # unique
+            cols = [r[2] for r in conn.execute(f'PRAGMA index_info("{idx[1]}")').fetchall()]
+            if cols == ['tracking_number']:
+                return True
+    return False
+
+
+def _m10_rebuild_packages(conn):
+    """Rebuild packages without UNIQUE(tracking_number): one shipment can hold
+    several items (log_receipt receives every row of a tracking number), and
+    the old constraint made the manifest sync abort on such files. Row
+    identity becomes (tracking_number, item_name), enforced by the unique
+    index idx_packages_tracking_item. ids, every column,
+    indexes, triggers and the AUTOINCREMENT high-water mark are preserved."""
+    cols = conn.execute("PRAGMA table_info(packages)").fetchall()  # cid,name,type,notnull,dflt,pk
+    names = [c[1] for c in cols]
+    seq = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'packages'").fetchone()
+    extras = conn.execute("SELECT sql FROM sqlite_master WHERE tbl_name = 'packages' "
+                          "AND type IN ('index', 'trigger') AND sql IS NOT NULL").fetchall()
+
+    defs = []
+    for _cid, name, ctype, notnull, dflt, pk in cols:
+        if pk:
+            defs.append(f'"{name}" INTEGER PRIMARY KEY AUTOINCREMENT')
+            continue
+        d = f'"{name}" {ctype or ""}'.rstrip()
+        if notnull:
+            d += ' NOT NULL'
+        if dflt is not None:
+            d += f' DEFAULT {dflt}'
+        defs.append(d)
+    if 'order_id' not in names:
+        defs.append('"order_id" TEXT')
+    # (the (tracking_number, item_name) rule is the named index created by the caller)
+
+    collist = ', '.join(f'"{n}"' for n in names)
+    conn.execute('DROP TABLE IF EXISTS packages_v10')
+    conn.execute(f'CREATE TABLE packages_v10 ({", ".join(defs)})')
+    conn.execute(f'INSERT INTO packages_v10 ({collist}) SELECT {collist} FROM packages')
+    conn.execute('DROP TABLE packages')
+    conn.execute('ALTER TABLE packages_v10 RENAME TO packages')
+    for (sql,) in extras:
+        conn.execute(sql)
+    if seq:
+        conn.execute("DELETE FROM sqlite_sequence WHERE name = 'packages'")
+        conn.execute("INSERT INTO sqlite_sequence (name, seq) "
+                     "VALUES ('packages', MAX(?, (SELECT COALESCE(MAX(id), 0) FROM packages)))",
+                     (seq[0],))
+
+
+def _m10_packages_db_only(conn):
+    """Packages live only in the database (manifest.csv retired)."""
+    import os
+    previous_factory = conn.row_factory
+    conn.row_factory = sqlite3.Row
+    try:
+        if _m10_tracking_alone_is_unique(conn):
+            _m10_rebuild_packages(conn)
+        _add_column_in_txn(conn, 'packages', 'order_id', 'TEXT')
+        conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_packages_tracking_item '
+                     'ON packages(tracking_number, item_name)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_packages_tracking_nocase '
+                     'ON packages(tracking_number COLLATE NOCASE)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_packages_order_id ON packages(order_id)')
+
+        conn.execute('''
+            CREATE TABLE IF NOT EXISTS package_imports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL CHECK (source IN ('upload', 'email', 'manual')),
+                filename TEXT,
+                rows_added INTEGER NOT NULL DEFAULT 0,
+                rows_updated INTEGER NOT NULL DEFAULT 0,
+                imported_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                user TEXT
+            )
+        ''')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_package_imports_at ON package_imports(imported_at)')
+
+        # The two email-ingest paths wrote different values; there is one now.
+        conn.execute("UPDATE packages SET source = 'email' "
+                     "WHERE source IN ('auto-email', 'auto_email', 'Auto-Email')")
+        # 'incoming' was never moved to 'received' by a scan.
+        conn.execute("UPDATE packages SET status = CASE WHEN date_scanned IS NULL "
+                     "THEN 'on_time' ELSE 'received' END WHERE status = 'incoming'")
+
+        from app.services import package_imports
+        for row in conn.execute("SELECT id, tracking_number FROM packages "
+                                "WHERE order_id IS NULL AND tracking_number LIKE 'ORDER-%'").fetchall():
+            oid = package_imports.order_id_from_placeholder(row['tracking_number'])
+            if oid:
+                conn.execute('UPDATE packages SET order_id = ? WHERE id = ?', (oid, row['id']))
+
+        # One-time import of a legacy manifest.csv. A bad file must not stop
+        # the upgrade: its rows are rolled back and the file stays for review.
+        seen = set()
+        for path in _m10_legacy_manifest_paths():
+            real = os.path.realpath(path)
+            if real in seen or not os.path.isfile(path):
+                continue
+            seen.add(real)
+            conn.execute('SAVEPOINT legacy_manifest')
+            try:
+                added = package_imports.import_legacy_manifest(conn, path)
+                conn.execute('RELEASE legacy_manifest')
+                logger.info(f"[Schema] Imported {added} rows from legacy {path} (file left in place)")
+            except Exception as e:
+                conn.execute('ROLLBACK TO legacy_manifest')
+                conn.execute('RELEASE legacy_manifest')
+                logger.error(f"[Schema] Could not import legacy {path}: {e}")
+    finally:
+        conn.row_factory = previous_factory
+
+
 # (version, description, function). Version 1 is the ensure_db_ready() baseline.
 SCHEMA_MIGRATIONS = [
     (2, 'PTO tables', _m2_pto_tables),
     (3, 'hot-path indexes', _m3_hot_path_indexes),
     (4, 'rate_events table', _m4_rate_events),
     (5, 'pos_orders.checkout_token', _m5_checkout_token),
+    (10, 'packages: database is the only source (manifest.csv retired)', _m10_packages_db_only),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 
