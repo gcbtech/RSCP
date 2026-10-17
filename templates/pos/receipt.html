@@ -1,11 +1,8 @@
-<!DOCTYPE html>
-<html>
+{% extends 'base.html' %}
+{% block full_title %}{{ org_name or 'RSCP' }} | Receipt {{ order.order_number }}{% endblock %}
 
-<head>
-    <title>{{ org_name or 'RSCP' }} | Receipt {{ order.order_number }}</title>
+{% block head %}
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <link rel="icon" href="{{ favicon }}">
     <style>
         * {
             box-sizing: border-box;
@@ -185,11 +182,9 @@
             }
         }
     </style>
-</head>
+{% endblock %}
 
-<body>
-    {% include '_nav.html' %}
-
+{% block content %}
     <div class="receipt-container">
         <div class="receipt">
             <div class="receipt-header">
@@ -378,8 +373,9 @@
             </div>
         </div>
     </div>
+{% endblock %}
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}
     <script>
         (function () {
             const urlParams = new URLSearchParams(window.location.search);
@@ -442,6 +438,4 @@
             }
         })();
     </script>
-</body>
-
-</html>
+{% endblock %}

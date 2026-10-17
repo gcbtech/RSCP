@@ -1,11 +1,7 @@
-<!DOCTYPE html>
-<html>
+{% extends 'base.html' %}
+{% block title %}Edit Sale{% endblock %}
 
-<head>
-    <title>RSCP | Edit Sale</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
-    <link rel="icon" href="{{ favicon }}">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+{% block head %}
     <style>
         body {
             background: #f1f5f9;
@@ -115,11 +111,9 @@
             font-size: 0.875rem;
         }
     </style>
-</head>
+{% endblock %}
 
-<body>
-    {% include '_nav.html' %}
-
+{% block content %}
     <div class="edit-header">
         <h2>✏️ Edit Sale</h2>
         <small>Order #{{ order.order_number }} · {{ order.created_at | local_time }} · Operator: {{ order.operator_name }}</small>
@@ -256,8 +250,9 @@
             </div>
         </form>
     </div>
+{% endblock %}
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+{% block scripts %}
     <script>
         const taxRatePercent = {{ tax_rate }};
         const taxRate = taxRatePercent / 100;
@@ -331,6 +326,4 @@
             recalculate();
         }
     </script>
-</body>
-
-</html>
+{% endblock %}
