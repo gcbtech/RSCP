@@ -55,6 +55,14 @@ def test_network_setting_validates_and_saves(fresh_app, fresh_client, monkeypatc
     assert saved['TRUSTED_PROXIES'] == ['127.0.0.1', '10.0.0.50']
 
 
+def test_chained_proxies_resolve_real_client():
+    # cloudflared (10.0.0.172) -> nginx (10.0.0.56) -> RSCP
+    trusted = ['127.0.0.1', '10.0.0.172', '10.0.0.56']
+    assert _remote_addr_seen('10.0.0.56', '203.0.113.7, 10.0.0.172', trusted) == '203.0.113.7'
+    # a client-forged leading entry is ignored: the rightmost untrusted hop wins
+    assert _remote_addr_seen('10.0.0.56', '6.6.6.6, 203.0.113.7, 10.0.0.172', trusted) == '203.0.113.7'
+
+
 def test_forwarded_for_honoured_from_trusted_proxy():
     assert _remote_addr_seen('127.0.0.1', '1.2.3.4') == '1.2.3.4'
     assert _remote_addr_seen('10.0.0.9', '5.6.7.8', trusted=['10.0.0.9']) == '5.6.7.8'

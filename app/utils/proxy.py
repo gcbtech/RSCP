@@ -36,7 +36,9 @@ class TrustedProxyFix:
 
     def __init__(self, wsgi_app, trusted=None):
         self.raw_app = wsgi_app
-        self.proxied_app = ProxyFix(wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+        # Scheme/host/prefix come from the nearest proxy; the client address
+        # is resolved by _client_addr below (handles chained proxies).
+        self.proxied_app = ProxyFix(wsgi_app, x_for=0, x_proto=1, x_host=1, x_prefix=1)
         self.networks = _parse_networks(trusted if trusted is not None else DEFAULT_TRUSTED_PROXIES)
 
     def _is_trusted(self, addr):
@@ -46,9 +48,25 @@ class TrustedProxyFix:
             return False
         return any(ip in net for net in self.networks)
 
+    def _client_addr(self, environ, peer):
+        """Walk X-Forwarded-For from the right, skipping trusted proxies.
+
+        Works for one hop (cloudflared -> RSCP) and for chains
+        (cloudflared -> nginx -> RSCP) as long as every proxy in the chain is
+        listed; the first untrusted address is the real client.
+        """
+        hops = [h.strip() for h in environ.get('HTTP_X_FORWARDED_FOR', '').split(',') if h.strip()]
+        for hop in reversed(hops):
+            if not self._is_trusted(hop):
+                return hop
+        return hops[0] if hops else peer
+
     def __call__(self, environ, start_response):
         peer = environ.get('REMOTE_ADDR')
         if self._is_trusted(peer):
+            client = self._client_addr(environ, peer)
+            environ['werkzeug.proxy_fix.orig_remote_addr'] = peer
+            environ['REMOTE_ADDR'] = client
             return self.proxied_app(environ, start_response)
         # Traffic relayed by Cloudflare/cloudflared from a peer we don't trust:
         # every tunnelled user will look like this one IP. Say so once.
