@@ -136,3 +136,8 @@ reproduce_bug.py
 static/uploads/
 static/uploads/inventory/
 static/uploads/inventory/thumbs/
+
+# ----------------------------------
+# Local notes (not part of the product)
+# ----------------------------------
+DEV_NOTES.md
