@@ -886,24 +886,22 @@ def timesheets():
 @timeclock_bp.route('/manager/settings', methods=['POST'])
 @require_permission('timeclock.manage')
 def update_settings():
-    from app.services.data_manager import save_config, load_config
-    
-    start_date = request.form.get('pay_period_start')
-    freq = request.form.get('pay_period_type')
-    fulltime_hours = request.form.get('fulltime_hours', '40')
-    
+    # Validated through the settings registry; fields missing from the post
+    # are left alone (a partial post used to blank the pay-period settings).
+    from app.services import settings as settings_store
+    updates = {}
+    for field, key in (('pay_period_start', 'TIMECLOCK_PAY_PERIOD_START'),
+                       ('pay_period_type', 'TIMECLOCK_PAY_PERIOD_TYPE'),
+                       ('fulltime_hours', 'TIMECLOCK_FULLTIME_HOURS')):
+        value = (request.form.get(field) or '').strip()
+        if value:
+            updates[key] = value
     try:
-        fulltime_hours = float(fulltime_hours)
-    except:
-        fulltime_hours = 40.0
-    
-    new_conf = {
-        'TIMECLOCK_PAY_PERIOD_START': start_date,
-        'TIMECLOCK_PAY_PERIOD_TYPE': freq,
-        'TIMECLOCK_FULLTIME_HOURS': fulltime_hours
-    }
-    save_config(new_conf)
-    flash("Settings updated.")
+        if updates:
+            settings_store.set_many(updates, user=current_user.username)
+        flash("Settings updated.")
+    except settings_store.SettingsError as e:
+        flash(f"Not saved: {e}")
     return redirect(url_for('timeclock.manager_dashboard'))
 
 @timeclock_bp.route('/request_pto', methods=['GET', 'POST'])

@@ -87,10 +87,11 @@ def test_backfill_from_each_payment_type(fresh_app):
                           {'cash': 6, 'cards': [4], 'total_tendered': 10, 'change': 1, 'cash_discount': 0.5})
     broken = _insert_order(conn, 'B-4', 5.00, 0.0, 'split', '{not json')
     exact = _insert_order(conn, 'B-5', 7.00, 0.0, 'cash', None)
+    # Full refunds carry their share of tax; 2.x partial refunds (below) were pre-tax
     conn.execute("INSERT INTO pos_refunds (order_id, refund_type, amount, reason, manager_id) "
-                 "VALUES (?, 'partial', 10.70, 'other', 1)", (cash,))
+                 "VALUES (?, 'full', 10.70, 'other', 1)", (cash,))
     conn.execute("INSERT INTO pos_refunds (order_id, refund_type, amount, reason, manager_id) "
-                 "VALUES (?, 'partial', 10.70, 'other', 1)", (card,))
+                 "VALUES (?, 'full', 10.70, 'other', 1)", (card,))
     conn.execute("INSERT INTO pos_refunds (order_id, refund_type, amount, reason, manager_id) "
                  "VALUES (?, 'partial', 4.50, 'other', 1)", (split,))
     conn.commit()

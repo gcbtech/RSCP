@@ -211,8 +211,8 @@ come from the proxy, which breaks per-client login throttling and audit IPs.
 
 If the server should only be reachable through the tunnel, set
 `RSCP_BIND=127.0.0.1:5000` in `/etc/default/rscp` and `systemctl restart rscp`.
-When all access is over HTTPS, you can also enable `SECURE_COOKIES` in
-`config.json`.
+When all access is over HTTPS, you can also turn on "HTTPS-only cookies"
+(Admin > Settings > Reverse Proxy / Tunnel; restart afterwards).
 
 ### Running from source (development)
 

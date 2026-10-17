@@ -403,7 +403,7 @@
                 // WEB BROWSER MODE
                 else {
                     fetch('/pos/hardware/open_drawer', {
-                        method: 'POST',
+                        method: 'POST', headers: { 'X-CSRFToken': '{{ csrf_token() }}' },
                         credentials: 'same-origin'
                     })
                         .then(response => response.json())

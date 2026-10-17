@@ -84,7 +84,11 @@ def refund_auth():
     if request.method == 'POST':
         from werkzeug.security import check_password_hash
         from app.services.auth import User
-        from app.utils.permissions import has_permission
+        from app.utils.permissions import has_permission, manager_auth_throttled, record_manager_auth_failure
+
+        if manager_auth_throttled():
+            flash('Too many failed attempts. Wait 5 minutes and try again.')
+            return render_template('pos/refund_auth.html'), 429
         
         username = request.form.get('username', '')
         password = request.form.get('password', '')
@@ -125,8 +129,9 @@ def refund_auth():
                 flash(f'Manager {user_obj.username} authenticated.')
                 return redirect(url_for('pos.refunds'))
         
+        record_manager_auth_failure()
         flash('Invalid manager credentials.')
-    
+
     return render_template('pos/refund_auth.html')
 
 

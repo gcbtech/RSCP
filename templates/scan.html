@@ -704,7 +704,7 @@
                             // Add quantity via API
                             fetch('/inventory/api/add_quantity/' + data.item.id, {
                                 method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
+                                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token() }}' },
                                 body: JSON.stringify({ quantity: qty, tracking: tracking })
                             })
                                 .then(r => r.json())

@@ -486,6 +486,7 @@
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
+                    'X-CSRFToken': '{{ csrf_token() }}',
                 },
                 body: 'port=' + encodeURIComponent(port)
             })

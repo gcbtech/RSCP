@@ -1487,6 +1487,30 @@
                                     </div>
                                     <button class="btn btn-outline-primary btn-sm w-100" type="submit">Save</button>
                                 </form>
+                                <hr>
+                                <form action="{{ url_for('settings.save') }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="security">
+                                    <div class="form-check form-switch mb-1">
+                                        <input type="hidden" name="SECURE_COOKIES" value="false">
+                                        <input class="form-check-input" type="checkbox" name="SECURE_COOKIES" value="true"
+                                            id="secureCookies" {% if config.get('SECURE_COOKIES') %}checked{% endif %}>
+                                        <label class="form-check-label small fw-bold" for="secureCookies">HTTPS-only cookies</label>
+                                    </div>
+                                    <div class="form-text small mb-2">Turn on only if everyone reaches RSCP over HTTPS
+                                        (e.g. only through the tunnel). Plain http://IP:5000 logins stop working. Restart required.</div>
+                                    <button class="btn btn-outline-primary btn-sm w-100" type="submit">Save</button>
+                                </form>
+                                <hr>
+                                <form action="{{ url_for('settings.save') }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="api">
+                                    <label class="form-label small fw-bold">Public storefront API key</label>
+                                    <input type="password" name="PUBLIC_API_KEY" class="form-control form-control-sm mb-1"
+                                        autocomplete="new-password" value=""
+                                        placeholder="{{ '(saved - leave blank to keep)' if config.PUBLIC_API_KEY_SET else 'Not set (API disabled)' }}">
+                                    <button class="btn btn-outline-primary btn-sm w-100" type="submit">Save</button>
+                                </form>
                             </div>
                         </div>
 

@@ -68,7 +68,7 @@ def test_legacy_manifest_skips_known_shipments(fresh_app, tmp_path):
                      "VALUES ('1Z001', 'Widget A1', 'received', ?, CURRENT_TIMESTAMP)", (today,))
         conn.commit()
         csv_path = tmp_path / 'manifest.csv'
-        csv_path.write_text('Tracking Number,Item Name,Date\n'
+        csv_path.write_text('Tracking Number,ItemName,Date\n'
                             f'1Z001,Widget A2,{today}\n'
                             f'1Z999,Brand New,{today}\n')
         added = package_imports.import_legacy_manifest(conn, str(csv_path))
