@@ -285,7 +285,7 @@ def create_app(test_config=None):
             # redirects for itself. (Historically '/' was matched with
             # startswith, which — since every path starts with '/' — silently
             # disabled this entire guard.)
-            public_exact = {'/', '/favicon.ico'}
+            public_exact = {'/', '/favicon.ico', '/healthz'}
 
             # Public path PREFIXES: truly public pages, plus endpoints that
             # authenticate themselves (API key / pairing token) and therefore
@@ -408,6 +408,22 @@ def create_app(test_config=None):
             app_version = f.read().strip()
     except IOError:
         app_version = "unknown"
+
+    @app.route('/healthz')
+    def healthz():
+        """Unauthenticated liveness check for the updater and monitoring:
+        200 + version when the app can read its database, else 503."""
+        from flask import jsonify
+        from app.services.db import get_db_connection
+        try:
+            conn = get_db_connection()
+            try:
+                conn.execute('SELECT count(*) FROM sqlite_master').fetchone()
+            finally:
+                conn.close()
+        except Exception:
+            return jsonify(status='error', version=app_version), 503
+        return jsonify(status='ok', version=app_version)
     
     @app.context_processor
     def inject_globals():

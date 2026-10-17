@@ -20,6 +20,7 @@
 # Shell/service files must stay LF to run on Linux
 *.sh        text eol=lf
 *.service   text eol=lf
+*.path      text eol=lf
 *.example   text eol=lf
 
 # Windows scripts keep CRLF

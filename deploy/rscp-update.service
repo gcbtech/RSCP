@@ -1,0 +1,20 @@
+# Applies an update or rollback requested from Admin > System Updates.
+# Triggered by rscp-update.path; runs the installed copy of install.sh as root.
+# Progress goes to /var/lib/rscp/update-status.json (read by the UI) and to
+# the journal: journalctl -u rscp-update
+
+[Unit]
+Description=RSCP updater (applies requests from the web UI)
+Wants=network-online.target
+After=network-online.target
+# The updater deletes the request when it picks it up, which fires the path
+# unit once more; this condition makes that second activation a no-op.
+ConditionPathExists=/var/lib/rscp/update-request.json
+
+[Service]
+Type=oneshot
+ExecStart=/opt/rscp/bin/rscp-update --upgrade --noninteractive --from-request /var/lib/rscp/update-request.json
+TimeoutStartSec=1800
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rscp-update

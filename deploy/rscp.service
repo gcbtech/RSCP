@@ -1,0 +1,57 @@
+# RSCP web service. Installed by install.sh as /etc/systemd/system/rscp.service;
+# do not edit in place (upgrades overwrite it). Put local changes in
+# /etc/default/rscp (environment) or `systemctl edit rscp` (drop-in).
+#
+#   code   /opt/rscp/current -> /opt/rscp/releases/<version>   (root-owned, read-only)
+#   data   /var/lib/rscp       rscp.db, config.json, uploads/, backups/
+#   logs   journald only:      journalctl -u rscp -f
+
+[Unit]
+Description=RSCP - Receive, Scan, Check, Process
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=rscp
+Group=rscp
+# Server-side serial peripherals (cash drawer on /dev/ttyUSB*)
+SupplementaryGroups=dialout
+
+StateDirectory=rscp
+StateDirectoryMode=0750
+UMask=0027
+
+Environment=RSCP_DATA_DIR=/var/lib/rscp
+Environment=RSCP_BIND=0.0.0.0:5000
+Environment=PYTHONUNBUFFERED=1
+# Optional overrides (e.g. RSCP_BIND=127.0.0.1:5000 behind cloudflared)
+EnvironmentFile=-/etc/default/rscp
+
+WorkingDirectory=/opt/rscp/current
+# Schema migrations run once, before any worker starts. A failure stops the
+# start (and makes the updater roll back) instead of serving a half-migrated DB.
+ExecStartPre=/opt/rscp/current/venv/bin/python -m app.migrate
+ExecStart=/opt/rscp/current/venv/bin/gunicorn -c /opt/rscp/current/gunicorn.conf.py wsgi:app
+
+Restart=always
+RestartSec=5
+TimeoutStartSec=300
+TimeoutStopSec=30
+KillMode=mixed
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rscp
+
+# Hardening: the web process can write only its data directory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rscp
+ProtectHome=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

@@ -93,6 +93,9 @@ def migrate_001_gthread_systemd_unit():
     """
     if os.name != 'posix':
         return True, 'skipped: not posix'
+    from app import paths
+    if paths.USES_DATA_DIR:
+        return True, 'skipped: unit managed by install.sh (data-dir layout)'
     if not os.path.exists(UNIT_PATH):
         return True, 'skipped: no systemd unit at ' + UNIT_PATH
     if hasattr(os, 'geteuid') and os.geteuid() != 0:

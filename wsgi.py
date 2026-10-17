@@ -5,7 +5,7 @@ Use with Gunicorn: gunicorn -c gunicorn.conf.py wsgi:app
 import os
 import logging
 
-from app import create_app
+from app import create_app, paths
 from app.services.background_tasks import start_background_tasks
 
 logger = logging.getLogger(__name__)
@@ -23,15 +23,18 @@ def _acquire_singleton_lock():
     win; the fd is held for the life of the process so the lock releases
     automatically if that worker dies (a future worker restart re-acquires).
 
-    Returns the open fd on success (kept referenced by the caller), or None.
+    Returns the open fd on success (kept referenced by the caller), True on
+    platforms without fcntl (single-process dev server), or None.
     """
     try:
-        import fcntl  # Linux/Unix only; dev on Windows runs Flask directly
+        import fcntl  # Linux/Unix only
     except ImportError:
-        return None
+        # No fcntl means no gunicorn (Windows dev via app.py): this is the
+        # only process, so it owns the background tasks.
+        return True
 
-    lock_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                             '.background_tasks.lock')
+    # In the data directory: the code directory is read-only under systemd.
+    lock_path = os.path.join(paths.DATA_DIR, '.background_tasks.lock')
     try:
         # 'a+' so losers don't truncate the owner's PID note; truncate only
         # after we actually hold the lock.

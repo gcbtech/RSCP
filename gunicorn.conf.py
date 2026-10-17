@@ -11,14 +11,18 @@ import os
 # cpuset, so this yields the intended (2 * cores) + 1.
 cpu_cores = len(os.sched_getaffinity(0))
 workers = min(max((2 * cpu_cores) + 1, 2), 8)  # Clamp between 2 and 8
+if os.environ.get("RSCP_WORKERS", "").strip().isdigit():
+    workers = max(1, int(os.environ["RSCP_WORKERS"]))
 
-# Binding
-bind = "0.0.0.0:5000"
+# Binding: RSCP_BIND (set in rscp.service / /etc/default/rscp), e.g.
+# 127.0.0.1:5000 when only a local cloudflared/reverse proxy should connect.
+bind = os.environ.get("RSCP_BIND", "").strip() or "0.0.0.0:5000"
 
 # Timeout for slow requests
 timeout = 120
 
-# Logging
+# Logging: stdout/stderr only; under systemd both land in journald
+# (journalctl -u rscp).
 accesslog = "-"  # stdout
 errorlog = "-"   # stderr
 loglevel = "info"
@@ -37,4 +41,4 @@ threads = 4
 keepalive = 2
 
 # Print config on startup
-print(f"[Gunicorn Config] CPU Cores: {cpu_cores}, Workers: {workers}, Threads/worker: {threads}")
+print(f"[Gunicorn Config] CPU Cores: {cpu_cores}, Workers: {workers}, Threads/worker: {threads}, Bind: {bind}")
