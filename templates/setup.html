@@ -20,6 +20,7 @@
         <h2 class="mb-3">Welcome to RSCP</h2>
         <p class="text-muted mb-4">Receive • Scan • Check • Process<br>Warehouse Management System</p>
 
+        {% if error %}<div class="alert alert-danger py-2">{{ error }}</div>{% endif %}
         <form method="POST">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
@@ -31,6 +32,7 @@
             <h5 class="text-start text-success">2. Create Admin Account</h5>
             <input type="text" name="admin_user" class="form-control mb-2" placeholder="Admin Username" required>
             <input type="password" name="admin_pass" class="form-control mb-2" placeholder="Admin Password" required>
+            <small class="text-muted d-block mb-2">At least 8 characters, one uppercase letter, and one number or symbol.</small>
             <div class="form-text text-start mb-3">This account has full access. You can create additional users later.
             </div>
 

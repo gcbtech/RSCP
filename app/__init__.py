@@ -10,13 +10,28 @@ from app.routes.main import main_bp
 from app.routes.admin import admin_bp
 from app.routes.inventory import inventory_bp
 from app.routes.pos import pos_bp
-from app.routes.federation import federation_bp
 from app.routes.timeclock import timeclock_bp
 from app.routes.public_api import public_api_bp
 from app.utils.helpers import format_date_filter
 from app.services.data_manager import load_config, BASE_DIR
-from app.services.migration import ensure_db_ready
+from app.services.migration import run_migrations
 from app.services.logger import log_exception
+
+# Config keys that must never reach a rendered page.
+_SECRET_CONFIG_KEYS = ('SECRET', 'PASS', 'TOKEN', 'API_KEY', 'ADMIN_HASH')
+
+
+def _template_config(conf):
+    """config.json minus credentials, for templates. Templates can still ask
+    whether a secret is set via <KEY>_SET (e.g. config.SSO_CLIENT_SECRET_SET)."""
+    safe = {}
+    for key, value in (conf or {}).items():
+        if any(marker in key.upper() for marker in _SECRET_CONFIG_KEYS):
+            safe[f'{key}_SET'] = bool(value)
+        else:
+            safe[key] = value
+    return safe
+
 
 def create_app(test_config=None):
     # Clean up any stale update status file on startup
@@ -59,23 +74,10 @@ def create_app(test_config=None):
 
     logging.getLogger().setLevel(logging.INFO)
     
-    # DB Migration (Async) - Skip during testing
-    import sys
-    is_testing = (test_config and test_config.get('TESTING')) or 'pytest' in sys.modules or os.environ.get('TESTING') == 'True'
-    if not is_testing:
-        import threading
-        def run_db_init():
-            try:
-                ensure_db_ready()
-            except Exception as e:
-                logging.error(f"Startup DB Init Error: {e}")
-                
-        threading.Thread(target=run_db_init, daemon=True).start()
-    else:
-        try:
-            ensure_db_ready()
-        except Exception as e:
-            logging.error(f"Test DB Init Error: {e}")
+    # Schema migrations run synchronously, before this worker serves anything.
+    # Workers serialise on a file lock, so only the first one does real work;
+    # a failure raises and stops the boot rather than serving a partial schema.
+    run_migrations()
 
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     
@@ -102,24 +104,11 @@ def create_app(test_config=None):
         secret_key = app.config.get('SECRET_KEY', 'test_key')
         
     else:
-        # Load production config
-        conf = load_config()
-        secret_key = conf.get('SECRET_KEY')
-        
-        # SECRET_KEY validation: Only allow fallback during first-run setup
-        if not secret_key:
-            # Check if this is a first-run scenario (no users yet)
-            try:
-                from app.services.db import get_db_connection
-                conn = get_db_connection()
-                user_count = conn.execute("SELECT count(*) as c FROM users").fetchone()['c']
-                conn.close()
-                if user_count > 0:
-                    logging.warning("SECRET_KEY missing from config.json but users exist. Using temp key - sessions will be invalid!")
-            except Exception:
-                pass  # DB not ready yet, first run
-            secret_key = 'temp_setup_key'
-            
+        # Production: never run with a guessable fallback key. The installer
+        # writes one; if it is somehow missing, generate and persist one.
+        from app.services.data_manager import ensure_secret_key
+        secret_key = ensure_secret_key()
+
     app.secret_key = secret_key
     app.permanent_session_lifetime = timedelta(days=7)
     
@@ -139,10 +128,9 @@ def create_app(test_config=None):
     # Static file caching (1 week for images, CSS, JS)
     app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 604800  # 7 days in seconds
     
-    # Apply rate limits to specific routes
-    # Login: 5 attempts per minute per IP (brute-force protection)
-    limiter.limit("5 per minute")(app.view_functions.get('auth.login', lambda: None))
-    
+    # Login throttling lives in app/routes/auth.py (shared across workers via
+    # SQLite); Flask-Limiter's memory:// store is per-process.
+
     # Database connection cleanup (for request-scoped connections)
     from app.services.db import init_app as init_db_app
     init_db_app(app)
@@ -175,7 +163,6 @@ def create_app(test_config=None):
     app.register_blueprint(admin_bp)
     app.register_blueprint(inventory_bp)
     app.register_blueprint(pos_bp)
-    app.register_blueprint(federation_bp)
     app.register_blueprint(timeclock_bp)
     app.register_blueprint(public_api_bp)
     
@@ -250,17 +237,25 @@ def create_app(test_config=None):
     app.jinja_env.filters['format_date'] = format_date_filter
     app.jinja_env.filters['local_time'] = local_time_filter
     
-    # Reverse Proxy Support - Trust X-Forwarded-* headers
-    from werkzeug.middleware.proxy_fix import ProxyFix
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
-    
-    # Security Config - For HTTPS reverse proxy access
-    # Set SESSION_COOKIE_SECURE based on environment (detect HTTPS via proxy headers)
-    is_production = os.environ.get('FLASK_ENV') == 'production'
+    # Reverse proxy support: honour X-Forwarded-* only from configured proxies
+    # (config.json TRUSTED_PROXIES; default loopback, e.g. a local cloudflared).
+    from app.utils.proxy import TrustedProxyFix
+    app.wsgi_app = TrustedProxyFix(app.wsgi_app, (load_config() or {}).get('TRUSTED_PROXIES'))
+
+    # Cookies. Secure-only cookies would break plain-http LAN access
+    # (http://<ip>:5000), so they are opt-in: SECURE_COOKIES in config.json or
+    # FLASK_ENV=production. The remember-me cookie gets the same treatment as
+    # the session cookie instead of Flask-Login's 365-day, no-SameSite default.
+    secure_cookies = bool((load_config() or {}).get('SECURE_COOKIES')) or \
+        os.environ.get('FLASK_ENV') == 'production'
     app.config.update(
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE='Lax',
-        SESSION_COOKIE_SECURE=is_production,  # True in production with HTTPS
+        SESSION_COOKIE_SECURE=secure_cookies,
+        REMEMBER_COOKIE_HTTPONLY=True,
+        REMEMBER_COOKIE_SAMESITE='Lax',
+        REMEMBER_COOKIE_SECURE=secure_cookies,
+        REMEMBER_COOKIE_DURATION=timedelta(days=30),
     )
     
     # CSRF & Security Headers
@@ -286,9 +281,6 @@ def create_app(test_config=None):
             #   /login*, /logout, /setup     - auth + first-run wizard
             #   /static/                     - assets
             #   /api/public/                 - storefront API (API key auth)
-            #   /api/federation/             - peer federation (API key auth;
-            #                                  its /admin/* routes still enforce
-            #                                  @login_required themselves)
             #   /pos/customer-display + /pos/api/{pairing,peripheral,
             #     customer-display}/         - unattended POS displays, which
             #                                  authenticate by pairing token so
@@ -296,7 +288,7 @@ def create_app(test_config=None):
             #                                  never take a display down
             public_prefixes = (
                 '/login', '/logout', '/setup', '/static/',
-                '/api/public/', '/api/federation/',
+                '/api/public/',
                 '/pos/customer-display',
                 '/pos/api/pairing/', '/pos/api/peripheral/',
                 '/pos/api/customer-display/',
@@ -318,7 +310,11 @@ def create_app(test_config=None):
             
             if timeout_enabled and timeout_minutes > 0:
                 login_time = session.get('login_time')
-                if login_time:
+                if not login_time:
+                    # Session restored from a remember-me cookie: start the
+                    # inactivity clock now rather than never timing out.
+                    session['login_time'] = time.time()
+                elif login_time:
                     elapsed = time.time() - login_time
                     if elapsed > (timeout_minutes * 60):
                         logout_user()
@@ -336,12 +332,12 @@ def create_app(test_config=None):
     
     @app.before_request
     def check_csrf():
-        # Skip CSRF for login/logout/setup (no session may exist yet)
-        # Skip CSRF for /api/ routes (they use API key auth, not sessions)
-        # Skip CSRF for JSON-only federation routes
-        exempt_paths = ['/login', '/logout', '/setup', 
-                       '/inventory/request-transfer', '/inventory/federated-search']
-        if any(request.path == p for p in exempt_paths) or request.path.startswith('/static') or request.path.startswith('/api/'):
+        # Skip CSRF for login/logout/setup (no session may exist yet) and for
+        # the public API, which authenticates with an API key, not a cookie.
+        # Every other route, including session-authenticated /api/* JSON
+        # endpoints, must send the token (form field or X-CSRFToken header).
+        exempt_paths = ['/login', '/logout', '/setup']
+        if request.path in exempt_paths or request.path.startswith(('/static', '/api/public/')):
             return
         verify_csrf_token()
         
@@ -352,7 +348,7 @@ def create_app(test_config=None):
         # Content Security Policy - Prevent XSS attacks
         response.headers['Content-Security-Policy'] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://cdn.socket.io; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com; "
             "img-src 'self' data: https: http:; "
@@ -446,7 +442,7 @@ def create_app(test_config=None):
             'csrf_token': generate_csrf_token,
             'guess_shipper': guess_shipper,
             'has_permission': has_permission,
-            'config': c  # Full config for templates that need it
+            'config': _template_config(c),
         }
         
     return app

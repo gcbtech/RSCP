@@ -8,22 +8,10 @@ from flask_login import current_user
 from werkzeug.security import generate_password_hash
 
 from app.routes.admin import admin_bp, require_admin
-from app.services.auth import create_user, delete_user, update_user_password, update_user_admin_status
+from app.services.auth import (create_user, delete_user, update_user_password,
+                               update_user_admin_status, validate_password)
 
 logger = logging.getLogger(__name__)
-
-
-def validate_password(password: str) -> tuple[bool, str]:
-    """Validate password meets complexity requirements.
-    Returns (is_valid, error_message).
-    """
-    if len(password) < 8:
-        return False, "Password must be at least 8 characters long."
-    if not any(c.isupper() for c in password):
-        return False, "Password must contain at least one uppercase letter."
-    if not any(c.isdigit() or not c.isalnum() for c in password):
-        return False, "Password must contain at least one number or symbol."
-    return True, ""
 
 
 @admin_bp.route('/add_user', methods=['POST'])

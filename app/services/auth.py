@@ -39,6 +39,46 @@ def load_users():
     finally:
         conn.close()
 
+def validate_password(password: str) -> tuple[bool, str]:
+    """Validate password meets complexity requirements.
+    Returns (is_valid, error_message).
+    """
+    if len(password) < 8:
+        return False, "Password must be at least 8 characters long."
+    if not any(c.isupper() for c in password):
+        return False, "Password must contain at least one uppercase letter."
+    if not any(c.isdigit() or not c.isalnum() for c in password):
+        return False, "Password must contain at least one number or symbol."
+    return True, ""
+
+
+def create_first_admin(username, password_hash):
+    """Create the initial admin account, only if no user exists yet.
+
+    The emptiness check and the insert happen under one write lock
+    (BEGIN IMMEDIATE), so two concurrent setup submissions cannot both
+    create an admin. Returns True if this call created the account.
+    """
+    conn = get_db_connection()
+    try:
+        conn.isolation_level = None
+        conn.execute('BEGIN IMMEDIATE')
+        if conn.execute('SELECT COUNT(*) AS c FROM users').fetchone()['c'] > 0:
+            conn.execute('ROLLBACK')
+            return False
+        conn.execute(
+            "INSERT INTO users (username, password_hash, is_admin, roles) VALUES (?, ?, 1, '[\"super_admin\"]')",
+            (username, password_hash))
+        conn.execute('COMMIT')
+        return True
+    except Exception:
+        if conn.in_transaction:
+            conn.execute('ROLLBACK')
+        raise
+    finally:
+        conn.close()
+
+
 def create_user(username, password_hash, is_admin=False):
     """Legacy function used by main.py setup wizard."""
     conn = get_db_connection()

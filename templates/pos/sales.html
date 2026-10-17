@@ -659,6 +659,7 @@
             }
         }
     </style>
+    <script src="/static/js/rscp-common.js"></script>
 </head>
 
 <body>
@@ -1089,10 +1090,10 @@
                                 const priceText = item.sell_price?.toFixed(2) || '0.00';
                                 const priceWarning = (!item.sell_price || item.sell_price <= 0) ? '⚠️ ' : '';
                                 return `
-                                <div class="autocomplete-item" onclick="selectItem('${item.sku}')">
+                                <div class="autocomplete-item" data-sku="${escapeHtml(item.sku)}" onclick="selectItem(this.dataset.sku)">
                                     <div>
-                                        <div>${item.name}</div>
-                                        <div class="sku">${item.sku}</div>
+                                        <div>${escapeHtml(item.name)}</div>
+                                        <div class="sku">${escapeHtml(item.sku)}</div>
                                     </div>
                                     <div>
                                         <span class="stock-${item.stock_status}">${item.quantity} in stock</span>
@@ -1496,7 +1497,7 @@
                             <div class="d-flex align-items-center gap-2">
                                 <span>${p.role === 'display' ? '📺' : '🤳'}</span>
                                 <div>
-                                    <div class="small fw-semibold">${p.friendly_name}</div>
+                                    <div class="small fw-semibold">${escapeHtml(p.friendly_name)}</div>
                                     <div class="text-muted" style="font-size: 0.7rem;">${p.connected ? '🟢 Connected' : '⚪ Offline'}</div>
                                 </div>
                             </div>

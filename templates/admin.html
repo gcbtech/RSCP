@@ -332,12 +332,6 @@
             </li>
             {% endif %}
             <li class="nav-item">
-                <button class="nav-link {% if request.args.get('tab') == 'federation' %}active{% endif %}"
-                    id="federation-tab" data-bs-toggle="tab" data-bs-target="#federation" type="button">
-                    🔗 Federation
-                </button>
-            </li>
-            <li class="nav-item">
                 <button class="nav-link {% if request.args.get('tab') == 'settings' %}active{% endif %}"
                     id="settings-tab" data-bs-toggle="tab" data-bs-target="#settings" type="button">
                     ⚙️ Settings
@@ -1030,162 +1024,6 @@
             </div>
             {% endif %}
 
-            <!-- FEDERATION TAB -->
-            <div class="tab-pane fade {% if request.args.get('tab') == 'federation' %}show active{% endif %}"
-                id="federation" role="tabpanel">
-
-                <div class="row">
-                    <!-- Left Column: Configuration -->
-                    <div class="col-lg-6">
-                        <!-- Location Prefix Card -->
-                        <div class="admin-card">
-                            <div class="card-header">
-                                <div class="icon">📍</div>
-                                <span>Location Prefix</span>
-                            </div>
-                            <div class="card-body">
-                                <p class="text-muted small mb-3">
-                                    A unique 4-character prefix for your SKUs. Must be unique across all linked
-                                    instances.
-                                </p>
-                                <form id="prefixForm" class="row g-2 align-items-end">
-                                    <div class="col-auto">
-                                        <label class="form-label small">Prefix</label>
-                                        <input type="text" id="locationPrefix" class="form-control"
-                                            value="{{ config.LOCATION_PREFIX or 'RSCP' }}" maxlength="4"
-                                            pattern="[A-Z0-9]{4}"
-                                            style="width: 80px; text-transform: uppercase; font-family: monospace;">
-                                    </div>
-                                    <div class="col-auto">
-                                        <button type="button" class="btn btn-primary" onclick="saveLocationPrefix()">
-                                            Save Prefix
-                                        </button>
-                                    </div>
-                                </form>
-                                <div id="prefixStatus" class="mt-2"></div>
-                            </div>
-                        </div>
-
-                        <!-- Federation Settings Card -->
-                        <div class="admin-card mt-3">
-                            <div class="card-header">
-                                <div class="icon">⚙️</div>
-                                <span>Federation Settings</span>
-                            </div>
-                            <div class="card-body">
-                                <form action="/admin/federation/settings" method="POST">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <div class="form-check form-switch mb-3">
-                                        <input class="form-check-input" type="checkbox" id="crossSearchEnabled"
-                                            name="cross_search_enabled" {% if config.FEDERATION_CROSS_SEARCH_ENABLED
-                                            %}checked{% endif %}>
-                                        <label class="form-check-label" for="crossSearchEnabled">
-                                            Enable cross-location search for all users
-                                        </label>
-                                    </div>
-                                    <button type="submit" class="btn btn-primary btn-sm">Save Settings</button>
-                                </form>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Right Column: Linked Instances -->
-                    <div class="col-lg-6">
-                        <!-- Add New Instance Card -->
-                        <div class="admin-card">
-                            <div class="card-header">
-                                <div class="icon">➕</div>
-                                <span>Link New Instance</span>
-                            </div>
-                            <div class="card-body">
-                                <form id="addPeerForm" class="row g-2">
-                                    <div class="col-md-3">
-                                        <input type="text" id="peerName" class="form-control"
-                                            placeholder="Name (e.g. Warehouse B)">
-                                    </div>
-                                    <div class="col-md-4">
-                                        <input type="url" id="peerUrl" class="form-control"
-                                            placeholder="URL (e.g. https://192.168.1.50:5000)">
-                                    </div>
-                                    <div class="col-md-3">
-                                        <input type="text" id="peerRemoteKey" class="form-control"
-                                            placeholder="Their API Key (optional)">
-                                    </div>
-                                    <div class="col-md-2">
-                                        <button type="button" class="btn btn-success w-100"
-                                            onclick="addPeer()">Add</button>
-                                    </div>
-                                </form>
-                                <small class="text-muted mt-1">
-                                    Enter the remote instance's API key if you have it, or add it later via "Set Key"
-                                    button.
-                                </small>
-                                <div id="addPeerStatus" class="mt-2"></div>
-                            </div>
-                        </div>
-
-                        <!-- Linked Instances Table -->
-                        <div class="admin-card mt-3">
-                            <div class="card-header">
-                                <div class="icon">🔗</div>
-                                <span>Linked Instances</span>
-                            </div>
-                            <div class="card-body">
-                                <table class="table table-sm" id="peersTable">
-                                    <thead>
-                                        <tr>
-                                            <th>Name</th>
-                                            <th>Qty</th>
-                                            <th>SKU</th>
-                                            <th>Prefix</th>
-                                            <th>Status</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="peersBody">
-                                        <tr>
-                                            <td colspan="4" class="text-muted text-center">Loading...</td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Pending Transfers Row -->
-                <div class="row mt-3">
-                    <div class="col-12">
-                        <div class="admin-card">
-                            <div class="card-header">
-                                <div class="icon">📥</div>
-                                <span>Pending Transfers</span>
-                            </div>
-                            <div class="card-body">
-                                <table class="table table-sm" id="transfersTable">
-                                    <thead>
-                                        <tr>
-                                            <th>Direction</th>
-                                            <th>Item SKU</th>
-                                            <th>Quantity</th>
-                                            <th>From/To</th>
-                                            <th>Requested</th>
-                                            <th>Expires</th>
-                                            <th>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="transfersBody">
-                                        <tr>
-                                            <td colspan="7" class="text-muted text-center">Loading...</td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
             <!-- SETTINGS TAB -->
             <div class="tab-pane fade {% if request.args.get('tab') == 'settings' %}show active{% endif %}"
                 id="settings" role="tabpanel">
@@ -1449,14 +1287,6 @@
                                     </div>
 
                                     <div class="form-check form-switch mb-2">
-                                        <input class="form-check-input" type="checkbox" name="notify_federation"
-                                            id="notifyFederation" {% if config.get('NOTIFY_FEDERATION', False)
-                                            %}checked{% endif %}>
-                                        <label class="form-check-label" for="notifyFederation">🔗 Federation Transfer
-                                            Requests</label>
-                                    </div>
-
-                                    <div class="form-check form-switch mb-2">
                                         <input class="form-check-input" type="checkbox" name="notify_priority_packages"
                                             id="notifyPriorityPkg" {% if config.get('NOTIFY_PRIORITY_PACKAGES', False)
                                             %}checked{% endif %}>
@@ -1558,8 +1388,8 @@
                                     <div class="mb-2">
                                         <label class="form-label small fw-bold">Client Secret</label>
                                         <input type="password" name="sso_client_secret"
-                                            class="form-control form-control-sm"
-                                            value="{{ config.SSO_CLIENT_SECRET or '' }}" placeholder="Required">
+                                            class="form-control form-control-sm" autocomplete="new-password"
+                                            value="" placeholder="{{ '(saved - leave blank to keep)' if config.SSO_CLIENT_SECRET_SET else 'Required' }}">
                                     </div>
 
                                     <div class="mb-2">
@@ -1575,14 +1405,14 @@
                                             separated)</label>
                                         <input type="text" name="sso_allowed_domains"
                                             class="form-control form-control-sm"
-                                            value="{{ config.SSO_ALLOWED_DOMAINS|join(', ') if config.SSO_ALLOWED_DOMAINS else '@mycompany.com' }}"
+                                            value="{{ config.SSO_ALLOWED_DOMAINS|join(', ') if config.SSO_ALLOWED_DOMAINS else '' }}"
                                             placeholder="@company.com, @subsidiary.com">
-                                        <div class="form-text small">Only emails from these domains can log in.</div>
+                                        <div class="form-text small">Required. Only emails from these domains can log in. An existing user signs in with SSO once their account's email is set.</div>
                                     </div>
 
                                     <div class="form-check mb-3">
                                         <input class="form-check-input" type="checkbox" name="sso_allow_new_users"
-                                            id="ssoAutoProvision" {% if config.get('SSO_ALLOW_NEW_USERS', True)
+                                            id="ssoAutoProvision" {% if config.get('SSO_ALLOW_NEW_USERS', False)
                                             %}checked{% endif %}>
                                         <label class="form-check-label small" for="ssoAutoProvision">
                                             <strong>Auto-Provision New Users</strong><br>
@@ -2380,232 +2210,6 @@
         setTimeout(() => {
             document.querySelector('.alert-toast')?.remove();
         }, 5000);
-
-        // ========================================
-        // Federation Functions
-        // ========================================
-
-        // Load on tab switch
-        document.getElementById('federation-tab')?.addEventListener('shown.bs.tab', function () {
-            loadPeers();
-            loadTransfers();
-        });
-
-        function loadPeers() {
-            fetch('/api/federation/admin/peers')
-                .then(r => r.json())
-                .then(data => {
-                    const tbody = document.getElementById('peersBody');
-                    if (!data.peers || data.peers.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="4" class="text-muted text-center">No linked instances</td></tr>';
-                        return;
-                    }
-                    tbody.innerHTML = data.peers.map(p => `
-                        <tr>
-                            <td>${p.name}<br><small class="text-muted">${p.url}</small></td>
-                            <td><code>${p.location_prefix || '-'}</code></td>
-                            <td>
-                                <span class="badge ${p.status === 'active' ? 'bg-success' : 'bg-warning'}">
-                                    ${p.status}
-                                </span>
-                                ${p.status === 'pending' ? '<br><small class="text-muted">Needs their API key</small>' : ''}
-                            </td>
-                            <td>
-                                <button class="btn btn-sm btn-outline-primary" onclick="testPeer(${p.id})">Test</button>
-                                <button class="btn btn-sm btn-outline-secondary" onclick="setRemoteKey(${p.id})" title="Enter their API key">Set Key</button>
-                                <button class="btn btn-sm btn-outline-info" onclick="showApiKey(${p.id}, '${p.api_key}')" title="Your key to share">My Key</button>
-                                <button class="btn btn-sm btn-outline-danger" onclick="removePeer(${p.id})">Remove</button>
-                            </td>
-                        </tr>
-                    `).join('');
-                })
-                .catch(err => {
-                    document.getElementById('peersBody').innerHTML = `<tr><td colspan="4" class="text-danger">${err.message}</td></tr>`;
-                });
-        }
-
-        function setRemoteKey(id) {
-            const key = prompt('Enter the API key from the remote instance:');
-            if (!key) return;
-
-            const csrfToken = document.querySelector('input[name="csrf_token"]')?.value || '';
-            fetch(`/api/federation/admin/peers/${id}/remote-key`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': csrfToken
-                },
-                body: JSON.stringify({ remote_api_key: key })
-            })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        alert(data.message);
-                        loadPeers();
-                    } else {
-                        alert('Error: ' + data.error);
-                    }
-                });
-        }
-
-        function addPeer() {
-            const name = document.getElementById('peerName').value.trim();
-            const url = document.getElementById('peerUrl').value.trim();
-            const remoteKey = document.getElementById('peerRemoteKey').value.trim();
-            const statusDiv = document.getElementById('addPeerStatus');
-
-            if (!name || !url) {
-                statusDiv.innerHTML = '<span class="text-danger">Name and URL are required</span>';
-                return;
-            }
-
-            fetch('/api/federation/admin/peers', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': document.querySelector('input[name="csrf_token"]')?.value || ''
-                },
-                body: JSON.stringify({ name, url, remote_api_key: remoteKey })
-            })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.error) {
-                        statusDiv.innerHTML = `<span class="text-danger">${data.error}</span>`;
-                    } else {
-                        statusDiv.innerHTML = `<span class="text-success">Added! Your API Key to share: <code>${data.api_key}</code></span>`;
-                        document.getElementById('peerName').value = '';
-                        document.getElementById('peerUrl').value = '';
-                        document.getElementById('peerRemoteKey').value = '';
-                        loadPeers();
-                    }
-                })
-                .catch(err => statusDiv.innerHTML = `<span class="text-danger">${err.message}</span>`);
-        }
-
-        function testPeer(id) {
-            const csrfToken = document.querySelector('input[name="csrf_token"]')?.value || '';
-            fetch(`/api/federation/admin/peers/${id}/test`, {
-                method: 'POST',
-                headers: { 'X-CSRFToken': csrfToken }
-            })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        alert(`Connection successful!\nRemote: ${data.remote_name}\nPrefix: ${data.remote_prefix}\nVersion: ${data.version}`);
-                        loadPeers();
-                    } else {
-                        alert(`Connection failed: ${data.error}`);
-                    }
-                })
-                .catch(err => {
-                    alert(`Error testing connection: ${err.message}`);
-                });
-        }
-
-        function showApiKey(id, key) {
-            prompt('API Key (share with remote instance):', key);
-        }
-
-        function removePeer(id) {
-            if (!confirm('Remove this linked instance?')) return;
-            const csrfToken = document.querySelector('input[name="csrf_token"]')?.value || '';
-            fetch(`/api/federation/admin/peers/${id}`, {
-                method: 'DELETE',
-                headers: { 'X-CSRFToken': csrfToken }
-            })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        loadPeers();
-                    } else {
-                        alert('Error removing peer: ' + (data.error || 'Unknown error'));
-                    }
-                })
-                .catch(err => {
-                    alert('Error: ' + err.message);
-                    loadPeers();
-                });
-        }
-
-        function loadTransfers() {
-            fetch('/api/federation/admin/transfers')
-                .then(r => r.json())
-                .then(data => {
-                    const tbody = document.getElementById('transfersBody');
-                    if (!data.transfers || data.transfers.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="7" class="text-muted text-center">No pending transfers</td></tr>';
-                        return;
-                    }
-                    tbody.innerHTML = data.transfers.map(t => `
-                        <tr>
-                            <td><span class="badge ${t.direction === 'incoming' ? 'bg-success' : 'bg-info'}">${t.direction}</span></td>
-                            <td><code>${t.item_sku}</code></td>
-                            <td>${t.quantity}</td>
-                            <td>${t.peer_name}</td>
-                            <td>${new Date(t.requested_at).toLocaleString()}</td>
-                            <td>${new Date(t.expires_at).toLocaleString()}</td>
-                            <td>
-                                ${t.direction === 'outgoing' ? `
-                                    <button class="btn btn-sm btn-success" onclick="approveTransfer(${t.id})">✓ Send</button>
-                                    <button class="btn btn-sm btn-danger" onclick="rejectTransfer(${t.id})">✗ Deny</button>
-                                ` : `<span class="text-muted">Awaiting delivery</span>`}
-                            </td>
-                        </tr>
-                    `).join('');
-                });
-        }
-
-        function approveTransfer(id) {
-            if (!confirm('Approve this transfer? The item will be sent to the requesting instance.')) return;
-            fetch(`/api/federation/admin/transfers/${id}/approve`, { method: 'POST' })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        alert(data.message || 'Transfer approved!');
-                        loadTransfers();
-                    } else {
-                        alert(`Error: ${data.error}`);
-                    }
-                });
-        }
-
-        function rejectTransfer(id) {
-            const reason = prompt('Reason for rejection (optional):');
-            fetch(`/api/federation/admin/transfers/${id}/reject`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ reason })
-            })
-                .then(() => loadTransfers());
-        }
-
-        function saveLocationPrefix() {
-            const prefix = document.getElementById('locationPrefix').value.toUpperCase().trim();
-            const statusDiv = document.getElementById('prefixStatus');
-
-            if (prefix.length !== 4 || !/^[A-Z0-9]+$/.test(prefix)) {
-                statusDiv.innerHTML = '<span class="text-danger">Prefix must be exactly 4 alphanumeric characters</span>';
-                return;
-            }
-
-            fetch('/admin/federation/prefix', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': document.querySelector('input[name="csrf_token"]')?.value || ''
-                },
-                body: JSON.stringify({ prefix })
-            })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        statusDiv.innerHTML = '<span class="text-success">Prefix saved!</span>';
-                    } else {
-                        statusDiv.innerHTML = `<span class="text-danger">${data.error}</span>`;
-                    }
-                })
-                .catch(err => statusDiv.innerHTML = `<span class="text-danger">${err.message}</span>`);
-        }
     </script>
 </body>
 

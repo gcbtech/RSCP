@@ -81,6 +81,13 @@ def _wants_json():
     return request.headers.get('X-Response-Format') == 'json'
 
 
+def _reject_line_discount(cart, message):
+    flash(message)
+    if _wants_json():
+        return _cart_json(cart, success=False, error='discount_rejected', status=403)
+    return redirect(url_for('pos.sales'))
+
+
 def _cart_json(cart, success=True, error=None, status=200):
     """JSON cart state for scanner clients: totals + drained flash messages."""
     from flask import get_flashed_messages
@@ -290,8 +297,23 @@ def cart_update(index):
         discount_amount = request.form.get('discount_amount')
         discount_type = request.form.get('discount_type')
         if discount_amount is not None:
-            item['discount_amount'] = float(discount_amount) if discount_amount else 0
-            item['discount_type'] = discount_type if item['discount_amount'] > 0 else None
+            try:
+                line_discount = float(discount_amount) if discount_amount else 0
+            except ValueError:
+                line_discount = 0
+            if discount_type not in ('percent', 'fixed'):
+                discount_type = 'fixed'
+            if line_discount < 0 or (discount_type == 'percent' and line_discount > 100):
+                return _reject_line_discount(cart, 'Invalid discount amount.')
+            # Same limits as order-level discounts: beyond them, managers only.
+            from app.services.data_manager import load_config
+            from app.utils.permissions import has_permission
+            conf = load_config()
+            over_limit = (discount_type == 'percent' and line_discount > conf.get('POS_MAX_DISCOUNT_PERCENT', 10)) or                          (discount_type == 'fixed' and line_discount > conf.get('POS_MAX_DISCOUNT_AMOUNT', 20))
+            if over_limit and not has_permission(current_user, 'pos.manage'):
+                return _reject_line_discount(cart, 'Discount exceeds limit. Manager approval required.')
+            item['discount_amount'] = line_discount
+            item['discount_type'] = discount_type if line_discount > 0 else None
         
         # Recalculate line total
         item['line_total'] = calculate_line_total(
@@ -321,12 +343,20 @@ def cart_discount():
     discount_amount = request.form.get('discount_amount', 0)
     discount_type = request.form.get('discount_type', 'fixed')
     discount_reason = request.form.get('discount_reason', '')
-    manager_override = request.form.get('manager_approved', '')  # Manager username if approved
-    
+    # Approval comes only from a manager check recorded server-side in the
+    # session (/pos/verify-manager). A client-supplied "manager_approved"
+    # field used to be accepted here, which let any request skip approval.
+    manager_override = ''
+
     try:
         discount_value = float(discount_amount) if discount_amount else 0
     except ValueError:
         discount_value = 0
+    if discount_type not in ('percent', 'fixed'):
+        discount_type = 'fixed'
+    if discount_value < 0 or (discount_type == 'percent' and discount_value > 100):
+        flash('Invalid discount amount.')
+        return redirect(url_for('pos.sales'))
     
     # Check if discount exceeds thresholds
     needs_approval = False
@@ -339,8 +369,9 @@ def cart_discount():
         elif discount_type == 'fixed' and discount_value > max_amount:
             needs_approval = True
     
-    # Check if user is admin (skip approval needed)
-    if current_user.is_admin:
+    # Admins and POS managers approve their own discounts
+    from app.utils.permissions import has_permission
+    if has_permission(current_user, 'pos.manage'):
         needs_approval = False
     
     # Check for manager override approval from session

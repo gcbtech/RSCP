@@ -183,6 +183,7 @@
             color: #aaa;
         }
     </style>
+    <script src="/static/js/rscp-common.js"></script>
 </head>
 
 <body class="{{ 'priority-bg' if priority_alert else '' }}" style="background-color: {{ color }};">
@@ -460,7 +461,7 @@
             const hist = JSON.parse(sessionStorage.getItem('rscp_session') || "[]");
             if (hist.length > 0) {
                 document.getElementById('sessionHistory').style.display = 'block';
-                document.getElementById('histList').innerHTML = hist.map(i => `<div>- ${i.name} (${i.time})</div>`).join('');
+                document.getElementById('histList').innerHTML = hist.map(i => `<div>- ${escapeHtml(i.name)} (${escapeHtml(i.time)})</div>`).join('');
             } else {
                 document.getElementById('sessionHistory').style.display = 'none';
             }
@@ -921,7 +922,7 @@
                 div.style.padding = '10px';
                 div.style.borderBottom = '1px solid #eee';
                 div.style.cursor = 'pointer';
-                div.innerHTML = `<strong>${item.name}</strong><br><small style="color:#666;">${item.sku}</small>`;
+                div.innerHTML = `<strong>${escapeHtml(item.name)}</strong><br><small style="color:#666;">${escapeHtml(item.sku)}</small>`;
                 div.onclick = () => selectInventoryItem(item);
                 container.appendChild(div);
             });

@@ -14,13 +14,12 @@ from app.utils.permissions import has_permission
 
 # DB Services
 from app.services.db import get_db_connection, DB_PATH, get_request_db
-from app.services.auth import create_user, BASE_DIR # load_users shim used for login selection
+from app.services.auth import BASE_DIR, create_first_admin, validate_password
 from app.services.data_manager import (
-    get_dashboard_stats, sync_manifest, log_receipt, load_config, MANIFEST_FILE,
+    get_dashboard_stats, sync_manifest, log_receipt, load_config, save_config, MANIFEST_FILE,
     get_scan_count, get_file_age, check_history
 )
 from app.utils.helpers import sanitize_for_csv
-from app.services.file_handler import atomic_write # Still used for config?
 from app.services.logger import log_error
 
 main_bp = Blueprint('main', __name__)
@@ -82,23 +81,23 @@ def setup_wizard():
         conn.close()
     
     if request.method == 'POST':
-        # Save Config
-        config_data = {
-            "ORG_NAME": request.form.get('org_name', ''),
-            "ADMIN_HASH": generate_password_hash(request.form.get('admin_pass')),
-            "SECRET_KEY": secrets.token_hex(16),
-            "AUTO_TRIM": False
-        }
-        try:
-            with atomic_write(CONFIG_FILE, 'w') as f:
-                json.dump(config_data, f, indent=4)
-        except Exception as e:
-            logger.error(f"Failed to write config file during setup: {e}")
-        
-        # Create Admin user with custom username
-        admin_user = request.form.get('admin_user', 'Admin').strip()
-        create_user(admin_user, config_data["ADMIN_HASH"], is_admin=True)
-            
+        admin_user = (request.form.get('admin_user') or 'Admin').strip()
+        admin_pass = request.form.get('admin_pass') or ''
+        ok, message = validate_password(admin_pass)
+        if not ok:
+            return render_template('setup.html', error=message)
+
+        if not create_first_admin(admin_user, generate_password_hash(admin_pass)):
+            return redirect(url_for('auth.login'))  # someone else finished setup first
+
+        # Merge into the existing config. The installer already generated
+        # SECRET_KEY and the running workers are using it; replacing it here
+        # would silently invalidate sessions after the next restart.
+        updates = {"ORG_NAME": request.form.get('org_name', ''), "AUTO_TRIM": False}
+        if not load_config(force_reload=True).get('SECRET_KEY'):
+            updates["SECRET_KEY"] = secrets.token_hex(32)
+        save_config(updates)
+
         return redirect(url_for('auth.login'))
         
     return render_template('setup.html')
@@ -322,11 +321,6 @@ def scan_page_legacy():
 def scan_page(mode):
     logger.info(f"[Scan] scan_page called. Mode: {mode}, User: {current_user.username}")
     return render_template('scan.html', mode=mode)
-
-@main_bp.route('/api/scan', methods=['POST'])
-@login_required
-def handle_scan():
-    pass  # Legacy endpoint, authentication now handled by decorator
 
 @main_bp.route('/api/dashboard_stats')
 @login_required

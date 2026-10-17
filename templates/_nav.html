@@ -391,10 +391,11 @@
             toast.setAttribute('role', 'alert');
             toast.innerHTML = `
             <div class="d-flex">
-                <div class="toast-body">${message}</div>
+                <div class="toast-body"></div>
                 <button type="button" class="btn-close btn-close-white me-2 m-auto" onclick="this.parentElement.parentElement.remove()"></button>
             </div>
         `;
+            toast.querySelector('.toast-body').textContent = message;
 
             container.appendChild(toast);
 
@@ -479,7 +480,7 @@
 
         window.openNotification = function (id, link) {
             // Mark as read
-            fetch(`/api/notifications/${id}/read`, { method: 'POST' })
+            fetch(`/api/notifications/${id}/read`, { method: 'POST', headers: { 'X-CSRFToken': '{{ csrf_token() }}' } })
                 .then(() => {
                     if (link) {
                         window.location.href = link;
@@ -490,7 +491,7 @@
         };
 
         window.markAllRead = function () {
-            fetch('/api/notifications/read-all', { method: 'POST' })
+            fetch('/api/notifications/read-all', { method: 'POST', headers: { 'X-CSRFToken': '{{ csrf_token() }}' } })
                 .then(() => loadNotifications());
         };
 

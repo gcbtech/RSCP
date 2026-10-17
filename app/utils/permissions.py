@@ -158,3 +158,22 @@ def require_any_role(*roles):
             return f(*args, **kwargs)
         return decorated_function
     return decorator
+
+
+# Failed manager PIN/password checks allowed per cashier account before a
+# cooldown. A 4-digit PIN has only 10,000 values, so unthrottled checks could
+# be brute-forced in minutes; each check also costs N password hashes.
+MANAGER_AUTH_FAIL_LIMIT = 5
+MANAGER_AUTH_FAIL_WINDOW = 300  # seconds
+
+
+def manager_auth_throttled():
+    from app.services import throttle
+    return throttle.is_limited('manager_auth', f'user:{current_user.id}',
+                               MANAGER_AUTH_FAIL_LIMIT, MANAGER_AUTH_FAIL_WINDOW)
+
+
+def record_manager_auth_failure():
+    from app.services import throttle
+    throttle.hit('manager_auth', f'user:{current_user.id}')
+    logger.warning(f"Failed manager authentication attempt by {current_user.username}")

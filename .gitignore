@@ -24,6 +24,9 @@ app.log.*
 logs/
 error_logs*.csv
 .background_tasks.lock
+*.migrate.lock
+config.json.lock
+.config.*.tmp
 
 # ----------------------------------
 # Python Bytecode & Cache
@@ -36,8 +39,10 @@ __pycache__/
 
 # ----------------------------------
 # Testing
+# (the test code is tracked; only scratch databases are ignored)
 # ----------------------------------
-tests/
+tests/*.db
+tests/*.db-*
 .pytest_cache/
 .coverage
 htmlcov/
@@ -95,7 +100,9 @@ desktop.ini
 # Backup Files
 # ----------------------------------
 *.bak
+*.bak-*
 *.backup
+_*backup*/
 backups/
 *.zip
 

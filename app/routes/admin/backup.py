@@ -388,16 +388,14 @@ def save_inapp_notifications():
     # Get form values
     low_stock = request.form.get('notify_low_stock') == 'on'
     oos = request.form.get('notify_oos') == 'on'
-    federation = request.form.get('notify_federation') == 'on'
     priority_pkg = request.form.get('notify_priority_packages') == 'on'
     normal_pkg = request.form.get('notify_normal_packages') == 'on'
     
-    logger.info(f"Saving in-app notifications: low_stock={low_stock}, oos={oos}, federation={federation}, priority={priority_pkg}, normal={normal_pkg}")
+    logger.info(f"Saving in-app notifications: low_stock={low_stock}, oos={oos}, priority={priority_pkg}, normal={normal_pkg}")
     
     # Save each toggle setting
     save_config_value('NOTIFY_LOW_STOCK', low_stock)
     save_config_value('NOTIFY_OOS', oos)
-    save_config_value('NOTIFY_FEDERATION', federation)
     save_config_value('NOTIFY_PRIORITY_PACKAGES', priority_pkg)
     save_config_value('NOTIFY_NORMAL_PACKAGES', normal_pkg)
     
@@ -443,49 +441,3 @@ def save_auto_confirm():
     except Exception as e:
         logger.error(f"Error saving auto-confirm setting: {e}")
         return jsonify({"error": str(e)}), 500
-
-
-@admin_bp.route('/federation/prefix', methods=['POST'])
-def save_federation_prefix():
-    """Save the location prefix for SKU federation."""
-    error = require_admin()
-    if error:
-        return jsonify({"error": "Unauthorized"}), 403
-    
-    try:
-        data = request.get_json() or {}
-        prefix = data.get('prefix', '').upper().strip()
-        
-        # Validate prefix
-        if len(prefix) != 4 or not prefix.isalnum():
-            return jsonify({"error": "Prefix must be exactly 4 alphanumeric characters"}), 400
-        
-        # TODO: Check uniqueness across linked peers
-        
-        save_config_value('LOCATION_PREFIX', prefix)
-        
-        return jsonify({"success": True})
-    except Exception as e:
-        logger.error(f"Error saving federation prefix: {e}")
-        return jsonify({"error": str(e)}), 500
-
-
-@admin_bp.route('/federation/settings', methods=['POST'])
-def save_federation_settings():
-    """Save federation settings (cross-search toggle)."""
-    error = require_admin()
-    if error:
-        flash("Admin access required", "danger")
-        return redirect(url_for('admin.admin_panel', tab='federation'))
-    
-    try:
-        cross_search_enabled = 'cross_search_enabled' in request.form
-        
-        save_config_value('FEDERATION_CROSS_SEARCH_ENABLED', cross_search_enabled)
-        
-        flash("Federation settings saved", "success")
-        return redirect(url_for('admin.admin_panel', tab='federation'))
-    except Exception as e:
-        logger.error(f"Error saving federation settings: {e}")
-        flash(f"Error: {e}", "danger")
-        return redirect(url_for('admin.admin_panel', tab='federation'))

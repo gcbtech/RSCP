@@ -92,43 +92,91 @@ def load_config(force_reload: bool = False) -> Dict[str, Any]:
         
         return config.copy()
 
-def save_config(new_config: Dict[str, Any]) -> bool:
-    """Save configuration to config.json and update cache.
-    
-    Thread-safe: Uses CONFIG_LOCK to prevent race conditions.
+def save_config(new_config: Dict[str, Any] = None, updater=None) -> bool:
+    """Merge `new_config` into config.json and update the cache.
+
+    Safe across threads (CONFIG_LOCK) and worker processes (an flock on
+    config.json.lock). The write goes to a unique temp file that is fsynced
+    and then atomically renamed over config.json. If the existing file cannot
+    be parsed, nothing is written: saving only the new keys would silently
+    wipe SECRET_KEY and every stored credential.
+
+    `updater`, if given, is called with the current on-disk config while the
+    lock is held and returns the keys to change; use it for read-modify-write
+    updates that must not race with other workers.
     """
     global CONFIG_CACHE
-    
+
     with CONFIG_LOCK:
+        lock_fd = None
         try:
-            # Load existing first to preserve other keys
+            try:
+                import fcntl
+                lock_fd = open(CONFIG_FILE + '.lock', 'a+')
+                fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            except ImportError:
+                pass
+
             current = {}
             if os.path.exists(CONFIG_FILE):
                 try:
                     with open(CONFIG_FILE, 'r') as f:
                         current = json.load(f)
                 except Exception as e:
-                    logger.error(f"[Config] Failed to load existing config: {e}")
-                    current = {}
-            
-            current.update(new_config)
-            
-            # Write atomically by writing to temp file first
-            temp_file = CONFIG_FILE + '.tmp'
-            with open(temp_file, 'w') as f:
-                json.dump(current, f, indent=4)
-            
-            # Replace original with temp (atomic on most file systems)
-            os.replace(temp_file, CONFIG_FILE)
-            
-            # Update cache with new data immediately
+                    logger.error(f"[Config] Refusing to save: existing {CONFIG_FILE} is unreadable ({e})")
+                    return False
+
+            if new_config:
+                current.update(new_config)
+            if updater is not None:
+                current.update(updater(dict(current)) or {})
+
+            import tempfile
+            # Resolve symlinks: in the release layout config.json links into the
+            # shared data dir, and renaming over the link would replace it.
+            target = os.path.realpath(CONFIG_FILE)
+            fd, temp_file = tempfile.mkstemp(dir=os.path.dirname(target) or '.',
+                                             prefix='.config.', suffix='.tmp')
+            try:
+                with os.fdopen(fd, 'w') as f:
+                    json.dump(current, f, indent=4)
+                    f.flush()
+                    os.fsync(f.fileno())
+                # config.json holds credentials: keep it private to the service user
+                os.chmod(temp_file, 0o600)
+                os.replace(temp_file, target)
+            except Exception:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                raise
+
             CONFIG_CACHE['data'] = current
             CONFIG_CACHE['loaded_at'] = time.time()
-            
             return True
         except Exception as e:
             logger.error(f"[Config] Failed to save {CONFIG_FILE}: {e}")
             return False
+        finally:
+            if lock_fd is not None:
+                lock_fd.close()
+
+def ensure_secret_key() -> str:
+    """Return SECRET_KEY, generating and persisting one if config.json lacks it.
+
+    Runs under save_config's cross-process lock, so when several workers boot
+    at once they all end up with the same key.
+    """
+    existing = load_config(force_reload=True).get('SECRET_KEY')
+    if existing:
+        return existing
+    import secrets
+    save_config(updater=lambda cur: {} if cur.get('SECRET_KEY') else {'SECRET_KEY': secrets.token_hex(32)})
+    key = load_config(force_reload=True).get('SECRET_KEY')
+    if not key:
+        raise RuntimeError("SECRET_KEY is missing from config.json and could not be generated")
+    logger.warning("[Config] SECRET_KEY was missing; generated a new one (existing sessions are invalid)")
+    return key
+
 
 def get_file_age(filepath: str) -> float:
     if not os.path.exists(filepath): return 999.0

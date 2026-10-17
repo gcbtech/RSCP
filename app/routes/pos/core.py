@@ -10,6 +10,7 @@ from flask import request, redirect, url_for, flash, render_template, session
 from flask_login import login_required, current_user
 
 from app.routes.pos import pos_bp
+from app.utils.permissions import require_permission
 from app.services.db import get_db_connection, get_request_db
 from app.services.data_manager import load_config
 
@@ -449,6 +450,7 @@ def check_pos_enabled():
 
 @pos_bp.route('/debug')
 @login_required
+@require_permission('pos.manage')  # managers only
 def pos_debug():
     """Debug endpoint to check POS module status."""
     # current_user imported globally now
@@ -508,6 +510,7 @@ def log_pos_action(action, user_id=None, user_name=None, target_type=None, targe
 
 @pos_bp.route('/settings/save_tax_rate', methods=['POST'])
 @login_required
+@require_permission('pos.manage')  # managers only
 def save_tax_rate():
     """Save the tax rate setting."""
     try:
@@ -521,6 +524,7 @@ def save_tax_rate():
 
 @pos_bp.route('/settings/save_cash_discount', methods=['POST'])
 @login_required
+@require_permission('pos.manage')  # managers only
 def save_cash_discount():
     """Save cash discount settings."""
     enabled = 'true' if request.form.get('enabled') == 'on' else 'false'
@@ -540,6 +544,7 @@ def save_cash_discount():
 
 @pos_bp.route('/settings/save_receipt', methods=['POST'])
 @login_required
+@require_permission('pos.manage')  # managers only
 def save_receipt():
     """Save receipt settings."""
     store_name = request.form.get('store_name', '').strip()
@@ -556,6 +561,7 @@ def save_receipt():
 
 @pos_bp.route('/settings/save_email', methods=['POST'])
 @login_required
+@require_permission('pos.manage')  # managers only
 def save_email_settings():
     """Save POS email automation settings."""
     host = request.form.get('host', '').strip()
@@ -616,6 +622,7 @@ def open_drawer():
 
 @pos_bp.route('/hardware/list_ports', methods=['GET'])
 @login_required
+@require_permission('pos.manage')  # managers only
 def list_ports():
     """List available serial ports for cash drawer configuration."""
     from flask import jsonify
@@ -627,6 +634,7 @@ def list_ports():
 
 @pos_bp.route('/hardware/test_drawer', methods=['POST'])
 @login_required
+@require_permission('pos.manage')  # managers only
 def test_drawer():
     """Test the cash drawer by opening it on specified port."""
     from flask import jsonify

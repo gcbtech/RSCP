@@ -2,7 +2,6 @@ from flask import Blueprint, render_template, redirect, url_for, flash, request,
 from flask_login import login_user, logout_user, login_required, current_user
 from app.services.auth import User
 from app.services.db import get_db_connection
-from urllib.parse import urlparse
 import logging
 
 auth_bp = Blueprint('auth', __name__)
@@ -49,37 +48,32 @@ def log_login_attempt(username: str, success: bool):
 
 
 import time
-from collections import defaultdict
 
-# Simple in-memory rate limiter for login attempts
-_login_attempts = defaultdict(list)  # IP -> list of timestamps
-_LOGIN_RATE_LIMIT = 5  # attempts
-_LOGIN_RATE_WINDOW = 60  # seconds
+from app.services import throttle
+from app.utils.helpers import is_safe_redirect
+
+# Failed-login limits, shared across all gunicorn workers (see services/throttle).
+# Per IP: slows down password spraying. Per username: slows down guessing one
+# account from many IPs. Both reset on a successful login.
+LOGIN_FAIL_LIMIT = 10
+LOGIN_FAIL_WINDOW = 15 * 60  # seconds
 
 
-def check_login_rate_limit():
-    """Check if the current IP has exceeded login rate limit. Returns True if blocked."""
+def _login_throttled(username):
     ip = request.remote_addr or 'unknown'
-    current_time = time.time()
-    
-    # Clean old attempts outside the window
-    _login_attempts[ip] = [t for t in _login_attempts[ip] if current_time - t < _LOGIN_RATE_WINDOW]
-    
-    # Check if over limit
-    if len(_login_attempts[ip]) >= _LOGIN_RATE_LIMIT:
+    if throttle.is_limited('login_ip', ip, LOGIN_FAIL_LIMIT, LOGIN_FAIL_WINDOW):
         return True
-    
-    # Record this attempt
-    _login_attempts[ip].append(current_time)
+    if username and throttle.is_limited('login_user', username.lower(), LOGIN_FAIL_LIMIT, LOGIN_FAIL_WINDOW):
+        return True
     return False
 
 
 @auth_bp.route('/login', methods=['GET', 'POST'])
 def login():
-    # Security: Rate limiting - 5 login attempts per minute per IP
-    if request.method == 'POST' and check_login_rate_limit():
-        response = make_response("Too many login attempts. Please wait a minute and try again.", 429)
-        response.headers['Retry-After'] = '60'
+    if request.method == 'POST' and _login_throttled(request.form.get('username')):
+        logger.warning(f"Login throttled for '{request.form.get('username')}' from {request.remote_addr}")
+        response = make_response("Too many failed login attempts. Please wait 15 minutes and try again.", 429)
+        response.headers['Retry-After'] = str(LOGIN_FAIL_WINDOW)
         return response
     
     if current_user.is_authenticated and not request.args.get('force'):
@@ -94,35 +88,43 @@ def login():
 
         if not user:
             log_login_attempt(username, success=False)
+            throttle.hit('login_ip', request.remote_addr or 'unknown')
+            if username:
+                throttle.hit('login_user', username.lower())
             flash('Invalid username or password', 'error')
             return redirect(url_for('auth.login'))
 
         # Successful login
         log_login_attempt(username, success=True)
+        throttle.clear('login_ip', request.remote_addr or 'unknown')
+        throttle.clear('login_user', username.lower())
         login_user(user, remember=remember)
         
         # Store login timestamp for session timeout
-        session['login_time'] = __import__('time').time()
-        
-        # Redirect to next page or default
+        session['login_time'] = time.time()
+
         next_page = request.args.get('next')
-        # Security: Stricter open redirect protection
-        # Block: empty, external netloc, protocol-relative (//evil.com), and javascript:
-        if (not next_page or 
-            urlparse(next_page).netloc != '' or 
-            next_page.startswith('//') or 
-            next_page.lower().startswith('javascript:')):
+        if not is_safe_redirect(next_page):
             next_page = url_for('main.index')
-        
         return redirect(next_page)
 
     return render_template('login.html')
 
 
+def _sso_available():
+    """SSO is usable only when switched on, registered, and domain-restricted."""
+    from app.services.data_manager import load_config
+    conf = load_config()
+    return bool(conf.get('SSO_ENABLED')
+                and conf.get('SSO_ALLOWED_DOMAINS')
+                and getattr(current_app, 'oauth', None) is not None
+                and current_app.oauth.create_client('rscp_sso') is not None)
+
+
 @auth_bp.route('/login/sso')
 def login_sso():
     """Initiate OIDC Login Flow"""
-    if not hasattr(current_app, 'oauth') or not current_app.oauth:
+    if not _sso_available():
         flash("SSO is not configured.", "error")
         return redirect(url_for('auth.login'))
         
@@ -138,60 +140,57 @@ def login_sso():
 @auth_bp.route('/login/callback')
 def sso_callback():
     """Handle OIDC Callback"""
+    if not _sso_available():
+        flash("SSO is not configured.", "error")
+        return redirect(url_for('auth.login'))
+
     try:
         oauth = current_app.oauth.rscp_sso
         token = oauth.authorize_access_token()
         user_info = oauth.userinfo()
-        
+
         if not user_info or not user_info.get('email'):
             flash("Failed to get user info from identity provider.", "error")
             return redirect(url_for('auth.login'))
-            
+
+        # An unverified address proves nothing about who is signing in.
+        if user_info.get('email_verified') is not True:
+            logger.warning(f"SSO Login Blocked: unverified email {user_info.get('email')}")
+            flash("Your identity provider has not verified this email address.", "error")
+            return redirect(url_for('auth.login'))
+
         email = user_info['email'].lower()
-        
-        # 1. Check Domain Whitelist
+
+        # 1. Domain allowlist (required: _sso_available() refuses SSO without one)
         from app.services.data_manager import load_config
         conf = load_config()
-        allowed_domains = conf.get('SSO_ALLOWED_DOMAINS', [])
-        
-        # If allowed_domains is set, check match
-        if allowed_domains:
-            domain = '@' + email.split('@')[-1]
-            if domain not in allowed_domains:
-                logger.warning(f"SSO Login Blocked: Domain {domain} not in whitelist.")
-                flash("Your email domain is not authorized to access this system.", "error")
-                return redirect(url_for('auth.login'))
+        allowed_domains = [d.lower() if d.startswith('@') else '@' + d.lower()
+                           for d in conf.get('SSO_ALLOWED_DOMAINS', [])]
+        domain = '@' + email.rsplit('@', 1)[-1]
+        if domain not in allowed_domains:
+            logger.warning(f"SSO Login Blocked: Domain {domain} not in whitelist.")
+            flash("Your email domain is not authorized to access this system.", "error")
+            return redirect(url_for('auth.login'))
 
-        # 2. Find User
+        # 2. Find the user by the email recorded on their account. There is
+        # deliberately no fallback to matching the username against the
+        # email's local part: that let anyone holding e.g. admin@<allowed
+        # domain> take over the local "admin" account. To link an existing
+        # account, an admin sets its email address first.
         user = User.get_by_email(email)
-        
-        # 3. Smart Linking (Fallback to username match)
+
+        # 3. Auto-provisioning (off unless explicitly enabled)
         if not user:
-            # Try matching username (e.g. 'bob' matches 'bob@company.com')
-            local_user = email.split('@')[0]
-            existing_user = User.get_by_username(local_user)
-            
-            if existing_user:
-                # Link account
-                User.link_sso_account(existing_user.id, email, 'oidc')
-                user = User.get(existing_user.id) # Reload
-                logger.info(f"SSO: Linked existing user '{local_user}' to '{email}'")
-        
-        # 4. Auto-Provisioning
-        if not user:
-            if conf.get('SSO_ALLOW_NEW_USERS', True):
-                # Create new user
+            if conf.get('SSO_ALLOW_NEW_USERS', False):
                 preferred_username = email.split('@')[0]
-                # Ensure username uniqueness (simple check)
                 if User.get_by_username(preferred_username):
                     preferred_username = f"{preferred_username}_{int(time.time())}"
-                
                 user = User.create_sso_user(preferred_username, email, 'oidc')
                 logger.info(f"SSO: Created new user '{preferred_username}' for '{email}'")
             else:
-                flash("Account does not exist and auto-provisioning is disabled.", "error")
+                flash("No RSCP account is linked to this email. Ask an administrator.", "error")
                 return redirect(url_for('auth.login'))
-        
+
         # 5. Login
         if user:
             login_user(user)

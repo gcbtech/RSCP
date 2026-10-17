@@ -143,12 +143,17 @@ def verify_manager():
     from app.utils.permissions import has_permission
     from flask import jsonify
     
+    from app.utils.permissions import manager_auth_throttled, record_manager_auth_failure
+
     data = request.get_json() or {}
     pin = data.get('pin', '')
     badge_id = data.get('badge_id', '')
-    
+
     if not pin and not badge_id:
         return jsonify({'success': False, 'error': 'PIN or Badge ID required'}), 400
+
+    if manager_auth_throttled():
+        return jsonify({'success': False, 'error': 'Too many failed attempts. Wait 5 minutes.'}), 429
     
     # Get all users from database to check their credentials
     from app.services.db import get_request_db
@@ -182,6 +187,7 @@ def verify_manager():
                 'manager': r['username']
             })
     
+    record_manager_auth_failure()
     return jsonify({'success': False, 'error': 'Invalid manager credentials'}), 401
 
 

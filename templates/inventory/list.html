@@ -407,14 +407,6 @@
                 <input type="text" id="searchInput" name="q" class="form-control"
                     placeholder="Search all inventory (name, SKU, location, category)..."
                     value="{{ search_query or '' }}">
-                {% if config.FEDERATION_CROSS_SEARCH_ENABLED %}
-                <span class="input-group-text bg-light">
-                    <input class="form-check-input mt-0 me-1" type="checkbox" id="crossSearchToggle" name="federated"
-                        value="1" title="Search linked locations" {{ 'checked' if request.args.get('federated')=='1'
-                        else '' }}>
-                    <label class="form-check-label small" for="crossSearchToggle">🔗 All Locations</label>
-                </span>
-                {% endif %}
                 <button type="submit" class="btn btn-primary">🔍 Search</button>
                 {% if search_query %}
                 <a href="{{ url_for('inventory.list_items') }}" class="btn btn-outline-secondary">✕ Clear</a>
@@ -427,7 +419,6 @@
                 }}"</small>
         </div>
         {% endif %}
-        <div id="federatedResults" class="mt-2" style="display: none;"></div>
     </div>
 
     <!-- Sort Controls -->
@@ -799,10 +790,9 @@
             }
         });
 
-        // Search filter with federated search support
+
         // Search filter with live server-side search
         const searchInput = document.getElementById('searchInput');
-        const crossSearchToggle = document.getElementById('crossSearchToggle');
         let searchTimeout;
 
         // Unified SPA AJAX page loader
@@ -870,14 +860,6 @@
                         window.history.replaceState(null, '', url);
                     }
 
-                    // Federated Search trigger if checked
-                    const crossSearchToggle = document.getElementById('crossSearchToggle');
-                    if (crossSearchToggle && crossSearchToggle.checked && qVal.length >= 2) {
-                        performFederatedSearch(qVal);
-                    } else {
-                        const fedResults = document.getElementById('federatedResults');
-                        if (fedResults) fedResults.style.display = 'none';
-                    }
                 })
                 .catch(err => {
                     console.error('Error loading page:', err);
@@ -957,108 +939,6 @@
                 loadInventoryPage(url.toString(), false);
             }, 300);
         });
-
-        // Auto-trigger on page load if query exists (restore state)
-        document.addEventListener('DOMContentLoaded', function () {
-            if (searchInput.value.length >= 2) {
-                // Trigger logic if needed, but page load normally renders results.
-                // Just handle federated search if checked
-                if (crossSearchToggle && crossSearchToggle.checked) {
-                    performFederatedSearch(searchInput.value);
-                }
-            }
-        });
-
-        function performFederatedSearch(query) {
-            const resultsDiv = document.getElementById('federatedResults');
-            resultsDiv.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Searching linked locations...';
-            resultsDiv.style.display = 'block';
-
-            fetch('/inventory/federated-search?q=' + encodeURIComponent(query))
-                .then(r => r.json())
-                .then(data => {
-                    // Debug info
-                    const debugInfo = data.debug ? data.debug.join('<br>') : 'No debug info';
-                    const peersChecked = data.peers_checked || 0;
-
-                    if (!data.results || data.results.length === 0) {
-                        resultsDiv.innerHTML = `
-                            <div class="alert alert-info mb-0">
-                                <strong>No results from ${peersChecked} linked location(s)</strong>
-                                <br><small class="text-muted">${debugInfo}</small>
-                            </div>`;
-                        return;
-                    }
-
-                    resultsDiv.innerHTML = `
-    <div class="card">
-        <div class="card-header py-2 bg-light">
-            <strong>🔗 Results from Other Locations</strong>
-        </div>
-        <div class="card-body p-0">
-            <table class="table table-sm mb-0">
-                <thead>
-                    <tr>
-                        <th>Location</th>
-                        <th>SKU</th>
-                        <th>Name</th>
-                        <th>Qty</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    ${data.results.map(r => `
-                    <tr>
-                        <td><span class="badge bg-secondary">${r.source}</span></td>
-                        <td><code>${r.sku}</code></td>
-                        <td>${r.name}</td>
-                        <td>${r.quantity}</td>
-                        <td>
-                            <button class="btn btn-sm btn-outline-primary"
-                                onclick="requestTransfer('${r.sku}', '${r.source}')">
-                                📥 Request
-                            </button>
-                        </td>
-                    </tr>
-                    `).join('')}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    `;
-                })
-                .catch(err => {
-                    resultsDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
-                });
-        }
-
-        function requestTransfer(sku, source) {
-            const qty = prompt('Quantity to request:', '1');
-            if (!qty || isNaN(parseInt(qty))) return;
-
-            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content ||
-                document.querySelector('input[name="csrf_token"]')?.value || '';
-
-            fetch('/inventory/request-transfer', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': csrfToken
-                },
-                body: JSON.stringify({ sku, source, quantity: parseInt(qty) })
-            })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.success) {
-                        alert('Transfer requested! Awaiting approval from ' + source);
-                    } else {
-                        alert('Error: ' + (data.error || 'Failed to request transfer'));
-                    }
-                })
-                .catch(err => {
-                    alert('Error requesting transfer: ' + err.message);
-                });
-        }
 
         // Custom reason toggle + direction-based filtering
         document.querySelectorAll('[id^="reasonSelect"]').forEach(select => {

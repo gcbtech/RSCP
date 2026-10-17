@@ -48,11 +48,11 @@ def _safe_add_column(conn, table, column, column_def):
             logger.error(f"Error adding column '{column}' to table '{table}' (attempt {attempt}): {e}")
             raise
 
-def ensure_db_ready():
+def ensure_db_ready(db_path=None):
     """Initializes the database and applies any pending schema updates."""
-    init_db()
-    
-    conn = get_db_connection()
+    init_db(db_path)
+
+    conn = get_db_connection(db_path)
     try:
         # Schema Update Check (Phase 9 - PIN Support)
         _safe_add_column(conn, 'users', 'pin_hash', 'TEXT')
@@ -754,3 +754,179 @@ def _create_recurring_rules_table(conn):
         );
     ''')
     conn.commit()
+
+
+# =============================================================================
+# Versioned schema migrations
+# =============================================================================
+#
+# ensure_db_ready() above is the idempotent *baseline*: it brings any database,
+# however old, up to the v2.6.x schema. Everything after that is an ordered,
+# numbered step tracked in PRAGMA user_version, so each step runs exactly once
+# per database, inside its own transaction, and a failure is loud instead of
+# leaving a half-migrated schema behind.
+#
+# run_migrations() is called synchronously from create_app() in every worker.
+# An exclusive flock serialises the workers: the first one migrates, the rest
+# block until it finishes and then see an up-to-date user_version and return
+# immediately. No request is served until the schema is current.
+#
+# To change the schema: append a function to SCHEMA_MIGRATIONS. Never edit or
+# reorder a step that has already shipped.
+
+def _m2_pto_tables(conn):
+    """PTO tables (previously created on demand inside timeclock routes)."""
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS user_pto_balances (
+            user_id INTEGER PRIMARY KEY,
+            balance_hours REAL DEFAULT 0.0,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS pto_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            request_type TEXT NOT NULL,
+            date DATE NOT NULL,
+            start_time TIME,
+            end_time TIME,
+            hours_requested REAL NOT NULL,
+            status TEXT DEFAULT 'pending',
+            admin_notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users (id)
+        )
+    ''')
+
+
+def _m3_hot_path_indexes(conn):
+    """Indexes for queries that were doing full table scans."""
+    # Barcode lookups use `tracking_number = ? COLLATE NOCASE`, which cannot
+    # use the BINARY unique index; this one it can.
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_packages_tracking_nocase '
+                 'ON packages(tracking_number COLLATE NOCASE)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_history_package ON history(package_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_history_action_ts ON history(action, timestamp)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_login_ip_ts ON login_attempts(ip_address, timestamp)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_order_items_item ON pos_order_items(inventory_item_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_refund_items_line ON pos_refund_items(order_item_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_audit_records_session ON audit_records(session_id)')
+
+
+def _m4_rate_events(conn):
+    """Shared (cross-worker) rate-limit ledger, see app/services/throttle.py."""
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS rate_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bucket TEXT NOT NULL,
+            key TEXT NOT NULL,
+            ts REAL NOT NULL
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_rate_events_lookup ON rate_events(bucket, key, ts)')
+
+
+def _m5_checkout_token(conn):
+    """Idempotency key for POS checkout: a double-submitted sale is recorded once."""
+    _add_column_in_txn(conn, 'pos_orders', 'checkout_token', 'TEXT')
+    conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_pos_orders_checkout_token '
+                 'ON pos_orders(checkout_token) WHERE checkout_token IS NOT NULL')
+
+
+def _add_column_in_txn(conn, table, column, column_def):
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_def}")
+
+
+# (version, description, function). Version 1 is the ensure_db_ready() baseline.
+SCHEMA_MIGRATIONS = [
+    (2, 'PTO tables', _m2_pto_tables),
+    (3, 'hot-path indexes', _m3_hot_path_indexes),
+    (4, 'rate_events table', _m4_rate_events),
+    (5, 'pos_orders.checkout_token', _m5_checkout_token),
+]
+LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
+
+
+class _MigrationLock:
+    """Exclusive cross-process lock next to the database (no-op without fcntl)."""
+
+    def __init__(self, db_path):
+        self.path = db_path + '.migrate.lock'
+        self.fd = None
+
+    def __enter__(self):
+        try:
+            import fcntl
+        except ImportError:
+            return self
+        self.fd = open(self.path, 'a+')
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        if self.fd is not None:
+            self.fd.close()  # closing releases the flock
+        return False
+
+
+def _user_version(db_path):
+    conn = sqlite3.connect(db_path, timeout=30)
+    try:
+        return conn.execute('PRAGMA user_version').fetchone()[0]
+    finally:
+        conn.close()
+
+
+def run_migrations(db_path=None):
+    """Bring the database fully up to date. Raises on failure.
+
+    Safe to call from every worker at startup: cheap (one PRAGMA read) when
+    the schema is already current.
+    """
+    if db_path is None:
+        db_path = DB_PATH
+        try:  # honour a test/app-configured DATABASE, like get_db_connection()
+            from flask import current_app
+            db_path = current_app.config.get('DATABASE', DB_PATH)
+        except RuntimeError:
+            pass
+    if db_path != ':memory:' and _user_version(db_path) >= LATEST_SCHEMA_VERSION:
+        return
+
+    with _MigrationLock(db_path):
+        version = _user_version(db_path)
+        if version >= LATEST_SCHEMA_VERSION:
+            return  # another worker finished while we waited for the lock
+
+        if version < 1:
+            logger.info("[Schema] Applying baseline schema")
+            ensure_db_ready(db_path)
+            conn = sqlite3.connect(db_path, timeout=30)
+            try:
+                conn.execute('PRAGMA user_version = 1')
+            finally:
+                conn.close()
+            version = 1
+
+        conn = sqlite3.connect(db_path, timeout=30, isolation_level=None)
+        try:
+            for target, description, fn in SCHEMA_MIGRATIONS:
+                if target <= version:
+                    continue
+                logger.info(f"[Schema] Migrating to v{target}: {description}")
+                conn.execute('BEGIN IMMEDIATE')
+                try:
+                    fn(conn)
+                    conn.execute(f'PRAGMA user_version = {int(target)}')
+                    conn.execute('COMMIT')
+                except Exception:
+                    conn.execute('ROLLBACK')
+                    logger.exception(f"[Schema] Migration to v{target} ({description}) FAILED")
+                    raise
+                version = target
+        finally:
+            conn.close()
+        logger.info(f"[Schema] Database is at schema v{version}")

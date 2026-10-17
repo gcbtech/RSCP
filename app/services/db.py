@@ -12,7 +12,7 @@ if 'pytest' in sys.modules or os.environ.get('TESTING') == 'True':
 else:
     DB_PATH = os.path.join(BASE_DIR, 'rscp.db')
 
-def get_db_connection():
+def get_db_connection(path=None):
     """Returns a NEW connection to the SQLite database.
     
     Performance optimizations:
@@ -22,13 +22,14 @@ def get_db_connection():
     Note: For request-scoped connections, use get_request_db() instead
     to avoid creating multiple connections per request.
     """
-    path = DB_PATH
-    try:
-        from flask import current_app
-        if current_app:
-            path = current_app.config.get('DATABASE', DB_PATH)
-    except Exception:
-        pass
+    if path is None:
+        path = DB_PATH
+        try:
+            from flask import current_app
+            if current_app:
+                path = current_app.config.get('DATABASE', DB_PATH)
+        except Exception:
+            pass
         
     conn = sqlite3.connect(path, timeout=10)
     conn.row_factory = sqlite3.Row
@@ -92,9 +93,9 @@ def init_app(app):
     """
     app.teardown_appcontext(close_request_db)
 
-def init_db():
+def init_db(db_path=None):
     """Initializes the database schema if it doesn't exist."""
-    conn = get_db_connection()
+    conn = get_db_connection(db_path)
     try:
         cur = conn.cursor()
         

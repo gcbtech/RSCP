@@ -170,3 +170,20 @@ def guess_shipper(tracking: str) -> str:
          return "Canada Post"
     else:
         return "Other"
+
+
+def is_safe_redirect(target):
+    """True if `target` is a same-site relative path that is safe to redirect to.
+
+    Rejects absolute URLs, scheme-relative '//host', and backslash tricks such
+    as '/\\evil.com', which browsers normalise to '//evil.com'.
+    """
+    if not target or not isinstance(target, str):
+        return False
+    if not target.startswith('/') or target.startswith('//') or '\\' in target:
+        return False
+    if any(ord(c) < 32 for c in target):
+        return False
+    from urllib.parse import urlparse
+    parsed = urlparse(target)
+    return not parsed.scheme and not parsed.netloc

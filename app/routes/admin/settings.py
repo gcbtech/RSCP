@@ -1,5 +1,6 @@
 from flask import render_template, request, flash, redirect, url_for, current_app
-from app.routes.admin import admin_bp, require_admin, save_config_value, load_config
+from app.routes.admin import admin_bp, require_admin, load_config
+from app.services.data_manager import save_config
 
 @admin_bp.route('/settings', methods=['GET', 'POST'])
 def settings():
@@ -16,19 +17,34 @@ def settings():
             client_secret = request.form.get('sso_client_secret', '').strip()
             discovery_url = request.form.get('sso_discovery_url', '').strip()
             
-            # Domain Whitelist (comma separated -> list)
+            # Domain allowlist (comma separated -> list of '@domain')
             domains_str = request.form.get('sso_allowed_domains', '').strip()
-            allowed_domains = [d.strip() for d in domains_str.split(',') if d.strip()]
-            
+            allowed_domains = []
+            for d in domains_str.split(','):
+                d = d.strip().lower()
+                if d:
+                    allowed_domains.append(d if d.startswith('@') else '@' + d)
+
             allow_new = request.form.get('sso_allow_new_users') == 'on'
-            
-            # Save to Config
-            save_config_value('SSO_ENABLED', sso_enabled)
-            save_config_value('SSO_CLIENT_ID', client_id)
-            save_config_value('SSO_CLIENT_SECRET', client_secret)
-            save_config_value('SSO_DISCOVERY_URL', discovery_url)
-            save_config_value('SSO_ALLOWED_DOMAINS', allowed_domains)
-            save_config_value('SSO_ALLOW_NEW_USERS', allow_new)
+
+            # SSO without a domain allowlist would admit any account the
+            # identity provider vouches for (e.g. any Google account).
+            if sso_enabled and not allowed_domains:
+                flash('SSO needs at least one allowed domain before it can be enabled.', 'error')
+                return redirect(url_for('admin.admin_panel', tab='settings'))
+
+            updates = {
+                'SSO_ENABLED': sso_enabled,
+                'SSO_CLIENT_ID': client_id,
+                'SSO_DISCOVERY_URL': discovery_url,
+                'SSO_ALLOWED_DOMAINS': allowed_domains,
+                'SSO_ALLOW_NEW_USERS': allow_new,
+            }
+            # The secret is never sent to the browser, so a blank field means
+            # "keep the current one".
+            if client_secret:
+                updates['SSO_CLIENT_SECRET'] = client_secret
+            save_config(updates)
             
             flash('Settings saved successfully.', 'success')
             
