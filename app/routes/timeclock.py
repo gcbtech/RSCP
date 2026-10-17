@@ -3,6 +3,7 @@ from flask_login import login_required, current_user
 from app.utils.permissions import has_permission
 import datetime
 from app.services.timeclock_hours import summarize as summarize_hours
+from app.services import timeclock_hours as tc
 from app.services.db import get_db_connection
 from app.services.data_manager import load_config
 import logging
@@ -54,7 +55,7 @@ def get_current_pay_period():
     start_str, freq = get_pay_period_config()
     try:
         base_start = datetime.datetime.strptime(start_str, '%Y-%m-%d').date()
-        today = datetime.datetime.now().date()
+        today = tc.local_today()
         
         if freq == 'weekly':
             days_since = (today - base_start).days
@@ -106,11 +107,11 @@ def get_current_pay_period():
     except Exception as e:
         logger.error(f"Pay Period Calc Error: {e}")
         # Fallback to current week
-        today = datetime.datetime.now().date()
+        today = tc.local_today()
         start = today - datetime.timedelta(days=today.weekday())
         end = start + datetime.timedelta(days=6)
         return start, end
-    return datetime.datetime.now().date(), datetime.datetime.now().date()
+    return tc.local_today(), tc.local_today()
 
 def get_pay_periods_history(limit=12):
     """Generate list of past N pay periods."""
@@ -157,12 +158,9 @@ def index():
     
     if status:
         try:
-            # Handle string format from DB
-            clock_in_dt = datetime.datetime.strptime(status['clock_in'], '%Y-%m-%d %H:%M:%S')
-            clock_in_formatted = clock_in_dt.strftime('%I:%M %p')
-            
-            now = datetime.datetime.now()
-            diff = now - clock_in_dt
+            # Stored UTC; show local time, measure real elapsed time
+            clock_in_formatted = tc.to_local(status['clock_in']).strftime('%I:%M %p')
+            diff = tc.utc_now() - tc.as_utc(status['clock_in'])
             # Format duration
             hours = int(diff.total_seconds()) // 3600
             minutes = (int(diff.total_seconds()) % 3600) // 60
@@ -182,8 +180,8 @@ def index():
     
     conn = get_db_connection()
     try:
-        now_dt = datetime.datetime.now()
-        today = now_dt.strftime('%Y-%m-%d')
+        now_dt = tc.local_now()
+        now_utc = tc.utc_now_str()
         
         # Next Shift (First one starting after NOW or later today/future)
         # Use datetime string comparison but ensure we get shifts from now onwards
@@ -191,11 +189,11 @@ def index():
             SELECT * FROM scheduled_shifts 
             WHERE user_id = ? AND datetime(start_time) > datetime(?) 
             ORDER BY start_time ASC LIMIT 1
-        ''', (current_user.id, now_dt.strftime('%Y-%m-%d %H:%M:%S'))).fetchone()
+        ''', (current_user.id, now_utc)).fetchone()
         
         if ns:
-            ns_start = datetime.datetime.strptime(ns['start_time'], '%Y-%m-%d %H:%M:%S')
-            ns_end = datetime.datetime.strptime(ns['end_time'], '%Y-%m-%d %H:%M:%S')
+            ns_start = tc.to_local(ns['start_time'])
+            ns_end = tc.to_local(ns['end_time'])
             
             # Helper for "Today/Tomorrow"
             day_label = ns_start.strftime('%A')
@@ -210,16 +208,16 @@ def index():
             }
             
         # Current Week (Next 7 days)
-        week_end = (now_dt + datetime.timedelta(days=7)).strftime('%Y-%m-%d 23:59:59')
+        week_end = tc.local_dates_to_utc_range(now_dt.date() + datetime.timedelta(days=7))[1]
         ws_rows = conn.execute('''
             SELECT * FROM scheduled_shifts 
             WHERE user_id = ? AND datetime(start_time) > datetime(?) AND datetime(start_time) <= datetime(?)
             ORDER BY start_time ASC
-        ''', (current_user.id, now_dt.strftime('%Y-%m-%d %H:%M:%S'), week_end)).fetchall()
+        ''', (current_user.id, now_utc, week_end)).fetchall()
         
         for r in ws_rows:
-            s = datetime.datetime.strptime(r['start_time'], '%Y-%m-%d %H:%M:%S')
-            e = datetime.datetime.strptime(r['end_time'], '%Y-%m-%d %H:%M:%S')
+            s = tc.to_local(r['start_time'])
+            e = tc.to_local(r['end_time'])
             week_shifts.append({
                 'day': s.strftime('%a'),
                 'date': s.strftime('%m/%d'),
@@ -237,8 +235,8 @@ def index():
         period_entries = conn.execute('''
             SELECT type, clock_in, clock_out FROM time_entries
             WHERE user_id = ? AND type IN ('shift', 'break')
-            AND date(clock_in) >= ? AND date(clock_in) <= ?
-        ''', (current_user.id, period_start.strftime('%Y-%m-%d'), period_end.strftime('%Y-%m-%d'))).fetchall()
+            AND clock_in >= ? AND clock_in <= ?
+        ''', (current_user.id, *tc.local_dates_to_utc_range(period_start, period_end))).fetchall()
 
         totals = summarize_hours(period_entries, _workweek_anchor(), fulltime_hours, _paid_breaks())
         period_hours = round(totals['regular'] + totals['overtime'], 2)
@@ -319,11 +317,15 @@ def shifts():
             start_time = request.form.get('start_time')
             end_time = request.form.get('end_time')
             
-            start_clean = start_time.replace('T', ' ') if start_time else None
-            end_clean = end_time.replace('T', ' ') if end_time else None
-            
-            if start_clean and len(start_clean) == 16: start_clean += ':00'
-            if end_clean and len(end_clean) == 16: end_clean += ':00'
+            # datetime-local inputs are business-local; store UTC
+            try:
+                start_clean = tc.local_to_utc_str(start_time)
+                end_clean = tc.local_to_utc_str(end_time)
+            except ValueError:
+                start_clean = end_clean = None
+            if not start_clean or not end_clean:
+                flash("Please enter a valid start and end time.")
+                return redirect(url_for('timeclock.shifts', selected_user=user_id))
             
             conn.execute('INSERT INTO scheduled_shifts (user_id, start_time, end_time) VALUES (?, ?, ?)', 
                         (user_id, start_clean, end_clean))
@@ -332,28 +334,28 @@ def shifts():
             return redirect(url_for('timeclock.shifts', selected_user=user_id))
             
         # GET List
-        today = datetime.datetime.now().strftime('%Y-%m-%d')
+        today_start_utc = tc.local_dates_to_utc_range(tc.local_today())[0]
         
         # One-time Shifts
         shift_rows = conn.execute('''
             SELECT s.*, u.username 
             FROM scheduled_shifts s
             JOIN users u ON s.user_id = u.id
-            WHERE date(s.start_time) >= ?
+            WHERE s.start_time >= ?
             ORDER BY s.start_time ASC
-        ''', (today,)).fetchall()
+        ''', (today_start_utc,)).fetchall()
         
         shifts = []
         for r in shift_rows:
             s = dict(r)
-            dt = datetime.datetime.strptime(s['start_time'], '%Y-%m-%d %H:%M:%S')
+            dt = tc.to_local(s['start_time'])
             s['date_fmt'] = dt.strftime('%A, %b %d')
             # Manual formatting to prevent platform-specific zero-stripping (Fix "5:1" issue)
             s_hr = dt.strftime('%I')
             s_min = dt.strftime('%M')
             s_ampm = dt.strftime('%p')
             
-            e_dt = datetime.datetime.strptime(s['end_time'], '%Y-%m-%d %H:%M:%S')
+            e_dt = tc.to_local(s['end_time'])
             e_hr = e_dt.strftime('%I')
             e_min = e_dt.strftime('%M')
             e_ampm = e_dt.strftime('%p')
@@ -403,6 +405,16 @@ def delete_shift(shift_id):
         conn.close()
     return redirect(url_for('timeclock.shifts'))
 
+def _shift_on_local_date(conn, user_id, local_date):
+    """First scheduled shift starting on a business-local calendar date."""
+    start_utc, end_utc = tc.local_dates_to_utc_range(local_date)
+    return conn.execute('''
+        SELECT start_time, end_time FROM scheduled_shifts
+        WHERE user_id = ? AND start_time >= ? AND start_time <= ?
+        ORDER BY start_time LIMIT 1
+    ''', (user_id, start_utc, end_utc)).fetchone()
+
+
 def _open_entry(conn, user_id):
     return conn.execute('SELECT id, type FROM time_entries WHERE user_id = ? AND clock_out IS NULL '
                         'ORDER BY clock_in DESC LIMIT 1', (user_id,)).fetchone()
@@ -428,7 +440,7 @@ def _clock_transition(expected_open, close_type, open_type, ok_msg, wrong_state_
             flash(wrong_state_msg)
             return redirect(url_for('timeclock.index'))
 
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = tc.utc_now_str()
         if close_type:
             conn.execute('UPDATE time_entries SET clock_out = ? WHERE id = ?', (now, current['id']))
         if open_type:
@@ -500,7 +512,7 @@ def add_recurring_rule():
         ref_date = request.form.get('reference_date') # Only for biweekly
         
         if not ref_date:
-            ref_date = datetime.datetime.now().strftime('%Y-%m-%d')
+            ref_date = tc.local_today().strftime('%Y-%m-%d')
             
         conn.execute('''
             INSERT INTO recurring_shift_rules (user_id, day_of_week, start_time, end_time, frequency, reference_date)
@@ -565,8 +577,9 @@ def generate_schedule():
                             
                     if should_gen:
                         # Construct Start/End DT
-                        s_dt = f"{current.strftime('%Y-%m-%d')} {rule['start_time']}:00"
-                        e_dt = f"{current.strftime('%Y-%m-%d')} {rule['end_time']}:00"
+                        # Rule times are local wall-clock; store UTC for that date's offset
+                        s_dt = tc.local_to_utc_str(f"{current.strftime('%Y-%m-%d')} {rule['start_time']}")
+                        e_dt = tc.local_to_utc_str(f"{current.strftime('%Y-%m-%d')} {rule['end_time']}")
                         
                         # Check duplicate
                         exists = conn.execute('''
@@ -611,7 +624,7 @@ def manager_dashboard():
                     user_id INTEGER NOT NULL,
                     start_time DATETIME NOT NULL,
                     end_time DATETIME NOT NULL,
-                    created_at DATETIME DEFAULT (datetime('now', 'localtime')),
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (user_id) REFERENCES users (id)
                 );
             ''')
@@ -661,14 +674,12 @@ def manager_dashboard():
             entry = dict(r)
             # Duration
             try:
-                start = datetime.datetime.strptime(entry['clock_in'], '%Y-%m-%d %H:%M:%S')
-                now = datetime.datetime.now()
-                diff = now - start
+                diff = tc.utc_now() - tc.as_utc(entry['clock_in'])
                 hours = int(diff.total_seconds()) // 3600
                 minutes = (int(diff.total_seconds()) % 3600) // 60
                 entry['duration'] = f"{hours}h {minutes}m"
-                # Format start time
-                entry['clock_in'] = start.strftime('%I:%M %p')
+                # Format start time (local)
+                entry['clock_in'] = tc.to_local(entry['clock_in']).strftime('%I:%M %p')
             except:
                 entry['duration'] = "Err"
             
@@ -679,12 +690,11 @@ def manager_dashboard():
                 break_cnt += 1
                 
         # Total Today (Unique Users worked today)
-        today_str = datetime.datetime.now().strftime('%Y-%m-%d')
         today_cnt = conn.execute('''
             SELECT COUNT(DISTINCT user_id) as c 
             FROM time_entries 
-            WHERE date(clock_in) = ?
-        ''', (today_str,)).fetchone()['c']
+            WHERE clock_in >= ? AND clock_in <= ?
+        ''', tc.local_dates_to_utc_range(tc.local_today())).fetchone()['c']
         
         # Get all users for Force Clock In dropdown
         all_users = conn.execute('SELECT id, username FROM users ORDER BY username').fetchall()
@@ -708,7 +718,7 @@ def force_clock_out(user_id):
         
     conn = get_db_connection()
     try:
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = tc.utc_now_str()
         conn.execute('''
             UPDATE time_entries 
             SET clock_out = ?, notes = 'Force clock out by Admin'
@@ -739,7 +749,7 @@ def force_clock_in(user_id):
             flash("User is already clocked in!")
             return redirect(url_for('timeclock.manager_dashboard'))
             
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        now = tc.utc_now_str()
         conn.execute('''
             INSERT INTO time_entries (user_id, type, clock_in, notes)
             VALUES (?, 'shift', ?, 'Force clock in by Admin')
@@ -766,7 +776,7 @@ def export_csv():
     conn = get_db_connection()
     try:
         # Default: Last 30 days
-        limit_date = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
+        limit_date = tc.local_dates_to_utc_range(tc.local_today() - datetime.timedelta(days=30))[0]
         
         rows = conn.execute('''
             SELECT t.*, u.username 
@@ -783,8 +793,8 @@ def export_csv():
         for r in rows:
             entry = dict(r)
             
-            # Format Dates
-            c_in = datetime.datetime.strptime(entry['clock_in'], '%Y-%m-%d %H:%M:%S')
+            # Format Dates (stored UTC -> local for people; durations are real elapsed time)
+            c_in = tc.to_local(entry['clock_in'])
             date_str = c_in.strftime('%Y-%m-%d')
             time_in = c_in.strftime('%I:%M %p')
             
@@ -792,17 +802,15 @@ def export_csv():
             duration = ""
             
             if entry['clock_out']:
-                c_out = datetime.datetime.strptime(entry['clock_out'], '%Y-%m-%d %H:%M:%S')
-                time_out = c_out.strftime('%I:%M %p')
+                time_out = tc.to_local(entry['clock_out']).strftime('%I:%M %p')
                 
-                diff = c_out - c_in
+                diff = tc.as_utc(entry['clock_out']) - tc.as_utc(entry['clock_in'])
                 hours = int(diff.total_seconds()) // 3600
                 minutes = (int(diff.total_seconds()) % 3600) // 60
                 duration = f"{hours}h {minutes}m"
             else:
                 time_out = "Active"
-                now = datetime.datetime.now()
-                diff = now - c_in
+                diff = tc.utc_now() - tc.as_utc(entry['clock_in'])
                 hours = int(diff.total_seconds()) // 3600
                 minutes = (int(diff.total_seconds()) % 3600) // 60
                 duration = f"{hours}h {minutes}m (Running)"
@@ -818,7 +826,7 @@ def export_csv():
             ])
             
         output = si.getvalue()
-        filename = f"timesheets_{datetime.datetime.now().strftime('%Y%m%d')}.csv"
+        filename = f"timesheets_{tc.local_today().strftime('%Y%m%d')}.csv"
         
         return Response(
             output,
@@ -856,12 +864,16 @@ def timesheets():
         '''
         params = []
         
-        if date_from:
-            query += " AND t.clock_in >= ?"
-            params.append(date_from)
-        if date_to:
-            query += " AND t.clock_in <= ?"
-            params.append(date_to + " 23:59:59")
+        try:
+            if date_from:
+                query += " AND t.clock_in >= ?"
+                params.append(tc.local_dates_to_utc_range(date_from)[0])
+            if date_to:
+                query += " AND t.clock_in <= ?"
+                params.append(tc.local_dates_to_utc_range(date_to)[1])
+        except ValueError:
+            flash("Invalid date filter.")
+            return redirect(url_for('timeclock.timesheets'))
         if user_filter:
             query += " AND t.user_id = ?"
             params.append(user_filter)
@@ -875,27 +887,27 @@ def timesheets():
             entry = dict(r)
             # Duration Calc
             try:
-                start = datetime.datetime.strptime(entry['clock_in'], '%Y-%m-%d %H:%M:%S')
-                # Manual format to ensure minutes are zero-padded (windows strftime issue)
+                start = tc.to_local(entry['clock_in'])
+                # Manual format to ensure minutes are zero-padded (windows strftime issue).
+                # 'MM/DD/YYYY h:mm AM': the template shows [:10] as the date, [11:] as the time.
                 h = start.strftime('%I').lstrip('0') or '12' # optional: remove leading zero from hour
                 m = start.strftime('%M')
                 p = start.strftime('%p')
-                entry['clock_in_fmt'] = f"{start.strftime('%m/%d')} {h}:{m} {p}"
+                entry['clock_in_fmt'] = f"{start.strftime('%m/%d/%Y')} {h}:{m} {p}"
                 
                 if entry['clock_out']:
-                    end = datetime.datetime.strptime(entry['clock_out'], '%Y-%m-%d %H:%M:%S')
+                    end = tc.to_local(entry['clock_out'])
                     h_end = end.strftime('%I').lstrip('0') or '12'
                     m_end = end.strftime('%M')
                     p_end = end.strftime('%p')
-                    entry['clock_out_fmt'] = f"{end.strftime('%m/%d')} {h_end}:{m_end} {p_end}"
-                    diff = end - start
+                    entry['clock_out_fmt'] = f"{end.strftime('%m/%d/%Y')} {h_end}:{m_end} {p_end}"
+                    diff = tc.as_utc(entry['clock_out']) - tc.as_utc(entry['clock_in'])
                     hours = int(diff.total_seconds()) // 3600
                     minutes = (int(diff.total_seconds()) % 3600) // 60
                     entry['duration'] = f"{hours}h {minutes}m"
                 else:
                     entry['clock_out_fmt'] = "Active"
-                    now = datetime.datetime.now()
-                    diff = now - start
+                    diff = tc.utc_now() - tc.as_utc(entry['clock_in'])
                     hours = int(diff.total_seconds()) // 3600
                     minutes = (int(diff.total_seconds()) % 3600) // 60
                     entry['duration'] = f"{hours}h {minutes}m (Run)"
@@ -985,37 +997,29 @@ def request_pto():
             if req_type == 'full':
                 # Get Shift Duration for that day
                 # Find Shift
-                shift = conn.execute('''
-                    SELECT start_time, end_time FROM scheduled_shifts 
-                    WHERE user_id = ? AND date(start_time) = ?
-                ''', (current_user.id, date_str)).fetchone()
+                shift = _shift_on_local_date(conn, current_user.id, date_str)
                 
                 if not shift:
                     flash("No scheduled shift found on that date to request off.")
                     return redirect(url_for('timeclock.request_pto'))
                     
-                s = datetime.datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S')
-                e = datetime.datetime.strptime(shift['end_time'], '%Y-%m-%d %H:%M:%S')
-                diff = (e - s).total_seconds() / 3600
+                diff = (tc.as_utc(shift['end_time']) - tc.as_utc(shift['start_time'])).total_seconds() / 3600
                 hours_requested = round(diff, 2)
                 
             elif req_type == 'partial':
                 # Calc requested hours
-                s_t = datetime.datetime.strptime(f"{date_str} {start_time}", '%Y-%m-%d %H:%M')
-                e_t = datetime.datetime.strptime(f"{date_str} {end_time}", '%Y-%m-%d %H:%M')
+                s_t = tc.local_to_utc(f"{date_str} {start_time}")
+                e_t = tc.local_to_utc(f"{date_str} {end_time}")
                 
                 hours_requested = round((e_t - s_t).total_seconds() / 3600, 2)
                 
                 # Check Minimum Shift Rule
                 # Find original shift
-                shift = conn.execute('''
-                    SELECT start_time, end_time FROM scheduled_shifts 
-                    WHERE user_id = ? AND date(start_time) = ?
-                ''', (current_user.id, date_str)).fetchone()
+                shift = _shift_on_local_date(conn, current_user.id, date_str)
                 
                 if shift:
-                    orig_s = datetime.datetime.strptime(shift['start_time'], '%Y-%m-%d %H:%M:%S')
-                    orig_e = datetime.datetime.strptime(shift['end_time'], '%Y-%m-%d %H:%M:%S')
+                    orig_s = tc.as_utc(shift['start_time'])
+                    orig_e = tc.as_utc(shift['end_time'])
                     total_dur = (orig_e - orig_s).total_seconds() / 3600
                     
                     remaining = total_dur - hours_requested
@@ -1036,7 +1040,7 @@ def request_pto():
             flash("PTO Request Sent.")
             return redirect(url_for('timeclock.index'))
             
-        today_str = datetime.datetime.now().strftime('%Y-%m-%d')
+        today_str = tc.local_today().strftime('%Y-%m-%d')
         return render_template('timeclock/request_pto.html', balance=balance, today_str=today_str)
     finally:
         conn.close()
@@ -1170,12 +1174,9 @@ def pto_action(req_id):
             # If partial, use start/end. If full, use shift start/end.
             if req['request_type'] == 'full':
                 # Fetch shift again
-                shift = conn.execute('''
-                    SELECT start_time, end_time FROM scheduled_shifts 
-                    WHERE user_id = ? AND date(start_time) = ?
-                ''', (user_id, req['date'])).fetchone()
+                shift = _shift_on_local_date(conn, user_id, req['date'])
                 if shift:
-                    s_dt = shift['start_time']
+                    s_dt = shift['start_time']  # already UTC
                     e_dt = shift['end_time']
                     # Insert Time Entry
                     conn.execute('''
@@ -1184,8 +1185,9 @@ def pto_action(req_id):
                     ''', (user_id, s_dt, e_dt))
             else:
                 # Partial
-                s_dt = f"{req['date']} {req['start_time']}:00"
-                e_dt = f"{req['date']} {req['end_time']}:00"
+                # pto_requests keeps the local date and wall-clock times; time_entries is UTC
+                s_dt = tc.local_to_utc_str(f"{req['date']} {req['start_time']}")
+                e_dt = tc.local_to_utc_str(f"{req['date']} {req['end_time']}")
                  # Insert Time Entry
                 conn.execute('''
                     INSERT INTO time_entries (user_id, type, clock_in, clock_out, notes)
@@ -1215,18 +1217,15 @@ def edit_entry(entry_id):
             clock_out = request.form.get('clock_out') # Expected: YYYY-MM-DDTHH:MM
             notes = request.form.get('notes')
             
-            # Convert datetime-local to YYYY-MM-DD HH:MM:SS
-            # datetime-local inputs return "2023-11-01T14:30"
-            c_in_clean = clock_in.replace('T', ' ') if clock_in else None
-            c_out_clean = clock_out.replace('T', ' ') if clock_out else None
-            
-            # If seconds missing, append :00
-            if c_in_clean and len(c_in_clean) == 16: c_in_clean += ':00'
-            if c_out_clean and len(c_out_clean) == 16: c_out_clean += ':00'
-
+            # datetime-local inputs return business-local "2023-11-01T14:30";
+            # store UTC 'YYYY-MM-DD HH:MM:SS' (DST offset of that date).
             try:
-                start = datetime.datetime.strptime(c_in_clean or '', '%Y-%m-%d %H:%M:%S')
-                end = datetime.datetime.strptime(c_out_clean, '%Y-%m-%d %H:%M:%S') if c_out_clean else None
+                if not clock_in:
+                    raise ValueError('clock-in required')
+                c_in_clean = tc.local_to_utc_str(clock_in)
+                c_out_clean = tc.local_to_utc_str(clock_out) if clock_out else None
+                start = tc.as_utc(c_in_clean)
+                end = tc.as_utc(c_out_clean) if c_out_clean else None
             except ValueError:
                 flash("Please enter a valid clock-in (and clock-out) time.")
                 return redirect(url_for('timeclock.edit_entry', entry_id=entry_id))
@@ -1267,11 +1266,12 @@ def edit_entry(entry_id):
         # DB is YYYY-MM-DD HH:MM:SS
         # DB is YYYY-MM-DD HH:MM:SS (or datetime object)
         # Safely convert to string first
-        c_in_str = str(entry['clock_in']) if entry['clock_in'] else ''
-        c_out_str = str(entry['clock_out']) if entry['clock_out'] else ''
+        # Stored UTC -> local for the datetime-local inputs
+        c_in_local = tc.to_local(entry['clock_in'])
+        c_out_local = tc.to_local(entry['clock_out'])
         
-        entry['clock_in_val'] = c_in_str.replace(' ', 'T')[:16]
-        entry['clock_out_val'] = c_out_str.replace(' ', 'T')[:16]
+        entry['clock_in_val'] = c_in_local.strftime('%Y-%m-%dT%H:%M') if c_in_local else ''
+        entry['clock_out_val'] = c_out_local.strftime('%Y-%m-%dT%H:%M') if c_out_local else ''
         
         user = conn.execute('SELECT username FROM users WHERE id = ?', (entry['user_id'],)).fetchone()
         username = user['username'] if user else "Unknown User (Deleted)"
@@ -1359,9 +1359,13 @@ def export_report():
             SELECT t.*, u.username, u.id as u_id
             FROM time_entries t
             JOIN users u ON t.user_id = u.id
-            WHERE date(t.clock_in) >= ? AND date(t.clock_in) <= ?
+            WHERE t.clock_in >= ? AND t.clock_in <= ?
         '''
-        params = [start_date, end_date]
+        try:
+            params = list(tc.local_dates_to_utc_range(start_date, end_date))
+        except (TypeError, ValueError):
+            flash("Please choose a valid date range.")
+            return redirect(url_for('timeclock.export_custom_form'))
         
         if selected_users:
             placeholders = ','.join(['?'] * len(selected_users))
@@ -1393,21 +1397,20 @@ def export_report():
             
             # Duration
             try:
-                start = datetime.datetime.strptime(entry['clock_in'], '%Y-%m-%d %H:%M:%S')
-                # Time format
+                start = tc.to_local(entry['clock_in'])
+                # Time format (local)
                 entry['date_fmt'] = start.strftime('%m/%d/%Y')
                 entry['in_fmt'] = start.strftime('%I:%M %p')
                 
                 hours = 0.0
                 
                 if entry['clock_out']:
-                    end = datetime.datetime.strptime(entry['clock_out'], '%Y-%m-%d %H:%M:%S')
-                    entry['out_fmt'] = end.strftime('%I:%M %p')
-                    diff = (end - start).total_seconds()
+                    entry['out_fmt'] = tc.to_local(entry['clock_out']).strftime('%I:%M %p')
+                    diff = (tc.as_utc(entry['clock_out']) - tc.as_utc(entry['clock_in'])).total_seconds()
                     hours = diff / 3600
                 else:
                     entry['out_fmt'] = "Active"
-                    diff = (datetime.datetime.now() - start).total_seconds()
+                    diff = (tc.utc_now() - tc.as_utc(entry['clock_in'])).total_seconds()
                     hours = diff / 3600
                     
                 entry['hours'] = round(hours, 2)
@@ -1435,7 +1438,7 @@ def export_report():
         return render_template('timeclock/report_print.html', 
                              report_data=report_data, 
                              date_label=date_label,
-                             generated_at=datetime.datetime.now().strftime('%Y-%m-%d %I:%M %p'))
+                             generated_at=tc.local_now().strftime('%Y-%m-%d %I:%M %p'))
                              
     finally:
         conn.close()
