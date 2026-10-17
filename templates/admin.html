@@ -483,7 +483,7 @@
                         <div class="admin-card">
                             <div class="card-header">
                                 <div class="icon icon-import">📁</div>
-                                <span>Import Manifest</span>
+                                <span>Import Packages</span>
                             </div>
                             <div class="card-body">
                                 <form action="{{ url_for('admin.upload_preview') }}" method="POST"
@@ -491,14 +491,8 @@
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <input type="file" name="file" class="form-control mb-3" accept=".csv, .xlsx"
                                         required>
-                                    <div class="btn-group w-100 mb-3">
-                                        <input type="radio" class="btn-check" name="upload_mode" id="modeReplace"
-                                            value="replace">
-                                        <label class="btn btn-outline-secondary" for="modeReplace">Replace All</label>
-                                        <input type="radio" class="btn-check" name="upload_mode" id="modeAppend"
-                                            value="append" checked>
-                                        <label class="btn btn-outline-secondary" for="modeAppend">Append</label>
-                                    </div>
+                                    <div class="form-text small mb-3">New packages are added and known ones
+                                        (same tracking + item name) updated.</div>
                                     <button type="submit" class="btn btn-primary w-100">Process File</button>
 
                                     <!-- Auto-confirm setting -->
@@ -545,7 +539,7 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <button type="submit" class="btn btn-success w-100">Add to Manifest</button>
+                                    <button type="submit" class="btn btn-success w-100">Add Package</button>
                                 </form>
                             </div>
                         </div>

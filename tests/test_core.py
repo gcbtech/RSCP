@@ -302,9 +302,9 @@ class TestBackgroundTasks:
         status = get_sync_status()
         
         assert isinstance(status, dict)
-        assert 'last_manifest_sync' in status
+        assert 'last_maintenance' in status
         assert 'last_email_check' in status
-        assert 'manifest_sync_count' in status
+        assert 'maintenance_count' in status
         assert 'errors' in status
 class TestVersionComparison:
     """Test version comparison for update checks."""

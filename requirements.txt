@@ -20,10 +20,5 @@ openpyxl>=3.1,<4
 Pillow>=10.0
 cryptography>=42.0
 pyserial>=3.5,<4
-# Fuzzy name matching in the email/manifest sync (app/services/data_manager.py).
-Levenshtein>=0.25,<1
 # HTML parsing for email_ingest.py.
 beautifulsoup4>=4.12,<5
-# Only app/routes/admin/uploads.py and app/routes/admin/packages.py still
-# import pandas; drop this once those no longer do.
-pandas>=2.1,<4

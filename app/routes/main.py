@@ -16,8 +16,8 @@ from app.utils.permissions import has_permission
 from app.services.db import get_db_connection, DB_PATH, get_request_db
 from app.services.auth import BASE_DIR, create_first_admin, validate_password
 from app.services.data_manager import (
-    get_dashboard_stats, sync_manifest, log_receipt, load_config, save_config, MANIFEST_FILE,
-    get_scan_count, get_file_age, check_history
+    get_dashboard_stats, log_receipt, load_config, save_config,
+    get_scan_count, check_history
 )
 from app.utils.helpers import sanitize_for_csv
 from app.services.logger import log_error
@@ -57,15 +57,17 @@ def receiving_dashboard():
     
     stats = get_dashboard_stats()
     scans = get_scan_count(14)
-    m_age = get_file_age(MANIFEST_FILE)
-    
+
+    # When package data last came in (upload, email or manual add)
+    from app.services.package_imports import last_import
+    last = last_import(get_request_db())
     refresh_info = []
-    if m_age == 999:
-        refresh_info.append({"label": "Data", "age": "No Files", "status": "grey"})
-    elif m_age < 24:
-        refresh_info.append({"label": "Manifest", "age": m_age, "status": "green"})
+    if not last:
+        refresh_info.append({"label": "Last import", "age": "None yet", "status": "grey"})
     else:
-        refresh_info.append({"label": "Manifest", "age": m_age, "status": "red"})
+        age = round(max(last['age_hours'] or 0, 0), 1)
+        refresh_info.append({"label": f"Last import ({last['source']})", "age": age,
+                             "status": "green" if age < 24 else "red"})
     
     server_ts = int(time.time() * 1000)
     return render_template('dashboard.html', stats=stats, scans=scans, refresh_info=refresh_info, server_ts=server_ts)
