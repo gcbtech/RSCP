@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 
 @inventory_bp.route('/alerts')
-@login_required
 @require_permission('inventory.manage')
 def alerts_page():
     """Manage stock alerts for all items."""
@@ -36,7 +35,6 @@ def alerts_page():
 
 
 @inventory_bp.route('/alerts/config', methods=['POST'])
-@login_required
 @require_permission('inventory.manage')
 def save_alerts_config():
     """Save global alert configuration."""
@@ -59,7 +57,6 @@ def save_alerts_config():
 
 
 @inventory_bp.route('/alerts/bulk', methods=['POST'])
-@login_required
 @require_permission('inventory.manage')
 def save_alerts_bulk():
     """Bulk save alert settings for all items."""

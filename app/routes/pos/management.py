@@ -17,27 +17,13 @@ from flask_login import current_user, login_required
 from app.routes.pos import pos_bp
 from app.routes.pos.core import get_pos_setting, set_pos_setting, get_tax_rate
 from app.services.db import get_db_connection, get_request_db
+from app.utils.permissions import require_permission
 
 logger = logging.getLogger(__name__)
 
 
-def require_admin(f):
-    """Decorator to require admin access."""
-    from functools import wraps
-    
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        from app.utils.permissions import has_permission
-        if not has_permission(current_user, 'pos.manage'):
-            flash('Admin access required.')
-            return redirect(url_for('pos.sales'))
-        return f(*args, **kwargs)
-    return decorated_function
-
-
 @pos_bp.route('/management')
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def management():
     """Management dashboard with analytics overview."""
     conn = get_request_db()
@@ -166,8 +152,7 @@ def management():
 
 
 @pos_bp.route('/management/sales')
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def sales_history():
     """Detailed sales history."""
     conn = get_request_db()
@@ -250,8 +235,7 @@ def sales_history():
 
 
 @pos_bp.route('/management/top-sellers')
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def top_sellers():
     """Top selling items with date range, SKU/location filters, and detailed metrics."""
     from app.routes.inventory import CATEGORY_CODES
@@ -366,8 +350,7 @@ def _top_sellers_csv(items, start_date, end_date):
 
 
 @pos_bp.route('/management/refunds-report')
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def refunds_report():
     """Refund rate and analysis."""
     conn = get_request_db()
@@ -436,8 +419,7 @@ def refunds_report():
 
 
 @pos_bp.route('/management/export')
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def export_data():
     """Export sales data to CSV."""
     report_type = request.args.get('type', 'orders')
@@ -497,8 +479,7 @@ def export_data():
 
 
 @pos_bp.route('/management/settings', methods=['GET', 'POST'])
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def settings():
     """POS settings page. The form posts to the generic settings route
     (POST /admin/settings/save, group 'pos'); a POST here is handled the same way."""
@@ -549,8 +530,7 @@ def settings():
 
 
 @pos_bp.route('/management/reports/daily')
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def daily_report():
     """End of Day / Daily Report."""
 
@@ -577,8 +557,7 @@ def daily_report():
 
 
 @pos_bp.route('/management/reports/custom')
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def custom_report():
     """Custom Report with arbitrary date range."""
     # Default: current month start → today
@@ -613,8 +592,7 @@ def custom_report():
                            **report_data)
 
 @pos_bp.route('/management/reports/daily/print')
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def daily_report_print():
     """Printable Thermal Summary for End of Day."""
     conn = get_request_db()
@@ -636,8 +614,7 @@ def daily_report_print():
 
 
 @pos_bp.route('/management/reports/valuation')
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def valuation_report():
     """Inventory Valuation Report (POS Module)."""
     # Check if inventory is enabled via config
@@ -718,8 +695,7 @@ def valuation_report():
 
 
 @pos_bp.route('/management/reports/reorder')
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def reorder_report():
     """Smart Reorder Report (POS Module)."""
     conn = get_request_db()
@@ -792,8 +768,7 @@ def reorder_report():
 
 
 @pos_bp.route('/management/reports/daily/email', methods=['POST'])
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def send_eod_email():
     """Send the End of Day Report via Email (same email as the automatic one)."""
     report_date_str = request.form.get('date') or request.args.get('date') or date.today().strftime('%Y-%m-%d')
@@ -810,8 +785,7 @@ def send_eod_email():
 
 
 @pos_bp.route('/management/reports/daily-items')
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def daily_items_report():
     """Report of all items sold on a specific day."""
     conn = get_request_db()
@@ -956,8 +930,7 @@ def _reprice_sale(new_subtotal, adj):
 
 
 @pos_bp.route('/management/edit-sale/<int:order_id>')
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def edit_sale(order_id):
     """Load a sale for editing (admin only)."""
     conn = get_request_db()
@@ -1000,8 +973,7 @@ def _sale_has_refunds(conn, order_id):
 
 
 @pos_bp.route('/management/edit-sale/<int:order_id>', methods=['POST'])
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def edit_sale_post(order_id):
     """Process sale edit (admin only)."""
     conn = get_request_db()
@@ -1169,8 +1141,7 @@ def edit_sale_post(order_id):
     return redirect(url_for('pos.sales_history'))
 
 @pos_bp.route('/management/stale-inventory')
-@login_required
-@require_admin
+@require_permission('pos.manage')
 def stale_inventory():
     """Stale Inventory Report."""
     conn = get_request_db()

@@ -157,7 +157,6 @@ def generate_thumbnail(image_url):
 
 
 @inventory_bp.route('/low-stock')
-@login_required
 def low_stock_report():
     """Show report of items with low stock or out of stock."""
     conn = get_db_connection()
@@ -175,7 +174,6 @@ def low_stock_report():
 
 
 @inventory_bp.route('/bulk-edit', methods=['POST'])
-@login_required
 @require_permission('inventory.manage')
 def bulk_edit():
     """Handle bulk editing of inventory items."""
@@ -276,7 +274,6 @@ def bulk_edit():
 
 
 @inventory_bp.route('/items')
-@login_required
 def list_items():
     """List all inventory items with sorting, pagination, and search support."""
     # Get sort parameters from query string
@@ -409,7 +406,6 @@ def list_items():
 
 
 @inventory_bp.route('/add', methods=['GET', 'POST'])
-@login_required
 @require_permission('inventory.manage')
 def add_item():
     """Add a new inventory item."""
@@ -677,7 +673,6 @@ def add_item():
 
 
 @inventory_bp.route('/edit/<int:item_id>', methods=['GET', 'POST'])
-@login_required
 @require_permission('inventory.manage')
 def edit_item(item_id):
     """Edit an existing inventory item."""
@@ -936,7 +931,6 @@ def edit_item(item_id):
 
 
 @inventory_bp.route('/delete/<int:item_id>', methods=['POST'])
-@login_required
 @require_permission('inventory.manage')
 def delete_item(item_id):
     """Delete an inventory item."""
@@ -956,7 +950,6 @@ def delete_item(item_id):
 
 
 @inventory_bp.route('/toggle-legacy/<int:item_id>', methods=['POST'])
-@login_required
 @require_permission('inventory.manage')
 def toggle_legacy(item_id):
     """Toggle the legacy status of an inventory item."""
@@ -987,7 +980,6 @@ def toggle_legacy(item_id):
 
 
 @inventory_bp.route('/transaction/delete/<int:tx_id>', methods=['POST'])
-@login_required
 @require_permission('inventory.manage')
 def delete_transaction(tx_id):
     """Delete a transaction and revert the stock change."""
@@ -1016,7 +1008,6 @@ def delete_transaction(tx_id):
 
 
 @inventory_bp.route('/adjust/<int:item_id>', methods=['POST'])
-@login_required
 def adjust_quantity(item_id):
     """Adjust quantity for an inventory item."""
     import threading
@@ -1130,7 +1121,6 @@ def adjust_quantity(item_id):
 
 
 @inventory_bp.route('/add_stock/<int:item_id>', methods=['GET', 'POST'])
-@login_required
 def add_stock(item_id):
     """Confirmation page for adding stock to existing inventory item from scan."""
     conn = get_db_connection()
@@ -1172,7 +1162,7 @@ def add_stock(item_id):
     finally:
         conn.close()
 @inventory_bp.route('/upload_photo', methods=['POST'])
-@login_required
+@require_permission('inventory.manage')
 def upload_photo():
     """Upload photo from camera."""
     data = request.json
@@ -1210,7 +1200,6 @@ def upload_photo():
         return jsonify({'error': str(e)}), 500
 
 @inventory_bp.route('/export_csv')
-@login_required
 @require_permission('inventory.manage')
 def export_inventory_csv():
     """Export inventory to CSV."""

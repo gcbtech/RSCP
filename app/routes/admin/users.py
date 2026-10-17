@@ -17,10 +17,6 @@ logger = logging.getLogger(__name__)
 @admin_bp.route('/add_user', methods=['POST'])
 def add_user_action():
     """Create a new user."""
-    error = require_admin()
-    if error:
-        return error
-    
     username = request.form.get('username', '').strip()
     password = request.form.get('password', '').strip()
     
@@ -49,10 +45,6 @@ def add_user_action():
 @admin_bp.route('/reset_password/<username>', methods=['POST'])
 def reset_password_action(username):
     """Reset a user's password."""
-    error = require_admin()
-    if error:
-        return error
-    
     # Cannot reset the built-in Admin account password (by anyone, including self)
     if username.lower() == 'admin':
         flash("Cannot reset the built-in Admin account password.")
@@ -93,10 +85,6 @@ def reset_password_action(username):
 @admin_bp.route('/delete_user/<username>', methods=['POST'])
 def delete_user_action(username):
     """Delete a user."""
-    error = require_admin()
-    if error:
-        return error
-    
     if username == current_user.username:
         flash("Cannot delete yourself.")
     elif username.lower() == 'admin':
@@ -110,10 +98,6 @@ def delete_user_action(username):
 @admin_bp.route('/set_user_admin/<username>/<action>', methods=['POST'])
 def set_user_admin(username, action):
     """Promote or demote a user's admin status."""
-    error = require_admin()
-    if error:
-        return error
-    
     if username == current_user.username:
         flash("Cannot change your own admin status.")
         return redirect(url_for('admin.admin_panel', tab='settings'))
@@ -138,10 +122,6 @@ def reset_users_route():
 @admin_bp.route('/set_user_pin/<username>', methods=['POST'])
 def set_user_pin(username):
     """Set or update a user's POS PIN."""
-    error = require_admin()
-    if error:
-        return error
-    
     pin = request.form.get('pin', '').strip()
     
     if not pin:
@@ -170,10 +150,6 @@ def set_user_pin(username):
 @admin_bp.route('/set_badge_id/<username>', methods=['POST'])
 def set_badge_id(username):
     """Set or update a user's badge ID for POS login."""
-    error = require_admin()
-    if error:
-        return error
-    
     badge_id = request.form.get('badge_id', '').strip()
     
     try:
@@ -210,10 +186,6 @@ def set_badge_id(username):
 @admin_bp.route('/set_user_roles/<username>', methods=['POST'])
 def set_user_roles(username):
     """Set a user's RBAC roles."""
-    error = require_admin()
-    if error:
-        return error
-    
     # Prevent changing your own super_admin status
     if username == current_user.username:
         flash("Cannot change your own roles. Ask another super_admin.")
@@ -224,9 +196,9 @@ def set_user_roles(username):
         flash("Cannot change roles for the built-in Admin account.")
         return redirect(url_for('admin.admin_panel', tab='settings'))
     
-    # Valid RBAC roles
-    # Valid RBAC roles
-    valid_roles = ['super_admin', 'inventory_admin', 'pos_admin', 'receiving_admin', 'timeclock_admin', 'operator']
+    # Valid RBAC roles: the single source is app.utils.permissions.ROLES
+    from app.utils.permissions import ROLES
+    valid_roles = list(ROLES)
     
     # Get selected roles from form (checkboxes)
     roles = []
@@ -249,7 +221,7 @@ def set_user_roles(username):
         
         conn = get_db_connection()
         
-        # Also update is_admin flag for backwards compatibility
+        # Mirror super_admin into the legacy is_admin column (rollback safety)
         is_admin = 'super_admin' in roles
         conn.execute('UPDATE users SET roles = ?, is_admin = ? WHERE username = ?', 
                      (json.dumps(roles), 1 if is_admin else 0, username))

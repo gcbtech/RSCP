@@ -89,7 +89,6 @@ def _read_xlsx_rows(file_obj):
         wb.close()
 
 @inventory_bp.route('/import', methods=['GET', 'POST'])
-@login_required
 @require_permission('inventory.manage')
 def import_items():
     """Import inventory items from CSV or Excel."""
@@ -231,7 +230,6 @@ def import_items():
     return render_template('inventory/import.html')
 
 @inventory_bp.route('/import/template')
-@login_required
 def download_import_template():
     """Download CSV template for imports."""
     output = io.StringIO()

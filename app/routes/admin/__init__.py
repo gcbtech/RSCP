@@ -25,10 +25,32 @@ def save_config_value(key, value):
     save_config({key: value})
 
 
+def _admin_required_page():
+    from flask import request
+    flash("Administrator access required. Please login with an Admin account.")
+    return redirect(url_for('auth.login', force=True,
+                            next=request.url if request.method == 'GET' else None))
+
+
+# Every /admin route is for administrators (admin.manage = super_admin).
+from app.utils.permissions import protect_blueprint, has_permission
+protect_blueprint(
+    admin_bp, 'admin.manage',
+    module_name='Admin',
+    json_endpoints={
+        'admin.check_update', 'admin.perform_update', 'admin.release_info',
+        'admin.rollback_update', 'admin.update_status', 'admin.save_auto_confirm',
+        'admin.set_package_quantity', 'admin.set_package_sku', 'admin.set_tracking',
+    },
+    on_forbidden=_admin_required_page,
+)
+
+
 def require_admin():
-    """Check if current user is admin, return error response if not."""
+    """Deprecated: the blueprint guard above already requires admin.manage.
+    Kept so code written against the old pattern keeps working."""
     from flask_login import current_user
-    if not current_user.is_authenticated or not current_user.is_admin:
+    if not has_permission(current_user, 'admin.manage'):
         return "Unauthorized", 403
     return None
 

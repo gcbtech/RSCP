@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, request, redirect, url_for, flash, session
 from flask_login import login_required, current_user
-from app.utils.permissions import has_permission
+from app.utils.permissions import has_permission, require_permission, protect_blueprint
 import datetime
 from app.services.timeclock_hours import summarize as summarize_hours
 from app.services import timeclock_hours as tc
@@ -9,6 +9,10 @@ from app.services.data_manager import load_config
 import logging
 
 timeclock_bp = Blueprint('timeclock', __name__, url_prefix='/timeclock')
+# Every /timeclock route: TIMECLOCK_ENABLED + timeclock.view; manager pages
+# add @require_permission('timeclock.manage').
+protect_blueprint(timeclock_bp, 'timeclock.view',
+                  module_flag='TIMECLOCK_ENABLED', module_name='Timeclock')
 logger = logging.getLogger(__name__)
 
 def get_current_status(user_id):
@@ -142,13 +146,8 @@ def get_pay_periods_history(limit=12):
     return periods
 
 @timeclock_bp.route('/', strict_slashes=False)
-@login_required
 def index():
     config = load_config()
-    if not config.get('TIMECLOCK_ENABLED', False):
-        flash("Timeclock module is disabled.")
-        return redirect(url_for('main.index'))
-        
     status = get_current_status(current_user.id)
     
     # Calculate duration and format time
@@ -284,11 +283,8 @@ def inject_status():
         conn.close()
 
 @timeclock_bp.route('/manager/shifts', methods=['GET', 'POST'])
-@login_required
+@require_permission('timeclock.manage')
 def shifts():
-    if not has_permission(current_user, 'timeclock.manage'):
-        return redirect(url_for('timeclock.index'))
-    
     conn = get_db_connection()
     try:
         # Self-healing
@@ -387,12 +383,8 @@ def shifts():
         conn.close()
 
 @timeclock_bp.route('/manager/shift/delete/<int:shift_id>', methods=['POST'])
-@login_required
+@require_permission('timeclock.manage')
 def delete_shift(shift_id):
-    if not has_permission(current_user, 'timeclock.manage'):
-        flash("Access Denied")
-        return redirect(url_for('timeclock.index'))
-        
     conn = get_db_connection()
     try:
         conn.execute('DELETE FROM scheduled_shifts WHERE id = ?', (shift_id,))
@@ -459,14 +451,12 @@ def _clock_transition(expected_open, close_type, open_type, ok_msg, wrong_state_
 
 
 @timeclock_bp.route('/clock_in', methods=['POST'])
-@login_required
 def clock_in():
     return _clock_transition(None, None, 'shift', "Clocked In Successfully",
                              "You are already clocked in!")
 
 
 @timeclock_bp.route('/clock_out', methods=['POST'])
-@login_required
 def clock_out():
     conn = get_db_connection()
     try:
@@ -482,7 +472,6 @@ def clock_out():
 
 
 @timeclock_bp.route('/break_start', methods=['POST'])
-@login_required
 def break_start():
     # A break ends the open shift entry and opens a 'break' entry; ending the
     # break closes it and opens a new shift entry.
@@ -491,17 +480,13 @@ def break_start():
 
 
 @timeclock_bp.route('/break_end', methods=['POST'])
-@login_required
 def break_end():
     return _clock_transition('break', 'break', 'shift', "Break Ended - Back to Work",
                              "You are not on a break.")
 
 @timeclock_bp.route('/manager/recurring/add', methods=['POST'])
-@login_required
+@require_permission('timeclock.manage')
 def add_recurring_rule():
-    if not has_permission(current_user, 'timeclock.manage'):
-        return "Unauthorized", 403
-    
     conn = get_db_connection()
     try:
         user_id = request.form.get('user_id')
@@ -527,10 +512,8 @@ def add_recurring_rule():
     return redirect(url_for('timeclock.shifts', tab='recurring'))
 
 @timeclock_bp.route('/manager/recurring/delete/<int:rule_id>', methods=['POST'])
-@login_required
+@require_permission('timeclock.manage')
 def delete_recurring_rule(rule_id):
-    if not has_permission(current_user, 'timeclock.manage'):
-        return "Unauthorized", 403
     conn = get_db_connection()
     conn.execute('DELETE FROM recurring_shift_rules WHERE id = ?', (rule_id,))
     conn.commit()
@@ -539,11 +522,8 @@ def delete_recurring_rule(rule_id):
     return redirect(url_for('timeclock.shifts', tab='recurring'))
 
 @timeclock_bp.route('/manager/generate_schedule', methods=['POST'])
-@login_required
+@require_permission('timeclock.manage')
 def generate_schedule():
-    if not has_permission(current_user, 'timeclock.manage'):
-        return "Unauthorized", 403
-        
     start_date_str = request.form.get('start_date')
     end_date_str = request.form.get('end_date')
     
@@ -605,13 +585,8 @@ def generate_schedule():
 
 
 @timeclock_bp.route('/manager')
-@login_required
+@require_permission('timeclock.manage')
 def manager_dashboard():
-    # Permission Check
-    if not has_permission(current_user, 'timeclock.manage'):
-        flash("Access Denied")
-        return redirect(url_for('timeclock.index'))
-
     conn = get_db_connection()
     try:
         # Self-healing: Ensure table exists
@@ -710,12 +685,8 @@ def manager_dashboard():
         conn.close()
 
 @timeclock_bp.route('/manager/force_clock_out/<int:user_id>', methods=['POST'])
-@login_required
+@require_permission('timeclock.manage')
 def force_clock_out(user_id):
-    if not has_permission(current_user, 'timeclock.manage'):
-        flash("Access Denied")
-        return redirect(url_for('timeclock.index'))
-        
     conn = get_db_connection()
     try:
         now = tc.utc_now_str()
@@ -734,12 +705,8 @@ def force_clock_out(user_id):
     return redirect(url_for('timeclock.manager_dashboard'))
 
 @timeclock_bp.route('/manager/force_clock_in/<int:user_id>', methods=['POST'])
-@login_required
+@require_permission('timeclock.manage')
 def force_clock_in(user_id):
-    if not has_permission(current_user, 'timeclock.manage'):
-        flash("Access Denied")
-        return redirect(url_for('timeclock.index'))
-        
     conn = get_db_connection()
     try:
         # Check if user is already clocked in
@@ -764,11 +731,8 @@ def force_clock_in(user_id):
     return redirect(url_for('timeclock.manager_dashboard'))
 
 @timeclock_bp.route('/manager/export')
-@login_required
+@require_permission('timeclock.manage')
 def export_csv():
-    if not has_permission(current_user, 'timeclock.manage'):
-        return redirect(url_for('timeclock.index'))
-    
     import csv
     import io
     from flask import Response
@@ -841,11 +805,8 @@ def export_csv():
         conn.close()
 
 @timeclock_bp.route('/manager/timesheets')
-@login_required
+@require_permission('timeclock.manage')
 def timesheets():
-    if not has_permission(current_user, 'timeclock.manage'):
-        return redirect(url_for('timeclock.index'))
-    
     conn = get_db_connection()
     try:
         users = conn.execute("SELECT id, username FROM users ORDER BY username").fetchall()
@@ -923,11 +884,8 @@ def timesheets():
         conn.close()
 
 @timeclock_bp.route('/manager/settings', methods=['POST'])
-@login_required
+@require_permission('timeclock.manage')
 def update_settings():
-    if not has_permission(current_user, 'timeclock.manage'):
-        return redirect(url_for('timeclock.index'))
-        
     from app.services.data_manager import save_config, load_config
     
     start_date = request.form.get('pay_period_start')
@@ -949,7 +907,6 @@ def update_settings():
     return redirect(url_for('timeclock.manager_dashboard'))
 
 @timeclock_bp.route('/request_pto', methods=['GET', 'POST'])
-@login_required
 def request_pto():
     config = load_config()
     min_shift = float(config.get('TIMECLOCK_MIN_SHIFT_DURATION', 4.0)) # Default 4 hours
@@ -1046,11 +1003,8 @@ def request_pto():
         conn.close()
 
 @timeclock_bp.route('/manager/pto')
-@login_required
+@require_permission('timeclock.manage')
 def manager_pto():
-    if not has_permission(current_user, 'timeclock.manage'):
-        return redirect(url_for('timeclock.index'))
-        
     conn = get_db_connection()
     try:
         # Self-healing: Ensure PTO tables exist
@@ -1108,10 +1062,8 @@ def manager_pto():
         conn.close()
 
 @timeclock_bp.route('/manager/pto/update_balance', methods=['POST'])
-@login_required
+@require_permission('timeclock.manage')
 def update_pto_balance():
-    if not has_permission(current_user, 'timeclock.manage'):
-        return "Unauthorized", 403
     conn = get_db_connection()
     try:
         user_id = request.form.get('user_id')
@@ -1130,11 +1082,8 @@ def update_pto_balance():
     return redirect(url_for('timeclock.manager_pto'))
 
 @timeclock_bp.route('/manager/pto/action/<int:req_id>', methods=['POST'])
-@login_required
+@require_permission('timeclock.manage')
 def pto_action(req_id):
-    if not has_permission(current_user, 'timeclock.manage'):
-        return "Unauthorized", 403
-        
     action = request.form.get('action') # 'approve', 'deny'
     conn = get_db_connection()
     try:
@@ -1204,11 +1153,8 @@ def pto_action(req_id):
 
 
 @timeclock_bp.route('/manager/timesheet/edit/<int:entry_id>', methods=['GET', 'POST'])
-@login_required
+@require_permission('timeclock.manage')
 def edit_entry(entry_id):
-    if not has_permission(current_user, 'timeclock.manage'):
-        return redirect(url_for('timeclock.index'))
-        
     conn = get_db_connection()
     try:
         if request.method == 'POST':
@@ -1281,11 +1227,8 @@ def edit_entry(entry_id):
         conn.close()
 
 @timeclock_bp.route('/manager/timesheet/delete/<int:entry_id>', methods=['POST'])
-@login_required
+@require_permission('timeclock.manage')
 def delete_entry(entry_id):
-    if not has_permission(current_user, 'timeclock.manage'):
-        return redirect(url_for('timeclock.index'))
-    
     conn = get_db_connection()
     try:
         conn.execute('DELETE FROM time_entries WHERE id=?', (entry_id,))
@@ -1300,11 +1243,8 @@ def delete_entry(entry_id):
     return redirect(url_for('timeclock.timesheets'))
 
 @timeclock_bp.route('/manager/export/custom', methods=['GET'])
-@login_required
+@require_permission('timeclock.manage')
 def export_custom_form():
-    if not has_permission(current_user, 'timeclock.manage'):
-        return redirect(url_for('timeclock.index'))
-    
     conn = get_db_connection()
     try:
         users = conn.execute("SELECT id, username FROM users ORDER BY username").fetchall()
@@ -1327,11 +1267,8 @@ def export_custom_form():
     return render_template('timeclock/export_custom.html', users=users, periods=periods)
 
 @timeclock_bp.route('/manager/export/report', methods=['POST'])
-@login_required
+@require_permission('timeclock.manage')
 def export_report():
-    if not has_permission(current_user, 'timeclock.manage'):
-        return redirect(url_for('timeclock.index'))
-        
     selected_users = request.form.getlist('user_ids')
     period_str = request.form.get('period') # "YYYY-MM-DD|YYYY-MM-DD" or "custom"
     

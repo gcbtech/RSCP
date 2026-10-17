@@ -23,6 +23,16 @@ from app.utils.helpers import sanitize_for_csv
 from app.services.logger import log_error
 
 main_bp = Blueprint('main', __name__)
+# The receiving pages (scan, history, returns, expected...) need receiving.view.
+# The gateway and first-run setup handle their own access; settings and issue
+# reports only need a login.
+from app.utils.permissions import protect_blueprint
+protect_blueprint(
+    main_bp, 'receiving.view',
+    module_name='Receiving',
+    public={'main.index', 'main.setup_wizard'},
+    login_only={'main.settings_page', 'main.report_issue'},
+)
 from app.paths import CONFIG_FILE
 
 @main_bp.route('/')
@@ -48,13 +58,7 @@ def index():
     return render_template('gateway.html', inventory_enabled=inv_enabled, pos_enabled=pos_enabled, timeclock_enabled=timeclock_enabled)
 
 @main_bp.route('/receiving')
-@login_required
 def receiving_dashboard():
-    # Check user permission
-    if not has_permission(current_user, 'receiving.view'):
-        flash("You don't have access to the Receiving module.")
-        return redirect(url_for('main.index'))
-    
     stats = get_dashboard_stats()
     scans = get_scan_count(14)
 
@@ -105,7 +109,6 @@ def setup_wizard():
     return render_template('setup.html')
 
 @main_bp.route('/settings')
-@login_required
 def settings_page():
     return render_template('settings.html')
 
@@ -132,7 +135,6 @@ def report_issue():
     return redirect(url_for('main.index'))
 
 @main_bp.route('/scan', methods=['GET', 'POST'])
-@login_required
 def scan_page_legacy():
     logger.debug(f"[Scan] scan_page_legacy called. Method: {request.method}")
     if request.method == 'POST':
@@ -319,13 +321,11 @@ def scan_page_legacy():
     return scan_page('receive') 
 
 @main_bp.route('/scan/<mode>', methods=['GET'])
-@login_required
 def scan_page(mode):
     logger.info(f"[Scan] scan_page called. Mode: {mode}, User: {current_user.username}")
     return render_template('scan.html', mode=mode)
 
 @main_bp.route('/api/dashboard_stats')
-@login_required
 def api_dashboard_stats():
     from app.services.data_manager import get_dashboard_stats, get_scan_count, get_analytics_stats
     
@@ -362,7 +362,6 @@ def api_dashboard_stats():
     return {"status": "error", "msg": "Invalid Mode"}
 
 @main_bp.route('/history')
-@login_required
 def history_view():
     
     conn = get_db_connection()
@@ -430,7 +429,6 @@ def history_view():
         conn.close()
 
 @main_bp.route('/return_mode', methods=['GET', 'POST'])
-@login_required
 def return_mode():
     found_item = None
     message = None
@@ -494,7 +492,6 @@ def return_mode():
     return render_template('return_mode.html', item=found_item, message=message, candidates=candidates, recent_items=recent_items)
 
 @main_bp.route('/process_return', methods=['POST'])
-@login_required
 def process_return():
     original_tracking = request.form.get('original_tracking')
     return_tracking = request.form.get('return_tracking')
@@ -530,7 +527,6 @@ def process_return():
     return redirect(url_for('main.return_mode'))
 
 @main_bp.route('/mark_refunded/<tracking>', methods=['POST'])
-@login_required
 def mark_refunded(tracking):
     conn = get_db_connection()
     try:
@@ -550,7 +546,6 @@ def mark_refunded(tracking):
     return redirect(url_for('main.open_returns_view'))
 
 @main_bp.route('/open_returns')
-@login_required
 def open_returns_view():
     conn = get_db_connection()
     try:
@@ -574,7 +569,6 @@ def open_returns_view():
         conn.close()
 
 @main_bp.route('/refunded_log')
-@login_required
 def refunded_view():
     conn = get_db_connection()
     rows = conn.execute("SELECT * FROM packages WHERE status='refunded' ORDER BY refund_date DESC").fetchall()
@@ -583,7 +577,6 @@ def refunded_view():
     return render_template('refunded.html', items=items)
 
 @main_bp.route('/past_due')
-@login_required
 def past_due_view():
     conn = get_db_connection()
     rows = conn.execute("SELECT * FROM packages WHERE status='past_due' AND date_scanned IS NULL").fetchall()
@@ -592,7 +585,6 @@ def past_due_view():
     return render_template('past_due.html', items=items)
 
 @main_bp.route('/expected')
-@login_required
 def expected_view():
     from app.utils.helpers import guess_shipper
     conn = get_db_connection()
@@ -614,7 +606,6 @@ def expected_view():
 
 @main_bp.route('/search')
 @main_bp.route('/receiving/link_item', methods=['POST'])
-@login_required
 def link_item():
     data = request.json
     tracking = data.get('tracking')

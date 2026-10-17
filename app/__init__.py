@@ -278,6 +278,10 @@ def create_app(test_config=None):
 
             # Check if user is authenticated
             if not current_user.is_authenticated:
+                # JSON callers get a 401 they can act on, not a login page
+                from app.utils.permissions import wants_json, unauthenticated_response
+                if wants_json():
+                    return unauthenticated_response(as_json=True)
                 # Redirect to login with 'next' parameter to return after login
                 return redirect(url_for('auth.login', next=request.url))
             
@@ -402,10 +406,10 @@ def create_app(test_config=None):
         # Get user info from Flask-Login's current_user instead of session
         from flask_login import current_user
         local_user = current_user.username if current_user.is_authenticated else None
-        is_admin = current_user.is_admin if current_user.is_authenticated else False
-        
         from app.utils.helpers import guess_shipper
         from app.utils.permissions import has_permission
+        # Kept for old templates; new ones use has_permission(current_user, 'admin.manage')
+        is_admin = has_permission(current_user, 'admin.manage')
         
         return {
             'app_name': "RSCP",

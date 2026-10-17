@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 
 @pos_bp.route('/')
-@login_required
 def sales():
     """Main POS sales interface."""
     # Check if POS is locked
@@ -117,14 +116,12 @@ def _cart_json(cart, success=True, error=None, status=200):
 
 
 @pos_bp.route('/cart/fragment')
-@login_required
 def cart_fragment():
     """Rendered cart fragment for the register page's poll-driven refresh."""
     return _render_cart_ajax(get_cart())
 
 
 @pos_bp.route('/cart/add', methods=['POST'])
-@login_required
 def cart_add():
     """Add an item to the cart."""
     sku = request.form.get('sku', '').strip()
@@ -215,7 +212,6 @@ def cart_add():
 
 
 @pos_bp.route('/cart/add-custom', methods=['POST'])
-@login_required
 def cart_add_custom():
     """Add a custom (non-inventory) item to the cart."""
     name = request.form.get('name', '').strip()
@@ -267,7 +263,6 @@ def cart_add_custom():
 
 
 @pos_bp.route('/cart/remove/<int:index>', methods=['POST'])
-@login_required
 def cart_remove(index):
     """Remove an item from the cart."""
     cart = get_cart()
@@ -292,7 +287,6 @@ def cart_remove(index):
 
 
 @pos_bp.route('/cart/update/<int:index>', methods=['POST'])
-@login_required
 def cart_update(index):
     """Update quantity or discount for a cart item."""
     cart = get_cart()
@@ -343,7 +337,6 @@ def cart_update(index):
 
 
 @pos_bp.route('/cart/discount', methods=['POST'])
-@login_required
 def cart_discount():
     """Apply order-level discount. Requires manager approval if threshold exceeded."""
     from app.services.data_manager import load_config
@@ -423,7 +416,6 @@ def cart_discount():
 
 
 @pos_bp.route('/cart/clear', methods=['POST'])
-@login_required
 def cart_clear():
     """Clear the entire cart."""
     clear_cart()
@@ -434,7 +426,6 @@ def cart_clear():
 
 
 @pos_bp.route('/cart/hold', methods=['POST'])
-@login_required
 def cart_hold():
     """Hold the current cart for later recall at any register."""
     if not allow_hold_orders():
@@ -473,7 +464,6 @@ def cart_hold():
 
 
 @pos_bp.route('/cart/recall/<int:held_id>', methods=['POST'])
-@login_required
 def cart_recall(held_id):
     """Recall a held cart."""
     conn = get_db_connection()

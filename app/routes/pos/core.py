@@ -321,7 +321,6 @@ def compute_cart_totals(cart):
 
 
 @pos_bp.route('/preview-receipt')
-@login_required
 def preview_receipt():
     """Printable PREVIEW / pick-list of the current cart, BEFORE checkout.
 
@@ -406,38 +405,7 @@ def allow_hold_orders():
     return setting.lower() == 'true'
 
 
-@pos_bp.before_request
-def check_pos_enabled():
-    """Redirect if POS module is disabled or user lacks role."""
-    
-    # Allow API endpoints and login to handle their own auth/publicity
-    # Removed 'debug' from skip list - it should be protected
-    if request.endpoint and ('api' in request.endpoint or 'login' in request.endpoint):
-        return
-        
-    # Support checking raw URL path for API endpoints and public customer displays
-    if request.path and ('/api/' in request.path or '/customer-display' in request.path):
-        return
-    
-    # Enforce global authentication for POS module (except exceptions above)
-    from flask import current_app
-    if not current_app.config.get('TESTING') and not current_user.is_authenticated:
-        return redirect(url_for('auth.login', next=request.url))
-    
-    if not current_app.config.get('TESTING') and not is_pos_enabled():
-        flash("POS module is not enabled.")
-        return redirect(url_for('main.index'))
-    
-    # Check user role (admins bypass role check)
-    if not current_app.config.get('TESTING') and not current_user.is_admin:
-        from app.utils.permissions import has_permission
-        if not has_permission(current_user, 'pos.view'):
-            flash("You don't have access to the POS module.")
-            return redirect(url_for('main.index'))
-
-
 @pos_bp.route('/debug')
-@login_required
 @require_permission('pos.manage')  # managers only
 def pos_debug():
     """Debug endpoint to check POS module status."""
@@ -497,7 +465,6 @@ def log_pos_action(action, user_id=None, user_name=None, target_type=None, targe
 # =============================================================================
 
 @pos_bp.route('/hardware/open_drawer', methods=['POST'])
-@login_required
 def open_drawer():
     """Open the cash drawer via serial port."""
     from flask import jsonify
@@ -523,7 +490,6 @@ def open_drawer():
 
 
 @pos_bp.route('/hardware/list_ports', methods=['GET'])
-@login_required
 @require_permission('pos.manage')  # managers only
 def list_ports():
     """List available serial ports for cash drawer configuration."""
@@ -535,7 +501,6 @@ def list_ports():
 
 
 @pos_bp.route('/hardware/test_drawer', methods=['POST'])
-@login_required
 @require_permission('pos.manage')  # managers only
 def test_drawer():
     """Test the cash drawer by opening it on specified port."""

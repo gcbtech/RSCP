@@ -11,6 +11,9 @@ from app.services.db import get_db_connection
 logger = logging.getLogger(__name__)
 
 notifications_bp = Blueprint('notifications', __name__, url_prefix='/api/notifications')
+# A user's own notifications: any logged-in user, no module or permission.
+from app.utils.permissions import protect_blueprint
+protect_blueprint(notifications_bp, None, module_name='Notifications')
 
 
 # =============================================================================
@@ -68,7 +71,6 @@ def get_unread_count(user_id):
 # =============================================================================
 
 @notifications_bp.route('/list')
-@login_required
 def list_notifications():
     """Get notifications for current user."""
     limit = min(int(request.args.get('limit', 20)), 100)
@@ -99,14 +101,12 @@ def list_notifications():
 
 
 @notifications_bp.route('/count')
-@login_required
 def count_notifications():
     """Get unread notification count for current user."""
     return jsonify({'count': get_unread_count(current_user.id)})
 
 
 @notifications_bp.route('/<int:notification_id>/read', methods=['POST'])
-@login_required
 def mark_read(notification_id):
     """Mark a notification as read."""
     conn = get_db_connection()
@@ -123,7 +123,6 @@ def mark_read(notification_id):
 
 
 @notifications_bp.route('/read-all', methods=['POST'])
-@login_required
 def mark_all_read():
     """Mark all notifications as read for current user."""
     conn = get_db_connection()
@@ -140,7 +139,6 @@ def mark_all_read():
 
 
 @notifications_bp.route('/<int:notification_id>', methods=['DELETE'])
-@login_required
 def delete_notification(notification_id):
     """Delete a notification."""
     conn = get_db_connection()

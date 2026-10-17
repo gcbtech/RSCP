@@ -11,9 +11,6 @@ logger = logging.getLogger(__name__)
 @admin_bp.route('/run_email_ingest', methods=['POST'])
 def run_email_ingest():
     """Manually trigger email ingest."""
-    error = require_admin()
-    if error: return error
-    
     from app.services.data_manager import sync_email_ingest
     result = sync_email_ingest()
     

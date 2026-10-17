@@ -21,10 +21,6 @@ logger = logging.getLogger(__name__)
 @admin_bp.route('/export_backup')
 def export_backup():
     """Export system backup as ZIP file."""
-    from flask_login import current_user
-    if not current_user.is_authenticated or not current_user.is_admin:
-        return redirect(url_for('auth.login'))
-    
     import tempfile
     import sqlite3
     from app.services.db import get_db_connection
@@ -75,10 +71,6 @@ def export_backup():
 @admin_bp.route('/import_backup', methods=['POST'])
 def import_backup():
     """Import system backup from ZIP file."""
-    error = require_admin()
-    if error:
-        return error
-    
     file = request.files.get('backup_file')
     force_restore = request.form.get('force_restore') == 'true'
     

@@ -16,14 +16,12 @@ logger = logging.getLogger(__name__)
 
 
 @inventory_bp.route('/lookup')
-@login_required
 def lookup_page():
     """Render the Inventory Lookup page."""
     return render_template('inventory/lookup.html')
 
 
 @inventory_bp.route('/lookup/search')
-@login_required
 def lookup_search():
     """API endpoint for inventory lookup. Searches by SKU, UPC, or part number."""
     query = request.args.get('q', '').strip()

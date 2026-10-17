@@ -15,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 
 @pos_bp.route('/api/search')
-@login_required
 def api_search():
     """Search inventory items by SKU or name."""
     query = request.args.get('q', '').strip()
@@ -38,7 +37,6 @@ def api_search():
 
 
 @pos_bp.route('/api/item/<sku>')
-@login_required
 def api_item(sku):
     """Get item details by SKU."""
     item = get_inventory_item(sku)
@@ -61,7 +59,6 @@ def api_item(sku):
 
 
 @pos_bp.route('/api/validate-manager', methods=['POST'])
-@login_required
 def api_validate_manager():
     """Validate manager credentials for void/refund operations."""
     from app.services.auth import User
@@ -111,7 +108,6 @@ def api_validate_manager():
 
 
 @pos_bp.route('/api/cart')
-@login_required
 def api_cart():
     """Get current cart state with authoritative totals."""
     from app.routes.pos.core import get_cart, compute_cart_totals

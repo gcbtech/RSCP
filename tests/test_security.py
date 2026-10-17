@@ -43,9 +43,9 @@ def app():
         # Insert a mock admin user
         conn = get_db_connection()
         conn.execute('''
-            INSERT INTO users (id, username, password_hash, is_admin)
-            VALUES (?, ?, ?, ?)
-        ''', (1, 'TestAdmin', 'pbkdf2:sha256:somehash', 1))
+            INSERT INTO users (id, username, password_hash, is_admin, roles)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (1, 'TestAdmin', 'pbkdf2:sha256:somehash', 1, '["super_admin"]'))
         conn.commit()
         conn.close()
         

@@ -42,7 +42,6 @@ def require_manager_auth(f):
 
 
 @pos_bp.route('/refunds')
-@login_required
 @require_manager_auth
 def refunds():
     """Refund search and management interface."""
@@ -80,7 +79,6 @@ def refunds():
 
 
 @pos_bp.route('/refunds/auth', methods=['GET', 'POST'])
-@login_required
 def refund_auth():
     """Manager authentication for refunds."""
     if request.method == 'POST':
@@ -133,7 +131,6 @@ def refund_auth():
 
 
 @pos_bp.route('/verify-manager', methods=['POST'])
-@login_required
 def verify_manager():
     """API endpoint to verify manager PIN/Badge for discount approval.
     
@@ -193,7 +190,6 @@ def verify_manager():
 
 
 @pos_bp.route('/refunds/search')
-@login_required
 @require_manager_auth
 def refund_search():
     """Search orders for refund."""
@@ -238,7 +234,6 @@ def refund_search():
 
 
 @pos_bp.route('/refunds/order/<order_number>')
-@login_required
 @require_manager_auth
 def refund_order(order_number):
     """View order details for refund."""
@@ -291,7 +286,6 @@ def refund_order(order_number):
 
 
 @pos_bp.route('/refunds/process', methods=['POST'])
-@login_required
 @require_manager_auth
 def refund_process():
     """Process a refund."""

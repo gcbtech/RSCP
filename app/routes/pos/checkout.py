@@ -11,6 +11,7 @@ from flask import request, redirect, url_for, flash, render_template, make_respo
 from flask_login import current_user, login_required
 
 from app.routes.pos import pos_bp, PAYMENT_METHODS
+from app.utils.permissions import require_permission
 from app.routes.pos.core import (
     get_cart, save_cart, clear_cart, get_tax_rate, calculate_tax,
     generate_order_number, round_money, calculate_percentage, compute_cart_totals,
@@ -23,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 
 @pos_bp.route('/checkout')
-@login_required
 def checkout():
     """Checkout page with payment options."""
     cart = get_cart()
@@ -59,7 +59,6 @@ def checkout():
 
 
 @pos_bp.route('/checkout/process', methods=['POST'])
-@login_required
 def checkout_process():
     """Record the sale.
 
@@ -413,7 +412,6 @@ def _load_receipt_order(conn, order_number):
 
 
 @pos_bp.route('/receipt/<order_number>')
-@login_required
 def receipt(order_number):
     """View order receipt."""
     conn = get_request_db()
@@ -426,7 +424,6 @@ def receipt(order_number):
 
 
 @pos_bp.route('/receipt/<order_number>/print')
-@login_required
 def receipt_print(order_number):
     """Printable receipt view."""
     conn = get_request_db()
@@ -439,14 +436,9 @@ def receipt_print(order_number):
 
 
 @pos_bp.route('/order/<order_number>/delete', methods=['POST'])
-@login_required
+@require_permission('admin.manage')
 def delete_order(order_number):
     """Delete an order (admin only)."""
-    # Admin check
-    if not current_user.is_admin:
-        flash('Only administrators can delete orders.')
-        return redirect(url_for('pos.receipt', order_number=order_number))
-    
     restore_inventory = request.form.get('restore_inventory') == 'on'
     
     from app.services.db import get_db_connection

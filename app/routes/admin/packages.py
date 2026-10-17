@@ -20,12 +20,6 @@ logger = logging.getLogger(__name__)
 @admin_bp.route('/')
 def admin_panel():
     """Main admin panel view with package listing."""
-    if not current_user.is_authenticated:
-        return redirect(url_for('auth.login', next=request.url))
-    if not current_user.is_admin:
-        flash("Administrator access required. Please login with an Admin account.")
-        return redirect(url_for('auth.login', next=request.url, force=True))
-        
     users = load_users()
     
     # Sorting / Pagination parameters
@@ -160,10 +154,6 @@ def admin_panel():
 @admin_bp.route('/add_manual_item', methods=['POST'])
 def add_manual_item():
     """Add a package manually."""
-    error = require_admin()
-    if error:
-        return error
-    
     tracking = request.form.get('tracking', '').strip()
     name = request.form.get('name', '').strip()
     sku = request.form.get('sku', '').strip() or None
@@ -231,10 +221,6 @@ def add_manual_item():
 @admin_bp.route('/set_sku/<int:package_id>', methods=['POST'])
 def set_package_sku(package_id):
     """Update package SKU."""
-    error = require_admin()
-    if error:
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-        
     sku = request.form.get('sku', '').strip() or None
     
     close_conn = False
@@ -261,10 +247,6 @@ def set_package_sku(package_id):
 @admin_bp.route('/set_quantity/<int:package_id>', methods=['POST'])
 def set_package_quantity(package_id):
     """Update package Quantity."""
-    error = require_admin()
-    if error:
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-        
     try:
         qty = int(request.form.get('quantity', '1'))
         if qty < 0: raise ValueError("Negative quantity")
@@ -292,10 +274,6 @@ def set_package_quantity(package_id):
 @admin_bp.route('/delete_package/<int:package_id>', methods=['POST'])
 def delete_package_from_db(package_id):
     """Delete a package."""
-    error = require_admin()
-    if error:
-        return error
-    
     close_conn = False
     if has_app_context():
         conn = get_request_db()
@@ -330,10 +308,6 @@ def delete_package_from_db(package_id):
 @admin_bp.route('/toggle_priority/<tracking>', methods=['POST'])
 def toggle_priority(tracking):
     """Toggle priority flag on a package."""
-    error = require_admin()
-    if error:
-        return error
-    
     close_conn = False
     if has_app_context():
         conn = get_request_db()
@@ -354,10 +328,6 @@ def toggle_priority(tracking):
 @admin_bp.route('/set_date/<tracking>', methods=['POST'])
 def set_date(tracking):
     """Set expected date for a package."""
-    error = require_admin()
-    if error:
-        return error
-    
     new_date = request.form.get('new_date')
     if new_date:
         close_conn = False
@@ -383,10 +353,6 @@ def set_date(tracking):
 @admin_bp.route('/set_status/<tracking>/<status>')
 def set_status(tracking, status):
     """Set status for a package."""
-    error = require_admin()
-    if error:
-        return error
-    
     close_conn = False
     if has_app_context():
         conn = get_request_db()
@@ -414,10 +380,6 @@ def set_status(tracking, status):
 @admin_bp.route('/bulk_action', methods=['POST'])
 def bulk_action():
     """Perform bulk actions on selected packages."""
-    error = require_admin()
-    if error:
-        return error
-    
     action = request.form.get('action_type')
     trackings = request.form.getlist('trackings')
     
@@ -468,10 +430,6 @@ def bulk_action():
 @admin_bp.route('/clear_history', methods=['POST'])
 def clear_history():
     """Clear all history records."""
-    error = require_admin()
-    if error:
-        return error
-    
     close_conn = False
     if has_app_context():
         conn = get_request_db()
@@ -490,10 +448,6 @@ def clear_history():
 @admin_bp.route('/set_tracking/<int:package_id>', methods=['POST'])
 def set_tracking(package_id):
     """Update package Tracking Number."""
-    error = require_admin()
-    if error:
-        return jsonify({'success': False, 'error': 'Unauthorized'}), 403
-        
     new_tracking = request.form.get('tracking', '').strip()
     if not new_tracking:
         return jsonify({'success': False, 'error': 'Empty tracking number'}), 400

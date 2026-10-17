@@ -137,10 +137,6 @@ def process_import_directly(headers, rows, mapping, filename):
 @admin_bp.route('/upload_file', methods=['POST'])
 def upload_preview():
     """Step 1: Upload file and show preview with editable column mapping."""
-    error = require_admin()
-    if error:
-        return error
-    
     file = request.files.get('file')
     if not file or file.filename == '':
         flash("No file selected.")
@@ -209,10 +205,6 @@ def upload_preview():
 @admin_bp.route('/upload_confirm', methods=['POST'])
 def upload_confirm():
     """Step 2: Apply the import with user-selected column mappings."""
-    error = require_admin()
-    if error:
-        return error
-    
     preview = session.get('upload_preview')
     if not preview or not os.path.exists(preview.get('temp_file', '')):
         flash("Preview expired. Please upload the file again.")
