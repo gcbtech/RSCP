@@ -500,47 +500,12 @@ def export_data():
 @login_required
 @require_admin
 def settings():
-    """POS settings page."""
+    """POS settings page. The form posts to the generic settings route
+    (POST /admin/settings/save, group 'pos'); a POST here is handled the same way."""
     if request.method == 'POST':
-        # Tax rate
-        tax_rate = request.form.get('tax_rate', '0')
-        try:
-            tax_float = round(float(tax_rate) / 100, 6)  # Round to avoid floating point issues
-            set_pos_setting('TAX_RATE', str(tax_float))
-        except ValueError:
-            flash('Invalid tax rate.')
-        
-        # Feature toggles
-        set_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', request.form.get('pos_default_report_timeframe', '30'))
-        set_pos_setting('REQUIRE_MANAGER_VOID', 'true' if request.form.get('require_manager_void') else 'false')
-        set_pos_setting('ALLOW_HOLD_ORDERS', 'true' if request.form.get('allow_hold_orders') else 'false')
-        
-        # Cash discount
-        set_pos_setting('CASH_DISCOUNT_ENABLED', 'true' if request.form.get('cash_discount_enabled') else 'false')
-        set_pos_setting('CASH_DISCOUNT_AMOUNT', request.form.get('cash_discount_amount', '0'))
-        set_pos_setting('CASH_DISCOUNT_TYPE', request.form.get('cash_discount_type', 'percent'))
-        
-        # Receipt branding
-        set_pos_setting('RECEIPT_STORE_NAME', request.form.get('receipt_store_name', ''))
-        set_pos_setting('RECEIPT_HEADER', request.form.get('receipt_header', ''))
-        set_pos_setting('RECEIPT_FOOTER', request.form.get('receipt_footer', ''))
-        
-        # Receipt styling options
-        set_pos_setting('RECEIPT_STORE_NAME_BOLD', 'true' if request.form.get('receipt_store_name_bold') else 'false')
-        set_pos_setting('RECEIPT_STORE_NAME_ITALIC', 'true' if request.form.get('receipt_store_name_italic') else 'false')
-        set_pos_setting('RECEIPT_HEADER_BOLD', 'true' if request.form.get('receipt_header_bold') else 'false')
-        set_pos_setting('RECEIPT_HEADER_ITALIC', 'true' if request.form.get('receipt_header_italic') else 'false')
-        set_pos_setting('RECEIPT_FOOTER_BOLD', 'true' if request.form.get('receipt_footer_bold') else 'false')
-        set_pos_setting('RECEIPT_FOOTER_ITALIC', 'true' if request.form.get('receipt_footer_italic') else 'false')
-        
-        # Hardware settings
-        set_pos_setting('CASH_DRAWER_ENABLED', 'true' if request.form.get('cash_drawer_enabled') else 'false')
-        set_pos_setting('CASH_DRAWER_PORT', request.form.get('cash_drawer_port', ''))
-        set_pos_setting('AUTO_PRINT_RECEIPT', 'true' if request.form.get('auto_print_receipt') else 'false')
-        
-        flash('POS settings saved.')
-        return redirect(url_for('pos.settings'))
-    
+        from app.routes.settings import save_settings_from_request
+        return save_settings_from_request('pos')
+
     # Get available serial ports for dropdown
     try:
         from app.services.hardware import list_serial_ports
@@ -572,6 +537,14 @@ def settings():
                            cash_drawer_enabled=get_pos_setting('CASH_DRAWER_ENABLED', 'false') == 'true',
                            cash_drawer_port=get_pos_setting('CASH_DRAWER_PORT', ''),
                            auto_print_receipt=get_pos_setting('AUTO_PRINT_RECEIPT', 'false') == 'true',
+                           # Email automation
+                           pos_email_host=get_pos_setting('POS_EMAIL_HOST', ''),
+                           pos_email_port=get_pos_setting('POS_EMAIL_PORT', '587'),
+                           pos_email_user=get_pos_setting('POS_EMAIL_USER', ''),
+                           pos_email_password_set=bool(get_pos_setting('POS_EMAIL_PASSWORD', '')),
+                           pos_email_recipients=get_pos_setting('POS_EMAIL_RECIPIENTS', ''),
+                           pos_auto_email_enabled=get_pos_setting('POS_AUTO_EMAIL_ENABLED', 'false') == 'true',
+                           pos_auto_email_time=get_pos_setting('POS_AUTO_EMAIL_TIME', ''),
                            available_ports=available_ports)
 
 

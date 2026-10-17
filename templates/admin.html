@@ -350,10 +350,12 @@
                         <div class="icon icon-packages">📦</div>
                         <span>Package Database</span>
                         <div class="ms-auto">
-                            <form action="/admin/toggle_trim" method="POST" class="d-inline">
+                            <form action="{{ url_for('settings.save') }}" method="POST" class="d-inline">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="group" value="general">
                                 <div class="form-check form-switch mb-0">
-                                    <input class="form-check-input" type="checkbox" name="trim_state"
+                                    <input type="hidden" name="AUTO_TRIM" value="false">
+                                    <input class="form-check-input" type="checkbox" name="AUTO_TRIM" value="true"
                                         onchange="this.form.submit()" {% if trim_enabled %}checked{% endif %}>
                                     <label class="form-check-label small">Auto-Trim (60d)</label>
                                 </div>
@@ -382,8 +384,10 @@
                                 <a href="{{ url_for('admin.admin_panel', search=search_query) }}"
                                     class="btn btn-sm btn-outline-secondary">Reset Sort</a>
                                 {% endif %}
-                                <form action="/admin/toggle_date_format" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="general">
+                                    <input type="hidden" name="DATE_FORMAT" value="{{ 'US' if date_format == 'UK' else 'UK' }}">
                                     <button type="submit" class="btn btn-sm btn-outline-secondary">
                                         {{ 'DD/MM' if date_format == 'UK' else 'MM/DD' }}
                                     </button>
@@ -572,10 +576,12 @@
                                 <span>General Settings</span>
                             </div>
                             <div class="card-body">
-                                <form action="/admin/save_inventory_general" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="inventory">
                                     <div class="form-check mb-3">
-                                        <input class="form-check-input" type="checkbox" name="auto_copy_sku"
+                                        <input type="hidden" name="INVENTORY_AUTO_COPY_SKU" value="false">
+                                        <input class="form-check-input" type="checkbox" name="INVENTORY_AUTO_COPY_SKU" value="true"
                                             id="autoCopySku" {% if config and config.INVENTORY_AUTO_COPY_SKU %}checked{%
                                             endif %}>
                                         <label class="form-check-label" for="autoCopySku">
@@ -586,7 +592,8 @@
                                         </div>
                                     </div>
                                     <div class="form-check mb-3">
-                                        <input class="form-check-input" type="checkbox" name="quick_add_enabled"
+                                        <input type="hidden" name="INVENTORY_QUICK_ADD" value="false">
+                                        <input class="form-check-input" type="checkbox" name="INVENTORY_QUICK_ADD" value="true"
                                             id="quickAddEnabled" {% if config and config.INVENTORY_QUICK_ADD %}checked{%
                                             endif %}>
                                         <label class="form-check-label" for="quickAddEnabled">
@@ -597,7 +604,8 @@
                                         </div>
                                     </div>
                                     <div class="form-check mb-3">
-                                        <input class="form-check-input" type="checkbox" name="track_first_stock_date"
+                                        <input type="hidden" name="TRACK_FIRST_STOCK_DATE" value="false">
+                                        <input class="form-check-input" type="checkbox" name="TRACK_FIRST_STOCK_DATE" value="true"
                                             id="trackFirstStockDate" {% if config and config.TRACK_FIRST_STOCK_DATE
                                             %}checked{% endif %}>
                                         <label class="form-check-label" for="trackFirstStockDate">
@@ -622,28 +630,29 @@
                                 <p class="small text-muted mb-3">
                                     Customize the location field names to match your organization.
                                 </p>
-                                <form action="/admin/save_location_labels" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="inventory">
                                     <div class="row g-2 mb-3">
                                         <div class="col-6">
                                             <label class="form-label small fw-bold">Field 1</label>
-                                            <input type="text" name="label_1" class="form-control"
-                                                value="{{ config.get('LOCATION_LABELS', {}).get('label_1', 'Area') if config else 'Area' }}">
+                                            <input type="text" name="LOCATION_LABELS.area" class="form-control"
+                                                value="{{ config.get('LOCATION_LABELS', {}).get('area', 'Area') if config else 'Area' }}">
                                         </div>
                                         <div class="col-6">
                                             <label class="form-label small fw-bold">Field 2</label>
-                                            <input type="text" name="label_2" class="form-control"
-                                                value="{{ config.get('LOCATION_LABELS', {}).get('label_2', 'Aisle') if config else 'Aisle' }}">
+                                            <input type="text" name="LOCATION_LABELS.aisle" class="form-control"
+                                                value="{{ config.get('LOCATION_LABELS', {}).get('aisle', 'Aisle') if config else 'Aisle' }}">
                                         </div>
                                         <div class="col-6">
                                             <label class="form-label small fw-bold">Field 3</label>
-                                            <input type="text" name="label_3" class="form-control"
-                                                value="{{ config.get('LOCATION_LABELS', {}).get('label_3', 'Shelf') if config else 'Shelf' }}">
+                                            <input type="text" name="LOCATION_LABELS.shelf" class="form-control"
+                                                value="{{ config.get('LOCATION_LABELS', {}).get('shelf', 'Shelf') if config else 'Shelf' }}">
                                         </div>
                                         <div class="col-6">
                                             <label class="form-label small fw-bold">Field 4</label>
-                                            <input type="text" name="label_4" class="form-control"
-                                                value="{{ config.get('LOCATION_LABELS', {}).get('label_4', 'Bin') if config else 'Bin' }}">
+                                            <input type="text" name="LOCATION_LABELS.bin" class="form-control"
+                                                value="{{ config.get('LOCATION_LABELS', {}).get('bin', 'Bin') if config else 'Bin' }}">
                                         </div>
                                     </div>
                                     <button type="submit" class="btn btn-primary btn-sm">Save Labels</button>
@@ -662,13 +671,15 @@
                                     Configure optional addon text that can be added to items. When enabled for an item,
                                     this text will appear on receipts.
                                 </p>
-                                <form action="/admin/save_item_addons" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="inventory">
 
                                     <!-- Addon 1 -->
                                     <div class="mb-3 p-2 border rounded">
                                         <div class="d-flex align-items-center mb-2">
-                                            <input class="form-check-input me-2" type="checkbox" name="addon_1_enabled"
+                                            <input type="hidden" name="ITEM_ADDON_1_ENABLED" value="false">
+                                            <input class="form-check-input me-2" type="checkbox" name="ITEM_ADDON_1_ENABLED" value="true"
                                                 id="addon1Enabled" {% if config and config.get('ITEM_ADDON_1_ENABLED')
                                                 %}checked{% endif %}>
                                             <label class="form-check-label fw-bold" for="addon1Enabled">
@@ -678,13 +689,13 @@
                                         <div class="mb-2">
                                             <label class="form-label small">Checkbox Label (shown in Add/Edit
                                                 Item):</label>
-                                            <input type="text" name="addon_1_label" class="form-control form-control-sm"
+                                            <input type="text" name="ITEM_ADDON_1_LABEL" class="form-control form-control-sm"
                                                 placeholder="e.g., Include Warranty"
                                                 value="{{ config.get('ITEM_ADDON_1_LABEL', '') if config else '' }}">
                                         </div>
                                         <div>
                                             <label class="form-label small">Receipt Text (printed when checked):</label>
-                                            <textarea name="addon_1_text" class="form-control form-control-sm" rows="2"
+                                            <textarea name="ITEM_ADDON_1_TEXT" class="form-control form-control-sm" rows="2"
                                                 placeholder="e.g., 30-day warranty included. See terms at...">{{ config.get('ITEM_ADDON_1_TEXT', '') if config else '' }}</textarea>
                                         </div>
                                     </div>
@@ -692,7 +703,8 @@
                                     <!-- Addon 2 -->
                                     <div class="mb-3 p-2 border rounded">
                                         <div class="d-flex align-items-center mb-2">
-                                            <input class="form-check-input me-2" type="checkbox" name="addon_2_enabled"
+                                            <input type="hidden" name="ITEM_ADDON_2_ENABLED" value="false">
+                                            <input class="form-check-input me-2" type="checkbox" name="ITEM_ADDON_2_ENABLED" value="true"
                                                 id="addon2Enabled" {% if config and config.get('ITEM_ADDON_2_ENABLED')
                                                 %}checked{% endif %}>
                                             <label class="form-check-label fw-bold" for="addon2Enabled">
@@ -702,13 +714,13 @@
                                         <div class="mb-2">
                                             <label class="form-label small">Checkbox Label (shown in Add/Edit
                                                 Item):</label>
-                                            <input type="text" name="addon_2_label" class="form-control form-control-sm"
+                                            <input type="text" name="ITEM_ADDON_2_LABEL" class="form-control form-control-sm"
                                                 placeholder="e.g., Add Disclaimer"
                                                 value="{{ config.get('ITEM_ADDON_2_LABEL', '') if config else '' }}">
                                         </div>
                                         <div>
                                             <label class="form-label small">Receipt Text (printed when checked):</label>
-                                            <textarea name="addon_2_text" class="form-control form-control-sm" rows="2"
+                                            <textarea name="ITEM_ADDON_2_TEXT" class="form-control form-control-sm" rows="2"
                                                 placeholder="e.g., All sales final. No refunds or exchanges.">{{ config.get('ITEM_ADDON_2_TEXT', '') if config else '' }}</textarea>
                                         </div>
                                     </div>
@@ -728,33 +740,35 @@
                                 <p class="small text-muted mb-3">
                                     Define dropdown options for each location field (comma-separated).
                                 </p>
-                                <form action="/admin/save_location_options" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="inventory">
                                     {% set loc_options = config.get('LOCATION_OPTIONS', {}) if config else {} %}
                                     {% set loc_labels = config.get('LOCATION_LABELS', {}) if config else {} %}
                                     <div class="mb-2">
                                         <label class="form-label small fw-bold">Field 1 Options</label>
-                                        <textarea name="location_options_area" class="form-control" rows="2"
+                                        <textarea name="LOCATION_OPTIONS.area" class="form-control" rows="2"
                                             placeholder="e.g., Warehouse A, Warehouse B, Office">{{ loc_options.get('area', [])|join(', ') }}</textarea>
                                     </div>
                                     <div class="mb-2">
                                         <label class="form-label small fw-bold">Field 2 Options</label>
-                                        <textarea name="location_options_aisle" class="form-control" rows="2"
+                                        <textarea name="LOCATION_OPTIONS.aisle" class="form-control" rows="2"
                                             placeholder="e.g., A1, A2, B1, B2">{{ loc_options.get('aisle', [])|join(', ') }}</textarea>
                                     </div>
                                     <div class="mb-2">
                                         <label class="form-label small fw-bold">Field 3 Options</label>
-                                        <textarea name="location_options_shelf" class="form-control" rows="2"
+                                        <textarea name="LOCATION_OPTIONS.shelf" class="form-control" rows="2"
                                             placeholder="e.g., Top, Middle, Bottom">{{ loc_options.get('shelf', [])|join(', ') }}</textarea>
                                     </div>
                                     <div class="mb-2">
                                         <label class="form-label small fw-bold">Field 4 Options</label>
-                                        <textarea name="location_options_bin" class="form-control" rows="2"
+                                        <textarea name="LOCATION_OPTIONS.bin" class="form-control" rows="2"
                                             placeholder="e.g., 1, 2, 3, 4">{{ loc_options.get('bin', [])|join(', ') }}</textarea>
                                     </div>
                                     <div class="form-check mb-3">
-                                        <input class="form-check-input" type="checkbox" name="location_allow_custom"
-                                            id="allowCustomLocation" {% if config and config.LOCATION_ALLOW_CUSTOM
+                                        <input type="hidden" name="LOCATION_ALLOW_CUSTOM" value="false">
+                                        <input class="form-check-input" type="checkbox" name="LOCATION_ALLOW_CUSTOM" value="true"
+                                            id="allowCustomLocation" {% if not config or config.get('LOCATION_ALLOW_CUSTOM', true)
                                             %}checked{% endif %}>
                                         <label class="form-check-label" for="allowCustomLocation">
                                             <strong>Allow Custom Values</strong>
@@ -775,10 +789,12 @@
                                 <span>Pricing & Margin</span>
                             </div>
                             <div class="card-body">
-                                <form action="/admin/save_margin_settings" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="inventory">
                                     <div class="form-check mb-3">
-                                        <input class="form-check-input" type="checkbox" name="margin_enabled"
+                                        <input type="hidden" name="PREFERRED_MARGIN_ENABLED" value="false">
+                                        <input class="form-check-input" type="checkbox" name="PREFERRED_MARGIN_ENABLED" value="true"
                                             id="marginEnabled" {% if config and config.PREFERRED_MARGIN_ENABLED
                                             %}checked{% endif %}>
                                         <label class="form-check-label" for="marginEnabled">
@@ -790,13 +806,13 @@
                                     <div class="mb-3">
                                         <label class="form-label d-block small fw-bold">Profitability Basis:</label>
                                         <div class="form-check form-check-inline">
-                                            <input class="form-check-input" type="radio" name="margin_type"
+                                            <input class="form-check-input" type="radio" name="PREFERRED_MARGIN_TYPE"
                                                 id="basisMarkup" value="markup" {% if config and
                                                 config.PREFERRED_MARGIN_TYPE=='markup' %}checked{% endif %}>
                                             <label class="form-check-label" for="basisMarkup">Markup %</label>
                                         </div>
                                         <div class="form-check form-check-inline">
-                                            <input class="form-check-input" type="radio" name="margin_type"
+                                            <input class="form-check-input" type="radio" name="PREFERRED_MARGIN_TYPE"
                                                 id="basisMargin" value="margin" {% if not config or
                                                 config.PREFERRED_MARGIN_TYPE !='markup' %}checked{% endif %}>
                                             <label class="form-check-label" for="basisMargin">Margin %</label>
@@ -809,7 +825,7 @@
                                         </div>
                                         <div class="col-auto">
                                             <div class="input-group" style="width: 140px;">
-                                                <input type="number" step="0.1" name="margin_percent"
+                                                <input type="number" step="0.1" name="PREFERRED_MARGIN_PERCENT"
                                                     class="form-control"
                                                     value="{{ config.PREFERRED_MARGIN_PERCENT if config and config.PREFERRED_MARGIN_PERCENT else 20 }}"
                                                     min="0" max="500">
@@ -839,28 +855,30 @@
                                 <span>Manager Approval</span>
                             </div>
                             <div class="card-body">
-                                <form action="/admin/save_pos_approval_settings" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="pos_approval">
                                     <p class="small text-muted mb-3">
                                         Set limits for discounts that require manager approval.
                                     </p>
                                     <div class="row g-2 mb-3">
                                         <div class="col-6">
                                             <label class="form-label small fw-bold">Max Discount %</label>
-                                            <input type="number" step="0.1" name="max_discount_percent"
+                                            <input type="number" step="0.1" name="POS_MAX_DISCOUNT_PERCENT"
                                                 class="form-control"
                                                 value="{{ config.get('POS_MAX_DISCOUNT_PERCENT', 10) }}" min="0"
                                                 max="100">
                                         </div>
                                         <div class="col-6">
                                             <label class="form-label small fw-bold">Max Discount $</label>
-                                            <input type="number" step="0.01" name="max_discount_amount"
+                                            <input type="number" step="0.01" name="POS_MAX_DISCOUNT_AMOUNT"
                                                 class="form-control"
                                                 value="{{ config.get('POS_MAX_DISCOUNT_AMOUNT', 20) }}" min="0">
                                         </div>
                                     </div>
                                     <div class="form-check mb-3">
-                                        <input class="form-check-input" type="checkbox" name="require_manager_refund"
+                                        <input type="hidden" name="POS_REQUIRE_MANAGER_REFUND" value="false">
+                                        <input class="form-check-input" type="checkbox" name="POS_REQUIRE_MANAGER_REFUND" value="true"
                                             id="requireManagerRefund" {% if config.get('POS_REQUIRE_MANAGER_REFUND',
                                             False) %}checked{% endif %}>
                                         <label class="form-check-label" for="requireManagerRefund">
@@ -879,19 +897,21 @@
                                 <span>Cash Discount</span>
                             </div>
                             <div class="card-body">
-                                <form action="/pos/settings/save_cash_discount" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="pos">
                                     <div class="form-check mb-3">
-                                        <input class="form-check-input" type="checkbox" name="enabled"
+                                        <input type="hidden" name="CASH_DISCOUNT_ENABLED" value="false">
+                                        <input class="form-check-input" type="checkbox" name="CASH_DISCOUNT_ENABLED" value="true"
                                             id="cashDiscountEnabled" {% if
-                                            pos_settings.get('CASH_DISCOUNT_ENABLED')=='true' %}checked{% endif %}>>
+                                            pos_settings.get('CASH_DISCOUNT_ENABLED')=='true' %}checked{% endif %}>
                                         <label class="form-check-label" for="cashDiscountEnabled">
                                             <strong>Enable Cash Discount</strong>
                                         </label>
                                     </div>
                                     <div class="row g-2 align-items-center mb-3">
                                         <div class="col-auto">
-                                            <select name="type" class="form-select form-select-sm">
+                                            <select name="CASH_DISCOUNT_TYPE" class="form-select form-select-sm">
                                                 <option value="percent" {% if
                                                     pos_settings.get('CASH_DISCOUNT_TYPE', 'percent' )=='percent'
                                                     %}selected{% endif %}>Percent</option>
@@ -901,7 +921,7 @@
                                             </select>
                                         </div>
                                         <div class="col-auto">
-                                            <input type="number" step="0.01" name="amount"
+                                            <input type="number" step="0.01" name="CASH_DISCOUNT_AMOUNT"
                                                 class="form-control form-control-sm"
                                                 value="{{ pos_settings.get('CASH_DISCOUNT_AMOUNT', 0) }}" min="0"
                                                 style="width: 100px;">
@@ -920,15 +940,16 @@
                                 <span>Tax Rate</span>
                             </div>
                             <div class="card-body">
-                                <form action="/pos/settings/save_tax_rate" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="pos">
                                     <div class="row g-2 align-items-center mb-3">
                                         <div class="col-auto">
                                             <label class="form-label mb-0">Sales Tax Rate:</label>
                                         </div>
                                         <div class="col-auto">
                                             <div class="input-group" style="width: 140px;">
-                                                <input type="number" step="0.01" name="tax_rate" class="form-control"
+                                                <input type="number" step="0.01" name="TAX_RATE" class="form-control"
                                                     value="{{ (pos_settings.get('TAX_RATE', 0) * 100)|round(2) }}"
                                                     min="0" max="100">
                                                 <span class="input-group-text">%</span>
@@ -947,22 +968,23 @@
                                 <span>Receipt Settings</span>
                             </div>
                             <div class="card-body">
-                                <form action="/pos/settings/save_receipt" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="pos">
                                     <div class="mb-3">
                                         <label class="form-label small fw-bold">Store Name</label>
-                                        <input type="text" name="store_name" class="form-control"
+                                        <input type="text" name="RECEIPT_STORE_NAME" class="form-control"
                                             value="{{ pos_settings.get('RECEIPT_STORE_NAME', '') }}"
                                             placeholder="Your Store Name">
                                     </div>
                                     <div class="mb-3">
                                         <label class="form-label small fw-bold">Receipt Header</label>
-                                        <textarea name="header" class="form-control" rows="2"
+                                        <textarea name="RECEIPT_HEADER" class="form-control" rows="2"
                                             placeholder="Address, phone, etc.">{{ pos_settings.get('RECEIPT_HEADER', '') }}</textarea>
                                     </div>
                                     <div class="mb-3">
                                         <label class="form-label small fw-bold">Receipt Footer</label>
-                                        <textarea name="footer" class="form-control" rows="2"
+                                        <textarea name="RECEIPT_FOOTER" class="form-control" rows="2"
                                             placeholder="Thank you message, return policy, etc.">{{ pos_settings.get('RECEIPT_FOOTER', '') }}</textarea>
                                     </div>
                                     <button type="submit" class="btn btn-primary btn-sm">Save</button>
@@ -978,35 +1000,36 @@
                             <span>Email Automation</span>
                         </div>
                         <div class="card-body">
-                            <form action="/pos/settings/save_email" method="POST">
+                            <form action="{{ url_for('settings.save') }}" method="POST">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                <input type="hidden" name="group" value="pos">
                                 <div class="row g-2 mb-2">
                                     <div class="col-md-8">
                                         <label class="form-label small fw-bold">SMTP Host</label>
-                                        <input type="text" name="host" class="form-control form-control-sm"
+                                        <input type="text" name="POS_EMAIL_HOST" class="form-control form-control-sm"
                                             value="{{ pos_settings.get('POS_EMAIL_HOST', '') }}"
                                             placeholder="smtp.gmail.com">
                                     </div>
                                     <div class="col-md-4">
                                         <label class="form-label small fw-bold">Port</label>
-                                        <input type="text" name="port" class="form-control form-control-sm"
+                                        <input type="text" name="POS_EMAIL_PORT" class="form-control form-control-sm"
                                             value="{{ pos_settings.get('POS_EMAIL_PORT', '587') }}">
                                     </div>
                                 </div>
                                 <div class="mb-2">
                                     <label class="form-label small fw-bold">Email Address</label>
-                                    <input type="email" name="user" class="form-control form-control-sm"
+                                    <input type="email" name="POS_EMAIL_USER" class="form-control form-control-sm"
                                         value="{{ pos_settings.get('POS_EMAIL_USER', '') }}"
                                         placeholder="pos@example.com">
                                 </div>
                                 <div class="mb-2">
                                     <label class="form-label small fw-bold">App Password</label>
-                                    <input type="password" name="password" class="form-control form-control-sm"
-                                        placeholder="Leave blank to keep existing">
+                                    <input type="password" name="POS_EMAIL_PASSWORD" class="form-control form-control-sm"
+                                        autocomplete="new-password" placeholder="Leave blank to keep existing">
                                 </div>
                                 <div class="mb-3">
                                     <label class="form-label small fw-bold">Recipients (comma separated)</label>
-                                    <input type="text" name="recipients" class="form-control form-control-sm"
+                                    <input type="text" name="POS_EMAIL_RECIPIENTS" class="form-control form-control-sm"
                                         value="{{ pos_settings.get('POS_EMAIL_RECIPIENTS', '') }}"
                                         placeholder="manager@example.com, owner@example.com">
                                 </div>
@@ -1177,17 +1200,19 @@
 
                                 <hr>
                                 <div class="section-title">🕐 Session Timeout</div>
-                                <form action="/admin/save_session_timeout" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="security">
                                     <div class="d-flex align-items-center gap-3 mb-2">
                                         <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" name="timeout_enabled"
+                                            <input type="hidden" name="SESSION_TIMEOUT_ENABLED" value="false">
+                                            <input class="form-check-input" type="checkbox" name="SESSION_TIMEOUT_ENABLED" value="true"
                                                 id="timeoutSwitch" {% if config.get('SESSION_TIMEOUT_ENABLED')
                                                 %}checked{% endif %}>
                                             <label class="form-check-label" for="timeoutSwitch">Enable
                                                 auto-logout</label>
                                         </div>
-                                        <select name="timeout_minutes" class="form-select form-select-sm"
+                                        <select name="SESSION_TIMEOUT_MINUTES" class="form-select form-select-sm"
                                             style="width: auto;">
                                             <option value="15" {% if config.get('SESSION_TIMEOUT_MINUTES', 30)==15
                                                 %}selected{% endif %}>15 min</option>
@@ -1214,8 +1239,9 @@
                                 <span>Notifications</span>
                             </div>
                             <div class="card-body">
-                                <form action="/admin/save_notifications" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="notifications">
 
                                     <!-- Receiving Webhook -->
                                     <div class="section-title">📦 Receiving Alerts</div>
@@ -1223,13 +1249,14 @@
                                         Notify when <strong>Priority</strong> packages arrive.
                                     </p>
                                     <div class="mb-2">
-                                        <input type="password" name="webhook_url_receiving"
+                                        <input type="password" name="WEBHOOK_URL" autocomplete="new-password"
                                             class="form-control form-control-sm"
                                             placeholder="https://discord.com/api/webhooks/..."
-                                            value="{% if config.get('WEBHOOK_URL') %}********{% endif %}">
+                                            value="{% if config.get('WEBHOOK_URL_SET') %}********{% endif %}">
                                     </div>
                                     <div class="form-check form-switch mb-3">
-                                        <input class="form-check-input" type="checkbox" name="webhook_enabled_receiving"
+                                        <input type="hidden" name="WEBHOOK_ENABLED" value="false">
+                                        <input class="form-check-input" type="checkbox" name="WEBHOOK_ENABLED" value="true"
                                             id="webhookReceivingSwitch" {% if config.get('WEBHOOK_ENABLED') %}checked{%
                                             endif %}>
                                         <label class="form-check-label" for="webhookReceivingSwitch">Enable</label>
@@ -1241,13 +1268,14 @@
                                         Notify on low stock warnings.
                                     </p>
                                     <div class="mb-2">
-                                        <input type="password" name="webhook_url_inventory"
+                                        <input type="password" name="WEBHOOK_URL_INVENTORY" autocomplete="new-password"
                                             class="form-control form-control-sm"
                                             placeholder="https://discord.com/api/webhooks/..."
-                                            value="{% if config.get('WEBHOOK_URL_INVENTORY') %}********{% endif %}">
+                                            value="{% if config.get('WEBHOOK_URL_INVENTORY_SET') %}********{% endif %}">
                                     </div>
                                     <div class="form-check form-switch mb-3">
-                                        <input class="form-check-input" type="checkbox" name="webhook_enabled_inventory"
+                                        <input type="hidden" name="WEBHOOK_ENABLED_INVENTORY" value="false">
+                                        <input class="form-check-input" type="checkbox" name="WEBHOOK_ENABLED_INVENTORY" value="true"
                                             id="webhookInventorySwitch" {% if config.get('WEBHOOK_ENABLED_INVENTORY')
                                             %}checked{% endif %}>
                                         <label class="form-check-label" for="webhookInventorySwitch">Enable</label>
@@ -1259,8 +1287,9 @@
                                 <hr class="my-3">
 
                                 <!-- In-App Notifications -->
-                                <form action="/admin/save_inapp_notifications" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="notifications">
 
                                     <div class="section-title">🔔 In-App Notifications</div>
                                     <p class="small text-muted mb-2">
@@ -1268,20 +1297,23 @@
                                     </p>
 
                                     <div class="form-check form-switch mb-2">
-                                        <input class="form-check-input" type="checkbox" name="notify_low_stock"
+                                        <input type="hidden" name="NOTIFY_LOW_STOCK" value="false">
+                                        <input class="form-check-input" type="checkbox" name="NOTIFY_LOW_STOCK" value="true"
                                             id="notifyLowStock" {% if config.get('NOTIFY_LOW_STOCK', False) %}checked{%
                                             endif %}>
                                         <label class="form-check-label" for="notifyLowStock">⚠️ Low Stock Alerts</label>
                                     </div>
 
                                     <div class="form-check form-switch mb-2">
-                                        <input class="form-check-input" type="checkbox" name="notify_oos" id="notifyOOS"
+                                        <input type="hidden" name="NOTIFY_OOS" value="false">
+                                        <input class="form-check-input" type="checkbox" name="NOTIFY_OOS" value="true" id="notifyOOS"
                                             {% if config.get('NOTIFY_OOS', False) %}checked{% endif %}>
                                         <label class="form-check-label" for="notifyOOS">🚨 Out of Stock Alerts</label>
                                     </div>
 
                                     <div class="form-check form-switch mb-2">
-                                        <input class="form-check-input" type="checkbox" name="notify_priority_packages"
+                                        <input type="hidden" name="NOTIFY_PRIORITY_PACKAGES" value="false">
+                                        <input class="form-check-input" type="checkbox" name="NOTIFY_PRIORITY_PACKAGES" value="true"
                                             id="notifyPriorityPkg" {% if config.get('NOTIFY_PRIORITY_PACKAGES', False)
                                             %}checked{% endif %}>
                                         <label class="form-check-label" for="notifyPriorityPkg">⭐ Priority Package
@@ -1289,7 +1321,8 @@
                                     </div>
 
                                     <div class="form-check form-switch mb-3">
-                                        <input class="form-check-input" type="checkbox" name="notify_normal_packages"
+                                        <input type="hidden" name="NOTIFY_NORMAL_PACKAGES" value="false">
+                                        <input class="form-check-input" type="checkbox" name="NOTIFY_NORMAL_PACKAGES" value="true"
                                             id="notifyNormalPkg" {% if config.get('NOTIFY_NORMAL_PACKAGES', False)
                                             %}checked{% endif %}>
                                         <label class="form-check-label" for="notifyNormalPkg">📦 Normal Package
@@ -1313,10 +1346,12 @@
                                         <strong>Inventory Management</strong>
                                         <p class="small text-muted mb-0">Track items, quantities, and locations</p>
                                     </div>
-                                    <form action="/admin/toggle_inventory" method="POST">
+                                    <form action="{{ url_for('settings.save') }}" method="POST">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="group" value="modules">
                                         <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" name="enabled"
+                                            <input type="hidden" name="INVENTORY_ENABLED" value="false">
+                                            <input class="form-check-input" type="checkbox" name="INVENTORY_ENABLED" value="true"
                                                 onchange="this.form.submit()" {% if inventory_enabled %}checked{% endif
                                                 %} style="transform: scale(1.4);">
                                         </div>
@@ -1327,10 +1362,12 @@
                                         <strong>POS Module</strong>
                                         <p class="small text-muted mb-0">Point of Sale & Checkout</p>
                                     </div>
-                                    <form action="/admin/toggle_pos" method="POST">
+                                    <form action="{{ url_for('settings.save') }}" method="POST">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <input type="hidden" name="group" value="modules">
                                         <div class="form-check form-switch">
-                                            <input class="form-check-input" type="checkbox" name="enabled"
+                                            <input type="hidden" name="POS_ENABLED" value="false">
+                                            <input class="form-check-input" type="checkbox" name="POS_ENABLED" value="true"
                                                 onchange="this.form.submit()" {% if pos_enabled %}checked{% endif %}
                                                 style="transform: scale(1.4);">
                                         </div>
@@ -1342,10 +1379,12 @@
                                     <strong>Timeclock Module</strong>
                                     <p class="small text-muted mb-0">Employee Shift & Break Tracking</p>
                                 </div>
-                                <form action="/admin/toggle_timeclock" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="modules">
                                     <div class="form-check form-switch">
-                                        <input class="form-check-input" type="checkbox" name="enabled"
+                                        <input type="hidden" name="TIMECLOCK_ENABLED" value="false">
+                                        <input class="form-check-input" type="checkbox" name="TIMECLOCK_ENABLED" value="true"
                                             onchange="this.form.submit()" {% if config.get('TIMECLOCK_ENABLED')
                                             %}checked{% endif %} style="transform: scale(1.4);">
                                     </div>
@@ -1363,11 +1402,13 @@
                                 <span>SSO / OIDC Configuration</span>
                             </div>
                             <div class="card-body">
-                                <form action="/admin/settings" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="sso">
 
                                     <div class="form-check form-switch mb-3">
-                                        <input class="form-check-input" type="checkbox" name="sso_enabled"
+                                        <input type="hidden" name="SSO_ENABLED" value="false">
+                                        <input class="form-check-input" type="checkbox" name="SSO_ENABLED" value="true"
                                             id="ssoSwitch" {% if config.SSO_ENABLED %}checked{% endif %}>
                                         <label class="form-check-label fw-bold" for="ssoSwitch">Enable SSO (OpenID
                                             Connect)</label>
@@ -1375,20 +1416,20 @@
 
                                     <div class="mb-2">
                                         <label class="form-label small fw-bold">Client ID</label>
-                                        <input type="text" name="sso_client_id" class="form-control form-control-sm"
+                                        <input type="text" name="SSO_CLIENT_ID" class="form-control form-control-sm"
                                             value="{{ config.SSO_CLIENT_ID or '' }}" placeholder="Required">
                                     </div>
 
                                     <div class="mb-2">
                                         <label class="form-label small fw-bold">Client Secret</label>
-                                        <input type="password" name="sso_client_secret"
+                                        <input type="password" name="SSO_CLIENT_SECRET"
                                             class="form-control form-control-sm" autocomplete="new-password"
                                             value="" placeholder="{{ '(saved - leave blank to keep)' if config.SSO_CLIENT_SECRET_SET else 'Required' }}">
                                     </div>
 
                                     <div class="mb-2">
                                         <label class="form-label small fw-bold">Discovery URL</label>
-                                        <input type="text" name="sso_discovery_url" class="form-control form-control-sm"
+                                        <input type="text" name="SSO_DISCOVERY_URL" class="form-control form-control-sm"
                                             value="{{ config.SSO_DISCOVERY_URL or 'https://accounts.google.com/.well-known/openid-configuration' }}"
                                             placeholder="https://.../.well-known/openid-configuration">
                                         <div class="form-text small">Default: Google Workspace</div>
@@ -1397,7 +1438,7 @@
                                     <div class="mb-3">
                                         <label class="form-label small fw-bold">Allowed Domains (comma
                                             separated)</label>
-                                        <input type="text" name="sso_allowed_domains"
+                                        <input type="text" name="SSO_ALLOWED_DOMAINS"
                                             class="form-control form-control-sm"
                                             value="{{ config.SSO_ALLOWED_DOMAINS|join(', ') if config.SSO_ALLOWED_DOMAINS else '' }}"
                                             placeholder="@company.com, @subsidiary.com">
@@ -1405,7 +1446,8 @@
                                     </div>
 
                                     <div class="form-check mb-3">
-                                        <input class="form-check-input" type="checkbox" name="sso_allow_new_users"
+                                        <input type="hidden" name="SSO_ALLOW_NEW_USERS" value="false">
+                                        <input class="form-check-input" type="checkbox" name="SSO_ALLOW_NEW_USERS" value="true"
                                             id="ssoAutoProvision" {% if config.get('SSO_ALLOW_NEW_USERS', False)
                                             %}checked{% endif %}>
                                         <label class="form-check-label small" for="ssoAutoProvision">
@@ -1427,10 +1469,11 @@
                                 <span>Reverse Proxy / Tunnel</span>
                             </div>
                             <div class="card-body">
-                                <form action="/admin/settings/network" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="network">
                                     <label class="form-label small fw-bold">Trusted proxy IPs (comma separated)</label>
-                                    <input type="text" name="trusted_proxies" class="form-control form-control-sm mb-1"
+                                    <input type="text" name="TRUSTED_PROXIES" class="form-control form-control-sm mb-1"
                                         value="{{ (config.TRUSTED_PROXIES or ['127.0.0.1', '::1'])|join(', ') }}"
                                         placeholder="127.0.0.1, ::1, 10.0.0.50">
                                     <div class="form-text small mb-2">
@@ -1450,20 +1493,21 @@
                                 <span>Email Automation</span>
                             </div>
                             <div class="card-body">
-                                <form action="/admin/save_automation" method="POST">
+                                <form action="{{ url_for('settings.save') }}" method="POST">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="automation">
                                     <div class="alert alert-light small mb-3">
                                         <strong>Auto-Ingest:</strong> Checks email for Amazon shipping notifications
                                         every 15 mins.
                                     </div>
                                     <div class="mb-2">
                                         <label class="form-label small fw-bold">IMAP Server</label>
-                                        <input type="text" name="imap_server" class="form-control form-control-sm"
+                                        <input type="text" name="IMAP_SERVER" class="form-control form-control-sm"
                                             placeholder="imap.gmail.com" value="{{ config.get('IMAP_SERVER', '') }}">
                                     </div>
                                     <div class="mb-2">
                                         <label class="form-label small fw-bold">Email Address</label>
-                                        <input type="email" name="email_user" class="form-control form-control-sm"
+                                        <input type="email" name="EMAIL_USER" class="form-control form-control-sm"
                                             placeholder="burner@example.com" value="{{ config.get('EMAIL_USER', '') }}">
                                         <div class="form-text small text-warning">
                                             ⚠️ <strong>Security Tip:</strong> Use a dedicated "burner" email
@@ -1473,11 +1517,12 @@
                                     </div>
                                     <div class="mb-3">
                                         <label class="form-label small fw-bold">App Password</label>
-                                        <input type="password" name="email_pass" class="form-control form-control-sm"
+                                        <input type="password" name="EMAIL_PASS" class="form-control form-control-sm" autocomplete="new-password"
                                             placeholder="Leave blank to keep existing">
                                     </div>
                                     <div class="form-check form-switch mb-3">
-                                        <input class="form-check-input" type="checkbox" name="ingest_enabled"
+                                        <input type="hidden" name="EMAIL_INGEST_ENABLED" value="false">
+                                        <input class="form-check-input" type="checkbox" name="EMAIL_INGEST_ENABLED" value="true"
                                             id="ingestSwitch" {% if config.get('EMAIL_INGEST_ENABLED') %}checked{% endif
                                             %}>
                                         <label class="form-check-label" for="ingestSwitch">Enable
@@ -2206,13 +2251,13 @@
 
         // Save auto-confirm import setting
         function saveAutoConfirmSetting(enabled) {
-            fetch('/admin/save_auto_confirm', {
+            fetch('{{ url_for('settings.save') }}', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                     'X-CSRFToken': document.querySelector('input[name="csrf_token"]')?.value || ''
                 },
-                body: JSON.stringify({ enabled: enabled })
+                body: JSON.stringify({ group: 'general', values: { AUTO_CONFIRM_IMPORT: !!enabled } })
             })
                 .then(r => r.json())
                 .then(data => {

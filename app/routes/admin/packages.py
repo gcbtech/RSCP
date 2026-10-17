@@ -141,6 +141,7 @@ def admin_panel():
     except Exception as e:
         logger.warning(f"Error loading POS settings for admin panel: {e}")
     
+    from app.services.settings import template_view
     return render_template('admin.html', 
                            packages=packages, 
                            users=users,
@@ -151,7 +152,7 @@ def admin_panel():
                            search_query=search_query,
                            date_format=config.get('DATE_FORMAT', 'US') if config else 'US',
                            graph_data=graph_data,
-                           config=config,
+                           config=template_view(config),  # never render secrets
                            pos_settings=pos_settings,
                            inventory_enabled=config.get('INVENTORY_ENABLED', False) if config else False)
 

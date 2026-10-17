@@ -13,10 +13,9 @@ def _db(app):
 
 
 def _set_tax(app, rate):
-    conn = _db(app)
-    conn.execute("INSERT OR REPLACE INTO pos_settings (key, value) VALUES ('TAX_RATE', ?)", (str(rate),))
-    conn.commit()
-    conn.close()
+    from app.services import settings
+    with app.app_context():
+        settings.set('TAX_RATE', rate)
 
 
 def _add_item(app, sku='WIDGET', price=10.0, qty=10):

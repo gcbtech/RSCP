@@ -24,17 +24,20 @@ def is_pos_enabled():
 
 
 def get_pos_setting(key, default=None):
-    """Get a POS setting from the database."""
+    """Get a POS setting as a string ('true'/'false', '0.07', text).
+
+    Compatibility shim over app.services.settings (the typed API is
+    settings.get(key)); returns `default` when the setting was never stored.
+    """
+    from app.services import settings as settings_store
     try:
+        stored = settings_store.stored_values()
+        if stored is not None:
+            if key not in stored:
+                return default
+            return settings_store.to_legacy_string(stored[key])
+        # Database not migrated to the settings table yet
         conn = get_request_db()
-        # Check if table exists first
-        table_check = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='pos_settings'"
-        ).fetchone()
-        if not table_check:
-            logger.warning("pos_settings table does not exist yet - run migrations")
-            return default
-        
         result = conn.execute(
             'SELECT value FROM pos_settings WHERE key = ?', (key,)
         ).fetchone()
@@ -45,12 +48,15 @@ def get_pos_setting(key, default=None):
 
 
 def set_pos_setting(key, value):
-    """Set a POS setting in the database."""
+    """Set a POS setting (strings like 'true'/'false' are converted to the
+    setting's type). Compatibility shim over app.services.settings."""
+    from app.services import settings as settings_store
     try:
+        if settings_store.store_ready():
+            settings_store.set_lenient({key: value})
+            return True
         conn = get_db_connection()
-        conn.execute('''
-            INSERT OR REPLACE INTO pos_settings (key, value) VALUES (?, ?)
-        ''', (key, str(value)))
+        conn.execute('INSERT OR REPLACE INTO pos_settings (key, value) VALUES (?, ?)', (key, str(value)))
         conn.commit()
         conn.close()
         return True
@@ -484,92 +490,6 @@ def log_pos_action(action, user_id=None, user_name=None, target_type=None, targe
     except Exception as e:
         logger.error(f"Audit log error: {e}")
         return False
-
-
-# =============================================================================
-# POS Settings Routes
-# =============================================================================
-
-@pos_bp.route('/settings/save_tax_rate', methods=['POST'])
-@login_required
-@require_permission('pos.manage')  # managers only
-def save_tax_rate():
-    """Save the tax rate setting."""
-    try:
-        tax_rate = float(request.form.get('tax_rate', 0)) / 100  # Convert percent to decimal
-        set_pos_setting('TAX_RATE', tax_rate)
-        flash(f"Tax rate saved: {tax_rate * 100:.2f}%")
-    except Exception as e:
-        flash(f"Error saving tax rate: {e}")
-    return redirect(url_for('admin.admin_panel') + '?tab=pos')
-
-
-@pos_bp.route('/settings/save_cash_discount', methods=['POST'])
-@login_required
-@require_permission('pos.manage')  # managers only
-def save_cash_discount():
-    """Save cash discount settings."""
-    enabled = 'true' if request.form.get('enabled') == 'on' else 'false'
-    discount_type = request.form.get('type', 'percent')
-    try:
-        amount = float(request.form.get('amount', 0))
-    except ValueError:
-        amount = 0
-    
-    set_pos_setting('CASH_DISCOUNT_ENABLED', enabled)
-    set_pos_setting('CASH_DISCOUNT_TYPE', discount_type)
-    set_pos_setting('CASH_DISCOUNT_AMOUNT', amount)
-    
-    flash(f"Cash discount settings saved.")
-    return redirect(url_for('admin.admin_panel') + '?tab=pos')
-
-
-@pos_bp.route('/settings/save_receipt', methods=['POST'])
-@login_required
-@require_permission('pos.manage')  # managers only
-def save_receipt():
-    """Save receipt settings."""
-    store_name = request.form.get('store_name', '').strip()
-    header = request.form.get('header', '').strip()
-    footer = request.form.get('footer', '').strip()
-    
-    set_pos_setting('RECEIPT_STORE_NAME', store_name)
-    set_pos_setting('RECEIPT_HEADER', header)
-    set_pos_setting('RECEIPT_FOOTER', footer)
-    
-    flash("Receipt settings saved.")
-    return redirect(url_for('admin.admin_panel') + '?tab=pos')
-
-
-@pos_bp.route('/settings/save_email', methods=['POST'])
-@login_required
-@require_permission('pos.manage')  # managers only
-def save_email_settings():
-    """Save POS email automation settings."""
-    host = request.form.get('host', '').strip()
-    port = request.form.get('port', '587').strip()
-    user = request.form.get('user', '').strip()
-    password = request.form.get('password', '').strip()
-    recipients = request.form.get('recipients', '').strip()
-    
-    # Auto-Email Settings
-    auto_enabled = 'true' if request.form.get('auto_email_enabled') == 'on' else 'false'
-    auto_time = request.form.get('auto_email_time', '').strip()
-    
-    set_pos_setting('POS_EMAIL_HOST', host)
-    set_pos_setting('POS_EMAIL_PORT', port)
-    set_pos_setting('POS_EMAIL_USER', user)
-    set_pos_setting('POS_EMAIL_RECIPIENTS', recipients)
-    set_pos_setting('POS_AUTO_EMAIL_ENABLED', auto_enabled)
-    set_pos_setting('POS_AUTO_EMAIL_TIME', auto_time)
-    
-    # Only update password if provided
-    if password:
-        from app.services.security import encrypt
-        set_pos_setting('POS_EMAIL_PASSWORD', encrypt(password))
-    
-    flash("Email settings saved.")
-    return redirect(url_for('admin.admin_panel') + '?tab=pos')
 
 
 # =============================================================================
