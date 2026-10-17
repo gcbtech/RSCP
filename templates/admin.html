@@ -2231,6 +2231,17 @@
                             window.location.reload();
                         }, 1500);
                     }
+                } else if (data.status === 'success') {
+                    // 3.0 installs: the root updater confirmed /healthz on the new release
+                    if (updatePollInterval) {
+                        clearInterval(updatePollInterval);
+                        updatePollInterval = null;
+                    }
+                    appendStatusLog('[info] ' + (data.progress || 'Update completed successfully.'));
+                    document.getElementById('updateModalSubtitle').textContent = 'Done! Reloading...';
+                    setTimeout(() => { window.location.reload(); }, 1500);
+                } else if (data.status === 'rolled_back') {
+                    showUpdateError(data.error || 'The new version failed its health check and was rolled back.');
                 } else if (data.status === 'error') {
                     showUpdateError(data.error || 'Unknown error occurred.');
                 }

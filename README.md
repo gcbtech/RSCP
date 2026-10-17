@@ -44,48 +44,196 @@ A self-hosted package and shipment management system for tracking incoming packa
 ## 📘 Documentation
 **New to RSCP?** Check out the [**Detailed User Guide & Workflow**](USER_GUIDE.md) for a step-by-step tutorial on how to run your business with RSCP.
 
-## Quick Start
+## Installation
 
-### One-Line Install (Debian/Ubuntu)
+RSCP runs on one Debian 12+ or Ubuntu 24.04+ machine or LXC container
+(Python 3.11+, systemd). One script installs, upgrades and migrates it.
+
+### Install
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/gcbtech/RSCP/main/install.sh | sudo bash
 ```
 
-This script automatically:
-- Installs Python 3, pip, and dependencies
-- Creates a dedicated `rscp` user
-- Sets up a Python virtual environment
-- Configures systemd service
-- Provides next-step instructions
+Then open `http://<server-ip>:5000` and complete the setup wizard.
 
-Visit `http://IP_ADDRESS:5000` and complete the setup wizard.
-
-### Manual Installation
-
-**Prerequisites:** Python 3.11+, pip
+Options go after `bash -s --`, e.g. the beta channel without prompts:
 
 ```bash
-# Clone the repository
+curl -sSL https://raw.githubusercontent.com/gcbtech/RSCP/main/install.sh | sudo bash -s -- --channel beta --noninteractive
+```
+
+| Option | Meaning |
+|--------|---------|
+| `--channel stable\|beta` | stable = newest GitHub release tag (default; the `main` branch while no tags exist), beta = `beta` branch |
+| `--version vX.Y.Z` | install a specific release tag |
+| `--branch NAME` | install the tip of a branch |
+| `--source DIR` | install from a local source tree (no download) |
+| `--bind HOST:PORT` | listen address, stored in `/etc/default/rscp` (default `0.0.0.0:5000`) |
+| `--noninteractive` | never prompt (automatic when there is no terminal) |
+| `--migrate-from DIR` | one-time move of a 2.x install (see below) |
+| `--rollback` | switch back to the previous release |
+
+The script only installs the packages it needs (`python3`, `python3-venv`,
+`curl`, `ca-certificates`); it never runs a full `apt-get upgrade`. Running
+it again is safe: an existing install is upgraded.
+
+### What gets installed where
+
+| Path | Contents |
+|------|----------|
+| `/opt/rscp/releases/<version>/` | the code and its own virtualenv (`venv/`), owned by root, read-only to the app |
+| `/opt/rscp/current` | symlink to the active release (switched atomically); `/opt/rscp/previous` is the rollback target |
+| `/var/lib/rscp/` | **all state**: `rscp.db`, `config.json` (mode 600), `uploads/`, `backups/` |
+| `/etc/default/rscp` | optional environment, e.g. `RSCP_BIND=127.0.0.1:5000` |
+| `rscp.service` | gunicorn as the unprivileged `rscp` user with `RSCP_DATA_DIR=/var/lib/rscp`; runs `python -m app.migrate` (schema migrations) before starting |
+| `rscp-update.path` / `rscp-update.service` | applies update and rollback requests from the web UI |
+| `/opt/rscp/bin/rscp-update` | installed copy of `install.sh`, used by the updater |
+
+The newest 5 releases are kept. Logs go to the journal only:
+
+```bash
+systemctl status rscp
+journalctl -u rscp -f            # the app
+journalctl -u rscp-update        # updates and rollbacks
+```
+
+The unit templates live in [`deploy/`](deploy/). Don't edit
+`/etc/systemd/system/rscp.service` (upgrades overwrite it); use
+`/etc/default/rscp` or `systemctl edit rscp` instead.
+
+### Upgrading
+
+**From the web UI:** Admin > System Updates > Update. The web process has no
+privileges. It writes `/var/lib/rscp/update-request.json`, and
+`rscp-update.path` starts the root-owned updater, which:
+
+1. downloads the release (curl, no git needed) and builds a new release dir
+   with a fresh venv from `requirements.lock`, while the old version keeps serving;
+2. backs up the database with SQLite's online backup API to
+   `/var/lib/rscp/backups/pre-update-<old version>-<time>.db` (newest 5 kept);
+3. switches `/opt/rscp/current`, restarts `rscp` (schema migrations run first)
+   and checks `http://127.0.0.1:<port>/healthz`;
+4. if the new version is not healthy within 2 minutes, it switches back and
+   restarts the old release. The database backup is kept but **not**
+   restored automatically.
+
+Progress appears in the update dialog (from `/var/lib/rscp/update-status.json`).
+**Roll Back** in the same card switches to the previous release the same
+way. Only the code goes back; the database stays as it is.
+
+**From a shell:** run the installer again, or use the installed copy:
+
+```bash
+sudo /opt/rscp/bin/rscp-update --upgrade --channel beta
+sudo /opt/rscp/bin/rscp-update --rollback
+```
+
+### Migrating a 2.x install (one time)
+
+2.x installs keep code and data together (e.g. `/opt/ebay_receiver`, often a
+symlink into `/opt/ebay_receiver_data/releases/...`) and run as root. 3.0 still
+boots in that layout, so the old in-app updater can install it. Moving to the
+new layout takes one run of the installer as root, on the server's console:
+
+```bash
+# 0. Safety net: snapshot the container first (on the Proxmox host),
+#    e.g.  pct snapshot <ctid> pre-rscp3
+
+# 1. Look at what will be migrated
+readlink -f /opt/ebay_receiver
+ls -l /opt/ebay_receiver/rscp.db /opt/ebay_receiver/config.json /opt/ebay_receiver/static/uploads
+systemctl cat rscp | head -20
+
+# 2. Fetch the 3.0 installer from the branch you deploy (beta shown), check it, run it
+curl -fsSL -o /root/rscp-install.sh https://raw.githubusercontent.com/gcbtech/RSCP/beta/install.sh
+bash -n /root/rscp-install.sh
+bash /root/rscp-install.sh --channel beta --migrate-from /opt/ebay_receiver --noninteractive
+
+# 3. Verify
+curl -s http://127.0.0.1:5000/healthz
+systemctl status rscp rscp-update.path --no-pager
+journalctl -u rscp -n 50 --no-pager
+```
+
+What the migration does, in order:
+
+1. Checks the old install (database, config, free space) and refuses to run if
+   `/var/lib/rscp` already holds a different database.
+2. Builds the new release and venv **while the old service keeps running**.
+3. Saves the old unit file (and any drop-ins) to `/opt/rscp/legacy/` and writes
+   `/opt/rscp/legacy/restore-legacy.sh`.
+4. Stops the old service, then copies into `/var/lib/rscp` (owned by `rscp`):
+   `rscp.db` via the SQLite backup API (never a raw copy of a live WAL database)
+   with an integrity check, `config.json`, `manifest.csv` if present, and
+   `static/uploads/` (symlinks into the shared dir are resolved). If a copy
+   fails, the old service is started again.
+5. Installs the new units. The old unit has the same name (`rscp`), so its file
+   is replaced and its drop-ins are moved away. A legacy unit with another
+   name (`--legacy-unit NAME`) is disabled instead.
+6. Starts `rscp` on the new layout and checks `/healthz`. If it is not healthy,
+   the old unit is restored and started again.
+
+The old directories are **never modified or deleted**, so going back is
+`/opt/rscp/legacy/restore-legacy.sh`. Anything entered after the migration
+exists only in `/var/lib/rscp`. Re-running the same command later is
+harmless: the data copy is skipped and the install is just upgraded. Once
+you're happy, remove the old directories yourself. Old 2.x DB backups in
+`<old data>/shared/backups` are not copied.
+
+Downtime is only the data copy plus one restart.
+
+### Cloudflare Tunnel / reverse proxy
+
+RSCP listens on port 5000 (all interfaces by default, so POS terminals on the
+LAN can connect). To publish it with `cloudflared` on the same machine, point
+the tunnel at the local port:
+
+```yaml
+# /etc/cloudflared/config.yml
+tunnel: <tunnel-id>
+credentials-file: /etc/cloudflared/<tunnel-id>.json
+ingress:
+  - hostname: rscp.example.com
+    service: http://127.0.0.1:5000
+  - service: http_status:404
+```
+
+(or set the same public hostname -> `http://127.0.0.1:5000` in the Zero Trust
+dashboard for a token-based tunnel).
+
+**Trusted proxies:** RSCP only believes `X-Forwarded-For` / `-Proto` from
+addresses listed under **Admin > Settings > Reverse Proxy / Tunnel**
+(`TRUSTED_PROXIES`). The default is loopback (`127.0.0.1`, `::1`), which covers
+cloudflared on the same host. **If cloudflared or your proxy runs on another
+machine, add that machine's IP there**. Otherwise every request appears to
+come from the proxy, which breaks per-client login throttling and audit IPs.
+
+If the server should only be reachable through the tunnel, set
+`RSCP_BIND=127.0.0.1:5000` in `/etc/default/rscp` and `systemctl restart rscp`.
+When all access is over HTTPS, you can also enable `SECURE_COOKIES` in
+`config.json`.
+
+### Running from source (development)
+
+**Prerequisites:** Python 3.11+
+
+```bash
 git clone https://github.com/gcbtech/RSCP.git
 cd RSCP
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Run the application
-python app.py
+python app.py          # dev server on 0.0.0.0:5000 (RSCP_BIND to change)
 ```
 
-Visit `http://IP_ADDRESS:5000` and complete the setup wizard.
+Without `RSCP_DATA_DIR`, state is kept next to the code (the 2.x layout). Set
+`RSCP_DATA_DIR=/some/dir` to use the 3.0 layout. Production uses the same app
+object via `gunicorn -c gunicorn.conf.py wsgi:app`.
 
-### Production Deployment (Gunicorn)
+Admin tools in an installed system run as the service user:
 
 ```bash
-gunicorn -c gunicorn.conf.py wsgi:app
+cd /opt/rscp/current && sudo -u rscp RSCP_DATA_DIR=/var/lib/rscp venv/bin/python reset_password.py <user> <new-password>
 ```
-
-See `rscp.service.example` for systemd service configuration.
 
 ## Configuration
 
@@ -93,6 +241,9 @@ See `rscp.service.example` for systemd service configuration.
 
 | Variable | Description |
 |----------|-------------|
+| `RSCP_DATA_DIR` | Directory for all state (DB, config, uploads, backups). Set by the installer to `/var/lib/rscp`; unset = legacy 2.x layout next to the code |
+| `RSCP_BIND` | gunicorn listen address (default `0.0.0.0:5000`) |
+| `RSCP_WORKERS` | override the gunicorn worker count |
 | `FLASK_ENV` | Set to `production` for secure cookies |
 | `RSCP_SECRET_KEY` | Flask session secret key |
 | `RSCP_WEBHOOK_URL` | Webhook URL for priority alerts |
@@ -116,8 +267,10 @@ rscp/
 ├── templates/          # Jinja2 templates
 ├── static/             # CSS, JS, images
 ├── tests/              # Pytest test suite
-├── app.py              # Application entry point
+├── app.py              # Development server (same app as wsgi.py)
 ├── wsgi.py             # WSGI entry point (production)
+├── install.sh          # installer / upgrader / 2.x migration
+├── deploy/             # systemd unit templates
 └── requirements.txt    # Python dependencies
 ```
 

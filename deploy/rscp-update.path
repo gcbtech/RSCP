@@ -1,0 +1,12 @@
+# Starts rscp-update.service when the web UI drops an update/rollback request.
+# The web process (user rscp) has no privileges; this is the only bridge.
+
+[Unit]
+Description=Watch for RSCP update requests from the web UI
+
+[Path]
+PathChanged=/var/lib/rscp/update-request.json
+Unit=rscp-update.service
+
+[Install]
+WantedBy=multi-user.target
