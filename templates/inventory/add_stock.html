@@ -1,11 +1,11 @@
-<!DOCTYPE html>
-<html>
+{% extends 'base.html' %}
+{% block title %}Add Stock{% endblock %}
 
-<head>
-    <title>RSCP | Add Stock</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="icon" href="{{ favicon }}">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+{# Full-screen confirmation page: no nav, and it never loaded Bootstrap JS. #}
+{% block nav %}{% endblock %}
+{% block bootstrap_js %}{% endblock %}
+
+{% block head %}
     <style>
         body {
             background: #1a1a2e;
@@ -22,9 +22,9 @@
             border-bottom: 1px solid #0f3460;
         }
     </style>
-</head>
+{% endblock %}
 
-<body>
+{% block content %}
     <div class="container py-4">
         <div class="row justify-content-center">
             <div class="col-lg-6">
@@ -85,7 +85,9 @@
             </div>
         </div>
     </div>
-    
+{% endblock %}
+
+{% block scripts %}
     <!-- DYMO Integration -->
     {% include 'inventory/dymo_print.html' %}
     <script>
@@ -106,6 +108,4 @@
             document.querySelector('form').submit();
         }
     </script>
-</body>
-
-</html>
+{% endblock %}
