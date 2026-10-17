@@ -16,7 +16,7 @@ from app.utils.helpers import format_date_filter
 from app.services.data_manager import load_config, BASE_DIR
 from app import paths
 from app.services.migration import run_migrations
-from app.services.logger import log_exception
+from app.services.logger import log_exception, configure_logging
 
 # Config keys that must never reach a rendered page.
 _SECRET_CONFIG_KEYS = ('SECRET', 'PASS', 'TOKEN', 'API_KEY', 'ADMIN_HASH')
@@ -43,37 +43,9 @@ def create_app(test_config=None):
     except Exception:
         pass
 
-    # Logging Setup
-    from logging.handlers import RotatingFileHandler
-    
-    file_handler = None
-    try:
-        # Per-process log file. Under gunicorn this setup runs once per worker,
-        # each in its own process. A single shared RotatingFileHandler is NOT
-        # multi-process safe: on rollover each worker renames app.log out from
-        # under the others, which interleaves and truncates records (the
-        # "corrupted app.log" symptom, seen as fragmented app.log.N files).
-        # Giving every process its own app-<pid>.log removes the cross-process
-        # rollover race entirely. Orphaned files from old PIDs are just logs and
-        # can be pruned by logrotate/cron.
-        file_handler = RotatingFileHandler(
-            os.path.join(BASE_DIR, f'app-{os.getpid()}.log'),
-            maxBytes=10*1024*1024, # 10MB
-            backupCount=5
-        )
-        file_handler.setFormatter(logging.Formatter(
-            '%(asctime)s [%(levelname)s] [REQ_%(thread)d] %(message)s' 
-        ))
-        file_handler.setLevel(logging.INFO)
-        logging.getLogger().addHandler(file_handler)
-    except Exception as e:
-        # Fallback to console if file write fails (e.g. production permissions or tests)
-        console = logging.StreamHandler()
-        console.setLevel(logging.INFO)
-        logging.getLogger().addHandler(console)
-        print(f"Warning: Could not set up file logging: {e}")
-
-    logging.getLogger().setLevel(logging.INFO)
+    # Logging: stderr only (journald under systemd), with request id and
+    # user on every line. No per-process log files in the code directory.
+    configure_logging()
     
     # Schema migrations run synchronously, before this worker serves anything.
     # Workers serialise on a file lock, so only the first one does real work;

@@ -240,6 +240,35 @@
                 </div>
                 {% endif %}
             </div>
+
+            <!-- Service log (systemd journal), loaded on request -->
+            <div class="card shadow-sm mt-4">
+                <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                    <span class="fw-bold">Service Log (journal)</span>
+                    <form class="d-flex gap-2 align-items-center" method="GET" action="{{ url_for('admin.admin_logs') }}">
+                        <input type="hidden" name="level" value="{{ filter_level }}">
+                        <input type="hidden" name="source" value="{{ filter_source }}">
+                        <select name="journal" class="form-select form-select-sm" style="width: auto;">
+                            {% for n in [100, 200, 500, 1000, 2000] %}
+                            <option value="{{ n }}" {% if journal_lines == n or (not journal_lines and n == 200) %}selected{% endif %}>Last {{ n }} lines</option>
+                            {% endfor %}
+                        </select>
+                        <button type="submit" class="btn btn-light btn-sm">{{ 'Reload' if journal_lines else 'Show' }}</button>
+                    </form>
+                </div>
+                {% if journal_lines %}
+                <div class="card-body">
+                    {% if journal_note %}
+                    <div class="alert alert-warning small mb-2">{{ journal_note }}</div>
+                    {% endif %}
+                    {% if journal_text %}
+                    <pre class="trace-box" style="display: block; max-height: 600px;">{{ journal_text }}</pre>
+                    {% elif not journal_note %}
+                    <p class="text-muted small mb-0">No journal entries.</p>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
         </div>
     </div>
 
