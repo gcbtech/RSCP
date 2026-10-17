@@ -146,13 +146,13 @@ def cash_movements(conn, start_utc, end_utc):
     return money(cash_in), money(cash_out)
 
 
-def session_figures(conn, session):
+def session_figures(conn, drawer_session):
     """Expected cash for a drawer session (live while it is open).
 
     expected = opening float + cash applied to sales - cash refunds, over the
     session's window. over_short = counted - expected once counted.
     """
-    s = dict(session)
+    s = dict(drawer_session)
     end = s['closed_at'] or utc_now_str()
     cash_in, cash_out = cash_movements(conn, s['opened_at'], end)
     expected = money((s['opening_float'] or 0) + cash_in - cash_out)
