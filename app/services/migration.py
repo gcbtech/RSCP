@@ -959,6 +959,7 @@ SCHEMA_MIGRATIONS = [
     (7, 'timeclock times to UTC', _m7_timeclock_utc),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
+assert len({v for v, _, _ in SCHEMA_MIGRATIONS}) == len(SCHEMA_MIGRATIONS), "duplicate schema version"
 
 
 class _MigrationLock:
@@ -1024,7 +1025,8 @@ def run_migrations(db_path=None):
 
         conn = sqlite3.connect(db_path, timeout=30, isolation_level=None)
         try:
-            for target, description, fn in SCHEMA_MIGRATIONS:
+            # Always apply in version order, whatever order the list was edited in
+            for target, description, fn in sorted(SCHEMA_MIGRATIONS, key=lambda m: m[0]):
                 if target <= version:
                     continue
                 logger.info(f"[Schema] Migrating to v{target}: {description}")
