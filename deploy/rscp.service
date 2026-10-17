@@ -16,7 +16,8 @@ Type=simple
 User=rscp
 Group=rscp
 # Server-side serial peripherals (cash drawer on /dev/ttyUSB*)
-SupplementaryGroups=dialout
+# dialout: serial cash drawer; systemd-journal: Admin > Logs service-log view
+SupplementaryGroups=dialout systemd-journal
 
 StateDirectory=rscp
 StateDirectoryMode=0750
