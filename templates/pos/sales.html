@@ -772,6 +772,12 @@
     <div id="flashMessagesContainer">
         {% include 'pos/_flashes.html' %}
     </div>
+    {% if drawer_banner %}
+    <div class="alert alert-light border small py-2 mx-3 mb-2 no-print" role="status">
+        💵 No cash drawer session is open.
+        <a href="{{ url_for('pos.drawer') }}">Open the drawer</a> with a starting float to track over/short at close.
+    </div>
+    {% endif %}
 
     <div class="pos-container">
         <!-- Left: Search and Item Entry -->

@@ -146,7 +146,6 @@
                     {% endif %}
                     {% set manual_item_discount = (item.unit_price * item.quantity) - item.line_total %}
                     {% if manual_item_discount > 0.005 %} (-${{ "%.2f"|format(manual_item_discount) }}){% endif %}
-                    {% if item.coupon_discount and item.coupon_discount > 0.005 %} (Coupon: -${{ "%.2f"|format(item.coupon_discount) }}){% endif %}
             </div>
             {% if item.addon_1 and config and config.get('ITEM_ADDON_1_TEXT') %}
             <div class="addon-text" style="font-size: 9pt; margin-left: 8px; font-style: italic;">
@@ -189,6 +188,12 @@
             <span>Tax ({{ "%.2f"|format(order.tax_rate * 100) }}%)</span>
             <span>${{ "%.2f"|format(order.tax_amount) }}</span>
         </div>
+        {% if cash_discount > 0.005 %}
+        <div class="row">
+            <span>Cash Discount</span>
+            <span>-${{ "%.2f"|format(cash_discount) }}</span>
+        </div>
+        {% endif %}
         <div class="row total-row">
             <span>TOTAL</span>
             <span>${{ "%.2f"|format(order.total) }}</span>
@@ -200,16 +205,24 @@
             <span>Payment:</span>
             <span>{{ order.payment_method|upper }}</span>
         </div>
-        {% if payment_details.tendered %}
+        {% for p in payments %}
+        {% if payments|length > 1 %}
+        <div class="row">
+            <span>{{ p.method|capitalize }}:</span>
+            <span>${{ "%.2f"|format(p.amount) }}</span>
+        </div>
+        {% endif %}
+        {% if p.method == 'cash' and p.tendered is not none %}
         <div class="row">
             <span>Tendered:</span>
-            <span>${{ "%.2f"|format(payment_details.tendered) }}</span>
+            <span>${{ "%.2f"|format(p.tendered) }}</span>
         </div>
         <div class="row">
             <span>Change:</span>
-            <span>${{ "%.2f"|format(payment_details.change) }}</span>
+            <span>${{ "%.2f"|format(p.change_given or 0) }}</span>
         </div>
         {% endif %}
+        {% endfor %}
     </div>
 
     <div class="footer">

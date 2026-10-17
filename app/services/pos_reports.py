@@ -1,136 +1,200 @@
 """
 POS Reports Service
-Handles generation of report data for both web view and automated emails.
+
+One sales engine (build_sales_report) produces every money figure for the
+daily report page, its thermal print view, the manual and automatic EOD
+emails and the custom report. Pages add presentation extras (hourly or
+per-period activity, top items) but never recompute the money.
 """
-import json
 import re
 from datetime import datetime, date, timedelta
+from decimal import Decimal, ROUND_HALF_UP
 from app.services.db import get_db_connection
 from app.utils.helpers import local_date_to_utc_range
 
+TENDER_LABELS = {'cash': 'Cash', 'card': 'Card', 'split': 'Split (unallocated)'}
+_TENDER_ORDER = ['cash', 'card']
+
+# Refund method for refunds recorded before the ledger existed (or inserted
+# without one): card sales went back to card, everything else in cash.
+_REFUND_METHOD_SQL = ("COALESCE(r.refund_method, CASE WHEN o.payment_method = 'card' "
+                      "THEN 'card' ELSE 'cash' END)")
+_REFUND_TAX_SQL = ("COALESCE(r.tax_refunded, CASE WHEN o.total > 0 "
+                   "THEN r.amount * o.tax_amount / o.total ELSE 0 END)")
+
+
+def _m(value):
+    """Money: round half-up to cents."""
+    return float(Decimal(str(value or 0)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+
+
+def build_sales_report(start_date, end_date, conn=None):
+    """The money figures for a local date range (inclusive).
+
+    Sales are counted on the sale date, refunds on the refund date (that is
+    when the money moved). Returns a dict:
+
+      order_count        completed (non-held) sales
+      gross_sales        list value of items sold, before any discount, ex. tax
+      discounts          {'line', 'order', 'coupon', 'cash', 'total'}
+      net_sales          gross_sales - discounts (ex. tax)
+      tax_collected      tax charged on those sales
+      sales_total        what customers paid (net_sales + tax_collected)
+      refunds            {'count', 'total', 'tax', 'net', 'by_method': {method: amount}}
+      tax_net            tax_collected - refunded tax
+      net_revenue        sales_total - refunds.total (incl. tax)
+      net_sales_after_refunds   net_sales - refunds.net (ex. tax)
+      tenders            [{'method', 'label', 'count', 'collected', 'refunded', 'net'}]
+      tender_net         {method: net}
+      expected_cash      {'opening_float', 'cash_sales', 'cash_refunds', 'total'}
+      drawer_sessions    drawer sessions overlapping the range, with expected/over-short
+      summary            legacy keys: total_orders, gross_sales (= sales_total,
+                         the "Overall Total"), total_tax, total_discounts
+    """
+    from app.services.pos_ledger import sessions_between
+
+    own = conn is None
+    if own:
+        conn = get_db_connection()
+    try:
+        start_dt, _ = local_date_to_utc_range(start_date.strftime('%Y-%m-%d'))
+        _, end_dt = local_date_to_utc_range(end_date.strftime('%Y-%m-%d'))
+        rng = (start_dt, end_dt)
+
+        orders = conn.execute('''
+            SELECT COUNT(*) AS n,
+                   COALESCE(SUM(total), 0) AS total,
+                   COALESCE(SUM(tax_amount), 0) AS tax,
+                   COALESCE(SUM(discount_amount), 0) AS order_disc,
+                   COALESCE(SUM(cash_discount), 0) AS cash_disc
+            FROM pos_orders
+            WHERE created_at BETWEEN ? AND ? AND status != 'held'
+        ''', rng).fetchone()
+
+        lines = conn.execute('''
+            SELECT COALESCE(SUM(oi.unit_price * oi.quantity), 0) AS gross,
+                   COALESCE(SUM(oi.unit_price * oi.quantity - oi.line_total), 0) AS line_disc
+            FROM pos_order_items oi JOIN pos_orders o ON o.id = oi.order_id
+            WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held'
+        ''', rng).fetchone()
+
+        coupon = conn.execute('''
+            SELECT COALESCE(SUM(cr.discount_applied), 0)
+            FROM pos_coupon_redemptions cr JOIN pos_orders o ON o.id = cr.order_id
+            WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held'
+        ''', rng).fetchone()[0]
+
+        refund_rows = conn.execute(f'''
+            SELECT {_REFUND_METHOD_SQL} AS method,
+                   COUNT(*) AS n,
+                   COALESCE(SUM(r.amount), 0) AS amount,
+                   COALESCE(SUM({_REFUND_TAX_SQL}), 0) AS tax
+            FROM pos_refunds r LEFT JOIN pos_orders o ON o.id = r.order_id
+            WHERE r.created_at BETWEEN ? AND ?
+            GROUP BY method
+        ''', rng).fetchall()
+
+        # Tenders from the ledger; a sale with no ledger rows (recorded by
+        # something other than checkout) counts under its payment_method.
+        tender_rows = conn.execute('''
+            SELECT p.method AS method, COUNT(DISTINCT p.order_id) AS n, COALESCE(SUM(p.amount), 0) AS amount
+            FROM pos_payments p JOIN pos_orders o ON o.id = p.order_id
+            WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held'
+            GROUP BY p.method
+            UNION ALL
+            SELECT o.payment_method, COUNT(*), COALESCE(SUM(o.total), 0)
+            FROM pos_orders o
+            WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held'
+              AND NOT EXISTS (SELECT 1 FROM pos_payments p WHERE p.order_id = o.id)
+            GROUP BY o.payment_method
+        ''', rng + rng).fetchall()
+
+        sessions = sessions_between(conn, start_dt, end_dt)
+        opening_float = sum((s['opening_float'] or 0) for s in sessions
+                            if start_dt <= str(s['opened_at']) <= end_dt)
+    finally:
+        if own:
+            conn.close()
+
+    discounts = {
+        'line': _m(lines['line_disc']),
+        'order': _m(orders['order_disc']),
+        'coupon': _m(coupon),
+        'cash': _m(orders['cash_disc']),
+    }
+    discounts['total'] = _m(sum(discounts.values()))
+    sales_total = _m(orders['total'])
+    tax_collected = _m(orders['tax'])
+    net_sales = _m(sales_total - tax_collected)
+
+    refunds_by_method = {}
+    refund_count = 0
+    refund_tax = 0.0
+    for r in refund_rows:
+        refunds_by_method[r['method']] = _m(refunds_by_method.get(r['method'], 0) + r['amount'])
+        refund_count += r['n']
+        refund_tax += r['tax']
+    refund_total = _m(sum(refunds_by_method.values()))
+    refund_tax = _m(refund_tax)
+    refunds = {'count': refund_count, 'total': refund_total, 'tax': refund_tax,
+               'net': _m(refund_total - refund_tax), 'by_method': refunds_by_method}
+
+    collected, counts = {}, {}
+    for t in tender_rows:
+        collected[t['method']] = collected.get(t['method'], 0) + t['amount']
+        counts[t['method']] = counts.get(t['method'], 0) + t['n']
+    methods = [m for m in _TENDER_ORDER if m in collected or m in refunds_by_method]
+    methods += sorted(m for m in set(collected) | set(refunds_by_method) if m not in methods)
+    tenders = []
+    for m in methods:
+        c, rf = _m(collected.get(m, 0)), refunds_by_method.get(m, 0)
+        tenders.append({'method': m, 'label': TENDER_LABELS.get(m, (m or '').title()),
+                        'count': counts.get(m, 0), 'collected': c, 'refunded': rf, 'net': _m(c - rf)})
+    tender_net = {t['method']: t['net'] for t in tenders}
+
+    cash_sales = _m(collected.get('cash', 0))
+    cash_refunds = refunds_by_method.get('cash', 0)
+    expected_cash = {'opening_float': _m(opening_float), 'cash_sales': cash_sales,
+                     'cash_refunds': cash_refunds,
+                     'total': _m(opening_float + cash_sales - cash_refunds)}
+
+    return {
+        'start_date': start_date,
+        'end_date': end_date,
+        'range_days': (end_date - start_date).days + 1,
+        'order_count': orders['n'],
+        'gross_sales': _m(lines['gross']),
+        'discounts': discounts,
+        'net_sales': net_sales,
+        'tax_collected': tax_collected,
+        'sales_total': sales_total,
+        'refunds': refunds,
+        'tax_net': _m(tax_collected - refund_tax),
+        'net_revenue': _m(sales_total - refund_total),
+        'net_sales_after_refunds': _m(net_sales - refunds['net']),
+        'tenders': tenders,
+        'tender_net': tender_net,
+        'expected_cash': expected_cash,
+        'drawer_sessions': sessions,
+        'summary': {'total_orders': orders['n'], 'gross_sales': sales_total,
+                    'total_tax': tax_collected, 'total_discounts': discounts['total']},
+    }
+
+
+def _top_items(start_date, end_date, limit=10):
+    """Top items by net sales, same figures as the Top Sellers report."""
+    top_report = generate_top_sellers_data(start_date, end_date, {}, sort='revenue')
+    return [{'sku': i['sku'], 'name': i['name'], 'qty': i['net_qty'], 'total': i['net_revenue']}
+            for i in top_report['items'][:limit]]
+
+
 def generate_daily_report_data(report_date):
-    """
-    Generate the daily report data dictionary for a specific date.
-    Args:
-        report_date (date): The local date to generate the report for.
-    Returns:
-        dict: Report data containing summary, refunds, payments, etc.
-    """
+    """The End of Day report for one local date: the sales engine's figures
+    plus hourly activity and top items."""
+    report = build_sales_report(report_date, report_date)
     conn = get_db_connection()
     try:
-        report_date_str = report_date.strftime('%Y-%m-%d')
-        start_dt, end_dt = local_date_to_utc_range(report_date_str)
-
-        # 1. Summary Stats
-        summary = conn.execute('''
-            SELECT 
-                COUNT(*) as total_orders,
-                COALESCE(SUM(total), 0) as gross_sales,
-                COALESCE(SUM(discount_amount), 0) as total_discounts,
-                COALESCE(SUM(tax_amount), 0) as total_tax
-            FROM pos_orders
-            WHERE created_at BETWEEN ? AND ? AND status != 'held'
-        ''', (start_dt, end_dt)).fetchone()
-
-        # 2. Refunds
-        refunds_summary = conn.execute('''
-            SELECT 
-                COUNT(*) as count,
-                COALESCE(SUM(amount), 0) as total
-            FROM pos_refunds
-            WHERE created_at BETWEEN ? AND ?
-        ''', (start_dt, end_dt)).fetchone()
-        
-        net_revenue = (summary['gross_sales'] or 0) - (refunds_summary['total'] or 0)
-
-        # 3. Payment Breakdown
-        payments = conn.execute('''
-            SELECT 
-                payment_method, 
-                COUNT(*) as count, 
-                SUM(total) as total_amount,
-                SUM(tax_amount) as tax_amount
-            FROM pos_orders
-            WHERE created_at BETWEEN ? AND ? AND status != 'held'
-            GROUP BY payment_method
-        ''', (start_dt, end_dt)).fetchall()
-
-        # Fetch Refund breakdown by payment method
-        refund_breakdown = conn.execute('''
-            SELECT 
-                o.payment_method, 
-                SUM(r.amount) as refund_total
-            FROM pos_refunds r
-            JOIN pos_orders o ON r.order_id = o.id
-            WHERE r.created_at BETWEEN ? AND ?
-            GROUP BY o.payment_method
-        ''', (start_dt, end_dt)).fetchall()
-        
-        refund_map = {r['payment_method']: (r['refund_total'] or 0) for r in refund_breakdown}
-
-        # Calculate Totals for Summary
-        total_cash = 0
-        total_cash_net = 0
-        total_card = 0
-        total_card_net = 0
-        
-        # Fetch Split Payment Details for precise allocation
-        split_orders = conn.execute('''
-            SELECT payment_details, total, tax_amount
-            FROM pos_orders
-            WHERE created_at BETWEEN ? AND ? AND status != 'held' AND payment_method = 'split'
-        ''', (start_dt, end_dt)).fetchall()
-
-        split_cash_total = 0
-        split_card_total = 0
-        
-        for sp in split_orders:
-            try:
-                details = json.loads(sp['payment_details'])
-                cash_part = float(details.get('cash', 0))
-                card_part = sum(float(x) for x in details.get('cards', []))
-                
-                split_cash_total += cash_part
-                split_card_total += card_part
-            except (ValueError, TypeError, json.JSONDecodeError):
-                pass
-
-        for p in payments:
-            method = p['payment_method']
-            amount = p['total_amount'] or 0
-            tax = p['tax_amount'] or 0
-            net = amount - tax
-            
-            refund_amount = refund_map.get(method, 0)
-            
-            if method == 'cash':
-                total_cash += (amount - refund_amount)
-                total_cash_net += (net - refund_amount)
-            elif method == 'split':
-                s_total = split_cash_total + split_card_total
-                if s_total > 0:
-                    s_cash_ratio = split_cash_total / s_total
-                    s_card_ratio = split_card_total / s_total
-                else:
-                    s_cash_ratio = 0
-                    s_card_ratio = 1
-                
-                split_tax_cash = tax * s_cash_ratio
-                split_tax_card = tax * s_card_ratio
-                
-                s_cash_net = split_cash_total - split_tax_cash
-                s_card_net = split_card_total - split_tax_card
-                
-                total_cash += split_cash_total
-                total_cash_net += s_cash_net
-                
-                total_card += (split_card_total - refund_amount)
-                total_card_net += (s_card_net - refund_amount)
-            else:
-                total_card += (amount - refund_amount)
-                total_card_net += (net - refund_amount)
-
-        # 4. Hourly Sales
+        start_dt, end_dt = local_date_to_utc_range(report_date.strftime('%Y-%m-%d'))
         hourly = conn.execute('''
             SELECT strftime('%H', created_at, 'localtime') as hour, COUNT(*) as count, SUM(total) as amount
             FROM pos_orders
@@ -138,84 +202,58 @@ def generate_daily_report_data(report_date):
             GROUP BY hour
             ORDER BY hour
         ''', (start_dt, end_dt)).fetchall()
-        
-        # 5. Top Sellers
-        top_items = conn.execute('''
-            SELECT oi.sku, oi.name, SUM(oi.quantity) as qty, SUM(oi.line_total) as total
-            FROM pos_order_items oi
-            JOIN pos_orders o ON oi.order_id = o.id
-            WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held'
-            GROUP BY oi.sku
-            ORDER BY total DESC
-            LIMIT 10
-        ''', (start_dt, end_dt)).fetchall()
-
-        # Process hourly
-        hourly_data = [dict(h) for h in hourly]
-        if hourly_data:
-            active_hours = [int(h['hour']) for h in hourly_data]
-            min_h, max_h = min(active_hours), max(active_hours)
-            target_span = 10
-            current_span = max_h - min_h + 1
-            missing = target_span - current_span
-            
-            if missing > 0:
-                pad_before = missing // 2
-                pad_after = missing - pad_before
-                min_h = max(0, min_h - pad_before)
-                max_h = min(23, max_h + pad_after)
-                real_span = max_h - min_h + 1
-                if real_span < target_span:
-                    if min_h == 0:
-                        max_h = min(23, min_h + target_span - 1)
-                    elif max_h == 23:
-                        min_h = max(0, max_h - target_span + 1)
-            
-            filled_hourly = []
-            hour_map = {int(h['hour']): h for h in hourly_data}
-            for h in range(min_h, max_h + 1):
-                if h in hour_map:
-                    filled_hourly.append(hour_map[h])
-                else:
-                    filled_hourly.append({'hour': f"{h:02d}", 'count': 0, 'amount': 0.0})
-            hourly_data = filled_hourly
-
-        max_hourly_revenue = max((h['amount'] for h in hourly_data), default=0) if hourly_data else 0
-
-        return {
-            'summary': dict(summary),
-            'refunds': dict(refunds_summary),
-            'net_revenue': net_revenue,
-            'payments': [dict(p) for p in payments],
-            'hourly': hourly_data,
-            'max_hourly_revenue': max_hourly_revenue,
-            'top_items': [dict(i) for i in top_items],
-            'total_cash': total_cash,
-            'total_cash_net': total_cash_net,
-            'total_card': total_card,
-            'total_card_net': total_card_net
-        }
     finally:
         conn.close()
+
+    hourly_data = [dict(h) for h in hourly]
+    if hourly_data:
+        active_hours = [int(h['hour']) for h in hourly_data]
+        min_h, max_h = min(active_hours), max(active_hours)
+        target_span = 10
+        current_span = max_h - min_h + 1
+        missing = target_span - current_span
+
+        if missing > 0:
+            pad_before = missing // 2
+            pad_after = missing - pad_before
+            min_h = max(0, min_h - pad_before)
+            max_h = min(23, max_h + pad_after)
+            real_span = max_h - min_h + 1
+            if real_span < target_span:
+                if min_h == 0:
+                    max_h = min(23, min_h + target_span - 1)
+                elif max_h == 23:
+                    min_h = max(0, max_h - target_span + 1)
+
+        filled_hourly = []
+        hour_map = {int(h['hour']): h for h in hourly_data}
+        for h in range(min_h, max_h + 1):
+            if h in hour_map:
+                filled_hourly.append(hour_map[h])
+            else:
+                filled_hourly.append({'hour': f"{h:02d}", 'count': 0, 'amount': 0.0})
+        hourly_data = filled_hourly
+
+    max_hourly_revenue = max((h['amount'] for h in hourly_data), default=0) if hourly_data else 0
+
+    return {
+        'report': report,
+        'hourly': hourly_data,
+        'max_hourly_revenue': max_hourly_revenue,
+        'top_items': _top_items(report_date, report_date),
+    }
 
 
 def generate_custom_report_data(start_date, end_date):
     """
-    Generate report data for an arbitrary date range.
-    Args:
-        start_date (date): Start of range (local date).
-        end_date (date): End of range (local date).
-    Returns:
-        dict: Report data with activity grouped by day/week/month.
+    Report for an arbitrary local date range: the sales engine's figures plus
+    activity grouped by day/week/month and top items.
     """
-    from datetime import timedelta
-    
+    report = build_sales_report(start_date, end_date)
     conn = get_db_connection()
     try:
-        # Convert date range to UTC
-        start_dt, _ = local_date_to_utc_range(start_date.strftime('%Y-%m-%d'))
-        _, end_dt = local_date_to_utc_range(end_date.strftime('%Y-%m-%d'))
-        
+        start_dt, end_dt = _utc_bounds(start_date, end_date)
+
         # Determine grouping based on range length
         range_days = (end_date - start_date).days + 1
         if range_days <= 14:
@@ -225,107 +263,6 @@ def generate_custom_report_data(start_date, end_date):
         else:
             grouping = 'monthly'
 
-        # 1. Summary Stats
-        summary = conn.execute('''
-            SELECT 
-                COUNT(*) as total_orders,
-                COALESCE(SUM(total), 0) as gross_sales,
-                COALESCE(SUM(discount_amount), 0) as total_discounts,
-                COALESCE(SUM(tax_amount), 0) as total_tax
-            FROM pos_orders
-            WHERE created_at BETWEEN ? AND ? AND status != 'held'
-        ''', (start_dt, end_dt)).fetchone()
-
-        # 2. Refunds
-        refunds_summary = conn.execute('''
-            SELECT 
-                COUNT(*) as count,
-                COALESCE(SUM(amount), 0) as total
-            FROM pos_refunds
-            WHERE created_at BETWEEN ? AND ?
-        ''', (start_dt, end_dt)).fetchone()
-        
-        net_revenue = (summary['gross_sales'] or 0) - (refunds_summary['total'] or 0)
-
-        # 3. Payment Breakdown
-        payments = conn.execute('''
-            SELECT 
-                payment_method, 
-                COUNT(*) as count, 
-                SUM(total) as total_amount,
-                SUM(tax_amount) as tax_amount
-            FROM pos_orders
-            WHERE created_at BETWEEN ? AND ? AND status != 'held'
-            GROUP BY payment_method
-        ''', (start_dt, end_dt)).fetchall()
-
-        # Refund breakdown by payment method
-        refund_breakdown = conn.execute('''
-            SELECT 
-                o.payment_method, 
-                SUM(r.amount) as refund_total
-            FROM pos_refunds r
-            JOIN pos_orders o ON r.order_id = o.id
-            WHERE r.created_at BETWEEN ? AND ?
-            GROUP BY o.payment_method
-        ''', (start_dt, end_dt)).fetchall()
-        
-        refund_map = {r['payment_method']: (r['refund_total'] or 0) for r in refund_breakdown}
-
-        # Calculate Cash/Card Totals (same logic as daily report)
-        total_cash = 0
-        total_cash_net = 0
-        total_card = 0
-        total_card_net = 0
-        
-        split_orders = conn.execute('''
-            SELECT payment_details, total, tax_amount
-            FROM pos_orders
-            WHERE created_at BETWEEN ? AND ? AND status != 'held' AND payment_method = 'split'
-        ''', (start_dt, end_dt)).fetchall()
-
-        split_cash_total = 0
-        split_card_total = 0
-        
-        for sp in split_orders:
-            try:
-                details = json.loads(sp['payment_details'])
-                split_cash_total += float(details.get('cash', 0))
-                split_card_total += sum(float(x) for x in details.get('cards', []))
-            except (ValueError, TypeError, json.JSONDecodeError):
-                pass
-
-        for p in payments:
-            method = p['payment_method']
-            amount = p['total_amount'] or 0
-            tax = p['tax_amount'] or 0
-            net = amount - tax
-            refund_amount = refund_map.get(method, 0)
-            
-            if method == 'cash':
-                total_cash += (amount - refund_amount)
-                total_cash_net += (net - refund_amount)
-            elif method == 'split':
-                s_total = split_cash_total + split_card_total
-                if s_total > 0:
-                    s_cash_ratio = split_cash_total / s_total
-                    s_card_ratio = split_card_total / s_total
-                else:
-                    s_cash_ratio = 0
-                    s_card_ratio = 1
-                
-                split_tax_cash = tax * s_cash_ratio
-                split_tax_card = tax * s_card_ratio
-                
-                total_cash += split_cash_total
-                total_cash_net += (split_cash_total - split_tax_cash)
-                total_card += (split_card_total - refund_amount)
-                total_card_net += (split_card_total - split_tax_card - refund_amount)
-            else:
-                total_card += (amount - refund_amount)
-                total_card_net += (net - refund_amount)
-
-        # 4. Activity Data (replaces hourly for custom report)
         if grouping == 'daily':
             activity_raw = conn.execute('''
                 SELECT date(created_at, 'localtime') as period,
@@ -353,56 +290,47 @@ def generate_custom_report_data(start_date, end_date):
                 WHERE created_at BETWEEN ? AND ? AND status != 'held'
                 GROUP BY period ORDER BY period
             ''', (start_dt, end_dt)).fetchall()
-        
-        # Format activity labels
-        activity_data = []
-        for row in activity_raw:
-            r = dict(row)
-            if grouping == 'daily':
-                try:
-                    dt = datetime.strptime(r['period'], '%Y-%m-%d')
-                    r['label'] = dt.strftime('%b %d')
-                except ValueError:
-                    r['label'] = r['period']
-            elif grouping == 'weekly':
-                try:
-                    ws = datetime.strptime(r['week_start'], '%Y-%m-%d').strftime('%b %d')
-                    we = datetime.strptime(r['week_end'], '%Y-%m-%d').strftime('%b %d')
-                    r['label'] = f"{ws} – {we}"
-                except (ValueError, KeyError):
-                    r['label'] = r['period']
-            else:  # monthly
-                try:
-                    dt = datetime.strptime(r['period'] + '-01', '%Y-%m-%d')
-                    r['label'] = dt.strftime('%B %Y')
-                except ValueError:
-                    r['label'] = r['period']
-            activity_data.append(r)
-        
-        max_activity_revenue = max((a['amount'] for a in activity_data), default=0) if activity_data else 0
-
-        # 5. Top Sellers -- same figures as the Top Sellers report (after discounts and refunds, ex. tax)
-        top_report = generate_top_sellers_data(start_date, end_date, {}, sort='revenue')
-        top_items = [{'sku': i['sku'], 'name': i['name'], 'qty': i['net_qty'], 'total': i['net_revenue']}
-                     for i in top_report['items'][:10]]
-
-        return {
-            'summary': dict(summary),
-            'refunds': dict(refunds_summary),
-            'net_revenue': net_revenue,
-            'payments': [dict(p) for p in payments],
-            'activity_data': activity_data,
-            'activity_grouping': grouping,
-            'max_activity_revenue': max_activity_revenue,
-            'top_items': [dict(i) for i in top_items],
-            'total_cash': total_cash,
-            'total_cash_net': total_cash_net,
-            'total_card': total_card,
-            'total_card_net': total_card_net,
-            'range_days': range_days
-        }
     finally:
         conn.close()
+
+    # Format activity labels
+    activity_data = []
+    for row in activity_raw:
+        r = dict(row)
+        if grouping == 'daily':
+            try:
+                dt = datetime.strptime(r['period'], '%Y-%m-%d')
+                r['label'] = dt.strftime('%b %d')
+            except ValueError:
+                r['label'] = r['period']
+        elif grouping == 'weekly':
+            try:
+                ws = datetime.strptime(r['week_start'], '%Y-%m-%d').strftime('%b %d')
+                we = datetime.strptime(r['week_end'], '%Y-%m-%d').strftime('%b %d')
+                r['label'] = f"{ws} – {we}"
+            except (ValueError, KeyError):
+                r['label'] = r['period']
+        else:  # monthly
+            try:
+                dt = datetime.strptime(r['period'] + '-01', '%Y-%m-%d')
+                r['label'] = dt.strftime('%B %Y')
+            except ValueError:
+                r['label'] = r['period']
+        activity_data.append(r)
+
+    max_activity_revenue = max((a['amount'] for a in activity_data), default=0) if activity_data else 0
+
+    return {
+        'report': report,
+        # kept at the top level for callers that read the custom report's summary
+        'summary': report['summary'],
+        'activity_data': activity_data,
+        'activity_grouping': grouping,
+        'max_activity_revenue': max_activity_revenue,
+        # same figures as the Top Sellers report (after discounts and refunds, ex. tax)
+        'top_items': _top_items(start_date, end_date),
+        'range_days': range_days,
+    }
 
 
 # ---------------------------------------------------------------------------

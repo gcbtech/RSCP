@@ -115,6 +115,16 @@
                             </div>
 
                             <div class="mb-3">
+                                <label class="form-label fw-bold">Refund Paid In *</label>
+                                <select name="refund_method" class="form-select" required>
+                                    {% for key, label in refund_methods.items() %}
+                                    <option value="{{ key }}" {% if key == default_refund_method %}selected{% endif %}>{{ label }}</option>
+                                    {% endfor %}
+                                </select>
+                                <div class="form-text">How the money goes back to the customer. Cash refunds come out of the drawer.</div>
+                            </div>
+
+                            <div class="mb-3">
                                 <label class="form-label">Additional Notes</label>
                                 <textarea name="reason_notes" class="form-control" rows="2"></textarea>
                             </div>
@@ -148,8 +158,10 @@
                                 <span class="text-muted small">{{ refund.created_at | local_time }}</span>
                             </div>
                             <div class="small">
-                                {{ refund.refund_type|capitalize }} • {{ refund.reason }} • By: {{ refund.manager_name
-                                }}
+                                {{ refund.refund_type|capitalize }} • {{ refund.reason }}
+                                {% if refund.refund_method %} • Paid in {{ refund.refund_method }}{% endif %}
+                                {% if refund.tax_refunded %} • incl. ${{ "%.2f"|format(refund.tax_refunded) }} tax{% endif %}
+                                • By: {{ refund.manager_name }}
                             </div>
                         </div>
                         {% endfor %}
@@ -188,10 +200,12 @@
                         <hr>
                         <div class="small text-muted">
                             <strong>Payment:</strong> {{ order.payment_method|capitalize }}
-                            {% if payment_details.tendered %}
-                            <br>Tendered: ${{ "%.2f"|format(payment_details.tendered) }}
-                            <br>Change: ${{ "%.2f"|format(payment_details.change) }}
+                            {% for p in payments %}
+                            <br>{{ p.method|capitalize }}: ${{ "%.2f"|format(p.amount) }}
+                            {% if p.method == 'cash' and p.tendered is not none %}
+                            (tendered ${{ "%.2f"|format(p.tendered) }}, change ${{ "%.2f"|format(p.change_given or 0) }})
                             {% endif %}
+                            {% endfor %}
                         </div>
                     </div>
                 </div>

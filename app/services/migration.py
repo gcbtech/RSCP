@@ -840,12 +840,134 @@ def _add_column_in_txn(conn, table, column, column_def):
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {column_def}")
 
 
+def _m8_pos_ledger(conn):
+    """Payments ledger, refund method/tax, cash drawer sessions; backfill.
+
+    Self-contained on purpose (a frozen copy of the allocation rules): later
+    changes to app code must not change what this step does.
+
+    pos_payments.amount is what the tender paid toward the sale; tendered and
+    change_given are the cash handed over and handed back. Backfill rules:
+      cash  -> one cash row: amount = total, tendered/change from the JSON
+      card  -> one card row: amount = total
+      split -> card rows as given (capped at what is left of the total), one
+               cash row: applied = total - cards, tendered = cash handed,
+               change = tendered - applied
+    Refunds get refund_method (the order's method; split -> cash) and
+    tax_refunded = amount * order tax / order total.
+    """
+    import json as _json
+    from decimal import Decimal, ROUND_HALF_UP
+
+    def money(v):
+        try:
+            d = Decimal(str(v))
+        except Exception:
+            return None
+        if not d.is_finite():
+            return None
+        return float(d.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS pos_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL,
+            method TEXT NOT NULL,
+            amount REAL NOT NULL,
+            tendered REAL,
+            change_given REAL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (order_id) REFERENCES pos_orders(id)
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_payments_order ON pos_payments(order_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_payments_method_ts ON pos_payments(method, created_at)')
+    _add_column_in_txn(conn, 'pos_orders', 'cash_discount', 'REAL DEFAULT 0')
+    _add_column_in_txn(conn, 'pos_refunds', 'refund_method', 'TEXT')
+    _add_column_in_txn(conn, 'pos_refunds', 'tax_refunded', 'REAL')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_refunds_created ON pos_refunds(created_at)')
+    conn.execute('''
+        CREATE TABLE IF NOT EXISTS drawer_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            register_id INTEGER,
+            opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            opened_by INTEGER,
+            opening_float REAL NOT NULL DEFAULT 0,
+            closed_at TIMESTAMP,
+            closed_by INTEGER,
+            counted_cash REAL,
+            expected_cash REAL,
+            over_short REAL,
+            notes TEXT
+        )
+    ''')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_drawer_sessions_open ON drawer_sessions(closed_at, opened_at)')
+
+    # Backfill orders that have no ledger rows yet (idempotent)
+    orders = conn.execute('''
+        SELECT id, payment_method, payment_details, total, created_at FROM pos_orders o
+        WHERE NOT EXISTS (SELECT 1 FROM pos_payments p WHERE p.order_id = o.id)
+    ''').fetchall()
+    for order_id, method, details_raw, total, created_at in orders:
+        try:
+            details = _json.loads(details_raw) if details_raw else {}
+        except (ValueError, TypeError):
+            details = {}
+        if not isinstance(details, dict):
+            details = {}
+        total = money(total) or 0.0
+        rows = []  # (method, amount, tendered, change)
+        if method == 'cash':
+            tendered = money(details.get('tendered'))
+            tendered = total if tendered is None or tendered < total else tendered
+            rows.append(('cash', total, tendered, money(tendered - total)))
+        elif method == 'split':
+            cards = details.get('cards')
+            cards = cards if isinstance(cards, list) else []
+            remaining = total
+            for c in cards:
+                c = money(c)
+                if c is None or c <= 0:
+                    continue
+                applied = min(c, remaining)
+                rows.append(('card', applied, None, 0.0))
+                remaining = money(remaining - applied)
+            handed = money(details.get('cash', 0)) or 0.0
+            handed = max(handed, 0.0)
+            if remaining > 0 or handed > 0:
+                tendered = max(handed, remaining)
+                rows.append(('cash', remaining, tendered, money(tendered - remaining)))
+        else:
+            rows.append((method or 'card', total, None, 0.0))
+        cash_discount = money(details.get('cash_discount', 0)) or 0.0
+        if cash_discount:
+            conn.execute('UPDATE pos_orders SET cash_discount = ? WHERE id = ?', (cash_discount, order_id))
+        for m, amount, tendered, change in rows:
+            conn.execute('''INSERT INTO pos_payments (order_id, method, amount, tendered, change_given, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?)''', (order_id, m, amount, tendered, change, created_at))
+
+    # Backfill refunds (only rows not yet filled)
+    refunds = conn.execute('''
+        SELECT r.id, r.amount, r.refund_method, r.tax_refunded, o.payment_method, o.tax_amount, o.total
+        FROM pos_refunds r LEFT JOIN pos_orders o ON o.id = r.order_id
+        WHERE r.refund_method IS NULL OR r.tax_refunded IS NULL
+    ''').fetchall()
+    for rid, amount, r_method, r_tax, o_method, o_tax, o_total in refunds:
+        if r_method is None:
+            r_method = 'card' if o_method == 'card' else 'cash'
+        if r_tax is None:
+            r_tax = money((amount or 0) * (o_tax or 0) / o_total) if o_total else 0.0
+        conn.execute('UPDATE pos_refunds SET refund_method = ?, tax_refunded = ? WHERE id = ?',
+                     (r_method, r_tax, rid))
+
+
 # (version, description, function). Version 1 is the ensure_db_ready() baseline.
 SCHEMA_MIGRATIONS = [
     (2, 'PTO tables', _m2_pto_tables),
     (3, 'hot-path indexes', _m3_hot_path_indexes),
     (4, 'rate_events table', _m4_rate_events),
     (5, 'pos_orders.checkout_token', _m5_checkout_token),
+    (8, 'POS payments ledger, refund method/tax, drawer sessions', _m8_pos_ledger),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 
