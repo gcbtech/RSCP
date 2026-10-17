@@ -39,7 +39,7 @@ protect_blueprint(
     module_name='Admin',
     json_endpoints={
         'admin.check_update', 'admin.perform_update', 'admin.release_info',
-        'admin.rollback_update', 'admin.update_status', 'admin.save_auto_confirm',
+        'admin.rollback_update', 'admin.update_status',
         'admin.set_package_quantity', 'admin.set_package_sku', 'admin.set_tracking',
     },
     on_forbidden=_admin_required_page,

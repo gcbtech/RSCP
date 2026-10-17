@@ -46,14 +46,18 @@ def client_as(app, user_id):
 
 
 @contextmanager
-def module(flag, enabled):
+def module(app, flag, enabled):
+    # Settings live in the app's database (migration 6), so write them inside
+    # this app's context.
     from app.services.data_manager import load_config, save_config
-    old = load_config(force_reload=True).get(flag, False)
-    save_config({flag: enabled})
+    with app.app_context():
+        old = load_config(force_reload=True).get(flag, False)
+        save_config({flag: enabled})
     try:
         yield
     finally:
-        save_config({flag: old})
+        with app.app_context():
+            save_config({flag: old})
 
 
 def outcome(resp):
@@ -102,7 +106,6 @@ MATRIX = [
     # admin
     ('/admin/',                    (L, D, D, A)),
     ('/admin/logs',                (L, D, D, A)),
-    ('/admin/settings',            (L, D, D, A)),
     ('/admin/update_status',       (L, D, D, A)),
     # notifications
     ('/api/notifications/count',   (L, A, A, A)),
@@ -164,10 +167,16 @@ def test_pages_redirect_with_flash(app):
 
 def test_admin_form_posts_denied_without_side_effects(app):
     from app.services.data_manager import load_config
-    before = load_config(force_reload=True).get('AUTO_TRIM', False)
-    resp = client_as(app, MANAGER).post('/admin/toggle_trim', data={'trim_state': 'on' if not before else ''})
-    assert outcome(resp) == D
-    assert load_config(force_reload=True).get('AUTO_TRIM', False) == before
+    with app.app_context():
+        before = load_config(force_reload=True).get('AUTO_TRIM', False)
+    # A POS manager may save the 'pos' group but not general (admin) settings
+    resp = client_as(app, MANAGER).post('/admin/settings/save',
+                                        data={'group': 'general', 'AUTO_TRIM': 'true' if not before else 'false'})
+    assert resp.status_code in (302, 403)
+    with app.app_context():
+        assert load_config(force_reload=True).get('AUTO_TRIM', False) == before
+    # and a non-admin cannot reach admin-blueprint form posts at all
+    assert outcome(client_as(app, MANAGER).post('/admin/add_user', data={'username': 'x', 'password': 'Aa1aaaaa'})) == D
 
 
 def test_delete_order_is_admin_only(app):
@@ -182,7 +191,7 @@ def test_delete_order_is_admin_only(app):
 # --- module toggles --------------------------------------------------------
 
 def test_pos_disabled(app):
-    with module('POS_ENABLED', False):
+    with module(app, 'POS_ENABLED', False):
         assert outcome(client_as(app, ADMIN).get('/pos/')) == D
         resp = client_as(app, CASHIER).get('/pos/api/cart')
         assert resp.status_code == 403 and resp.get_json()['error'] == 'module_disabled'
@@ -191,7 +200,7 @@ def test_pos_disabled(app):
 
 
 def test_inventory_disabled(app):
-    with module('INVENTORY_ENABLED', False):
+    with module(app, 'INVENTORY_ENABLED', False):
         assert outcome(client_as(app, CASHIER).get('/inventory/items')) == D
         assert outcome(client_as(app, ADMIN).get('/inventory/add')) == D
         resp = client_as(app, CASHIER).post('/inventory/api/add_quantity/1', json={'quantity': 1})
@@ -200,7 +209,7 @@ def test_inventory_disabled(app):
 
 def test_timeclock_disabled_blocks_every_route(app):
     from app.services.db import get_db_connection
-    with module('TIMECLOCK_ENABLED', False):
+    with module(app, 'TIMECLOCK_ENABLED', False):
         c = client_as(app, CASHIER)
         assert outcome(c.get('/timeclock/')) == D
         assert outcome(c.post('/timeclock/clock_in')) == D   # was only checked on the index
