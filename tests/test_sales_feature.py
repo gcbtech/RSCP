@@ -16,7 +16,7 @@ from app.services.db import get_db_connection
 
 class TestSalesFeature(unittest.TestCase):
     def setUp(self):
-        self.db_path = os.path.join(os.path.dirname(__file__), 'test_sales_feature.db')
+        self.db_path = os.path.join(os.environ.get('RSCP_DATA_DIR') or os.path.dirname(__file__), 'test_sales_feature.db')
         if os.path.exists(self.db_path):
             try:
                 os.remove(self.db_path)

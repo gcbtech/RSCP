@@ -5,7 +5,7 @@ import sys
 import pytest
 
 # Add parent directory to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.environ.get('RSCP_DATA_DIR') or os.path.dirname(__file__), '..')))
 
 from app.services.db import get_db_connection
 
@@ -21,7 +21,7 @@ def _make_app(monkeypatch, config):
     for module in (app_pkg, core, items):
         monkeypatch.setattr(module, 'load_config', lambda: config)
 
-    db_path = os.path.join(os.path.dirname(__file__), 'test_quick_add_price_hint.db')
+    db_path = os.path.join(os.environ.get('RSCP_DATA_DIR') or os.path.dirname(__file__), 'test_quick_add_price_hint.db')
     if os.path.exists(db_path):
         os.remove(db_path)
     app = create_app(test_config={'TESTING': True, 'DATABASE': db_path,

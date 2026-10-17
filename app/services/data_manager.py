@@ -16,8 +16,9 @@ logger = logging.getLogger(__name__)
 
 # --- CONFIG ---
 # --- CONFIG ---
-MANIFEST_FILE = os.path.join(BASE_DIR, 'manifest.csv')
-CONFIG_FILE = os.path.join(BASE_DIR, 'config.json')
+from app import paths as _paths
+MANIFEST_FILE = os.path.join(_paths.DATA_DIR, 'manifest.csv')
+CONFIG_FILE = _paths.CONFIG_FILE
 
 # Cache for Sync checking
 DATA_CACHE = {

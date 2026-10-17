@@ -14,6 +14,7 @@ from app.routes.timeclock import timeclock_bp
 from app.routes.public_api import public_api_bp
 from app.utils.helpers import format_date_filter
 from app.services.data_manager import load_config, BASE_DIR
+from app import paths
 from app.services.migration import run_migrations
 from app.services.logger import log_exception
 
@@ -36,7 +37,7 @@ def _template_config(conf):
 def create_app(test_config=None):
     # Clean up any stale update status file on startup
     try:
-        status_file = os.path.join(BASE_DIR, 'update_status.json')
+        status_file = os.path.join(paths.DATA_DIR, 'update_status.json')
         if os.path.exists(status_file):
             os.remove(status_file)
     except Exception:
@@ -158,6 +159,17 @@ def create_app(test_config=None):
     # Make oauth available to blueprints
     app.oauth = oauth
     
+    # Uploaded files live in the data directory but keep their historical
+    # /static/uploads/... URLs. This rule is more specific than Flask's
+    # /static/<path> rule, so it wins for those paths.
+    if paths.USES_DATA_DIR:
+        from flask import send_from_directory
+
+        def uploaded_file(filename):
+            return send_from_directory(paths.UPLOADS_DIR, filename, max_age=604800)
+
+        app.add_url_rule('/static/uploads/<path:filename>', 'uploaded_file', uploaded_file)
+
     # Blueprints
     app.register_blueprint(main_bp)
     app.register_blueprint(admin_bp)
@@ -390,7 +402,7 @@ def create_app(test_config=None):
     # Load version from VERSION file
 
     # Load version from VERSION file
-    version_file = os.path.join(BASE_DIR, 'VERSION')
+    version_file = paths.VERSION_FILE
     try:
         with open(version_file, 'r') as f:
             app_version = f.read().strip()

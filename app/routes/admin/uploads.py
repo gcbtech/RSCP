@@ -16,7 +16,7 @@ from app.services.data_manager import sync_manifest, MANIFEST_FILE, BASE_DIR
 logger = logging.getLogger(__name__)
 
 # Temp storage for preview data (file-based for large datasets)
-PREVIEW_TEMP_DIR = os.path.join(BASE_DIR, 'temp')
+from app.paths import TEMP_DIR as PREVIEW_TEMP_DIR
 
 def detect_column_mapping(df):
     """Auto-detect column mappings based on column names and data quality."""

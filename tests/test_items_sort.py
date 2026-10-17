@@ -4,7 +4,7 @@ import sys
 from datetime import datetime, timedelta
 
 # Add parent directory to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.environ.get('RSCP_DATA_DIR') or os.path.dirname(__file__), '..')))
 
 from app.services.db import get_db_connection
 
@@ -13,7 +13,7 @@ def app():
     """Create application for testing with an isolated database."""
     from app import create_app
     
-    db_path = os.path.join(os.path.dirname(__file__), 'test_items_sort.db')
+    db_path = os.path.join(os.environ.get('RSCP_DATA_DIR') or os.path.dirname(__file__), 'test_items_sort.db')
     if os.path.exists(db_path):
         try:
             os.remove(db_path)

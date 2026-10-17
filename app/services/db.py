@@ -5,12 +5,15 @@ from app.utils.helpers import parse_date
 
 logger = logging.getLogger(__name__)
 
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+from app import paths
+
+BASE_DIR = paths.APP_DIR  # code directory (kept for older imports)
 import sys
 if 'pytest' in sys.modules or os.environ.get('TESTING') == 'True':
-    DB_PATH = os.path.join(BASE_DIR, 'tests', 'test_fallback.db')
+    DB_PATH = os.path.join(paths.DATA_DIR if paths.USES_DATA_DIR else os.path.join(BASE_DIR, 'tests'),
+                           'test_fallback.db')
 else:
-    DB_PATH = os.path.join(BASE_DIR, 'rscp.db')
+    DB_PATH = paths.DB_PATH
 
 def get_db_connection(path=None):
     """Returns a NEW connection to the SQLite database.

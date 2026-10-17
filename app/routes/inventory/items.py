@@ -18,7 +18,8 @@ import uuid
 from app.routes.inventory import inventory_bp, CATEGORY_CODES
 from app.routes.inventory.core import generate_sku, validate_location
 from app.services.db import get_db_connection
-from app.services.data_manager import BASE_DIR, load_config
+from app.services.data_manager import load_config
+from app.paths import upload_path, upload_url, upload_url_to_path
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,7 @@ def get_thumbnail_url(image_url):
     filename = image_url.split('/static/uploads/inventory/')[-1]
     base, _ext = os.path.splitext(filename)
     thumb_rel = f"uploads/inventory/thumbs/{base}_thumb.jpg"
-    if os.path.exists(os.path.join(BASE_DIR, 'static', thumb_rel.replace('/', os.sep))):
+    if os.path.exists(upload_path(*thumb_rel.split('/')[1:])):
         return f"/static/{thumb_rel}"
     return None
 
@@ -119,13 +120,13 @@ def generate_thumbnail(image_url):
             return None
             
         filename = image_url.split('/static/uploads/inventory/')[-1]
-        source_path = os.path.join(BASE_DIR, 'static', 'uploads', 'inventory', filename)
+        source_path = upload_path('inventory', filename)
         
         if not os.path.exists(source_path):
             return None
         
         # Create thumbs directory if needed
-        thumb_dir = os.path.join(BASE_DIR, 'static', 'uploads', 'inventory', 'thumbs')
+        thumb_dir = upload_path('inventory', 'thumbs')
         os.makedirs(thumb_dir, exist_ok=True)
         
         # Generate thumbnail filename
@@ -525,13 +526,13 @@ def add_item():
                     optimized_data = optimize_image(file)
                     unique_name = f"{secure_filename(sku)}_{int(time.time())}.jpg"
                     
-                    upload_folder = os.path.join(BASE_DIR, 'static', 'uploads', 'inventory')
+                    upload_folder = upload_path('inventory')
                     if not os.path.exists(upload_folder):
                         os.makedirs(upload_folder)
                         
                     with open(os.path.join(upload_folder, unique_name), 'wb') as f:
                         f.write(optimized_data)
-                    image_url = url_for('static', filename=f'uploads/inventory/{unique_name}')
+                    image_url = upload_url(f'inventory/{unique_name}')
                     # Generate the list thumbnail now, at upload time, so the
                     # items list never does image work per request.
                     generate_thumbnail(image_url)
@@ -545,13 +546,13 @@ def add_item():
                         optimized_data = optimize_image(file)
                         unique_name = f"{secure_filename(sku)}_gallery_{i}_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
                         
-                        upload_folder = os.path.join(BASE_DIR, 'static', 'uploads', 'inventory')
+                        upload_folder = upload_path('inventory')
                         if not os.path.exists(upload_folder):
                             os.makedirs(upload_folder)
                             
                         with open(os.path.join(upload_folder, unique_name), 'wb') as f:
                             f.write(optimized_data)
-                        img_path = url_for('static', filename=f'uploads/inventory/{unique_name}')
+                        img_path = upload_url(f'inventory/{unique_name}')
                         generate_thumbnail(img_path)
                         additional_images_list.append(img_path)
 
@@ -755,14 +756,14 @@ def edit_item(item_id):
                     additional_images_list.remove(img)
                     # Safely delete file from static folder
                     if img.startswith('/static/'):
-                        file_path = os.path.join(BASE_DIR, img.lstrip('/'))
+                        file_path = upload_url_to_path(img) or ''
                         if os.path.exists(file_path):
                             try:
                                 os.remove(file_path)
                                 # Check if a thumbnail exists and delete it too
                                 thumb_url = generate_thumbnail(img)
                                 if thumb_url and thumb_url.startswith('/static/'):
-                                    thumb_path = os.path.join(BASE_DIR, thumb_url.lstrip('/'))
+                                    thumb_path = upload_url_to_path(thumb_url) or ''
                                     if os.path.exists(thumb_path):
                                         os.remove(thumb_path)
                             except Exception as e:
@@ -791,13 +792,13 @@ def edit_item(item_id):
                     optimized_data = optimize_image(file)
                     unique_name = f"{secure_filename(sku)}_{int(time.time())}.jpg"
                     
-                    upload_folder = os.path.join(BASE_DIR, 'static', 'uploads', 'inventory')
+                    upload_folder = upload_path('inventory')
                     if not os.path.exists(upload_folder):
                         os.makedirs(upload_folder)
                         
                     with open(os.path.join(upload_folder, unique_name), 'wb') as f:
                         f.write(optimized_data)
-                    image_url = url_for('static', filename=f'uploads/inventory/{unique_name}')
+                    image_url = upload_url(f'inventory/{unique_name}')
                     # Generate the list thumbnail now, at upload time, so the
                     # items list never does image work per request.
                     generate_thumbnail(image_url)
@@ -810,13 +811,13 @@ def edit_item(item_id):
                         optimized_data = optimize_image(file)
                         unique_name = f"{secure_filename(sku)}_gallery_{i}_{int(time.time())}_{uuid.uuid4().hex[:6]}.jpg"
                         
-                        upload_folder = os.path.join(BASE_DIR, 'static', 'uploads', 'inventory')
+                        upload_folder = upload_path('inventory')
                         if not os.path.exists(upload_folder):
                             os.makedirs(upload_folder)
                             
                         with open(os.path.join(upload_folder, unique_name), 'wb') as f:
                             f.write(optimized_data)
-                        img_path = url_for('static', filename=f'uploads/inventory/{unique_name}')
+                        img_path = upload_url(f'inventory/{unique_name}')
                         generate_thumbnail(img_path)
                         additional_images_list.append(img_path)
 
@@ -1192,7 +1193,7 @@ def upload_photo():
         
         filename = f"{uuid.uuid4().hex}.jpg"
         # Ensure directory exists
-        upload_dir = os.path.join(BASE_DIR, 'static', 'uploads', 'inventory')
+        upload_dir = upload_path('inventory')
         os.makedirs(upload_dir, exist_ok=True)
         
         filepath = os.path.join(upload_dir, filename)

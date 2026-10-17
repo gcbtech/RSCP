@@ -4,7 +4,7 @@ import sys
 from datetime import datetime, timedelta
 
 # Add parent directory to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.environ.get('RSCP_DATA_DIR') or os.path.dirname(__file__), '..')))
 
 from app.services.db import get_db_connection
 
@@ -19,7 +19,7 @@ def app(monkeypatch):
 
     monkeypatch.setattr(core, 'load_config', lambda: TEST_CONFIG)
 
-    db_path = os.path.join(os.path.dirname(__file__), 'test_attention_snooze.db')
+    db_path = os.path.join(os.environ.get('RSCP_DATA_DIR') or os.path.dirname(__file__), 'test_attention_snooze.db')
     if os.path.exists(db_path):
         os.remove(db_path)
 

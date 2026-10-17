@@ -5,10 +5,21 @@ Shared fixtures.
 with one user per common role, so tests never depend on the dev box's data.
 Log a test client in with `login(client, user_id)`.
 """
+import json
 import os
 import sys
+import tempfile
 
 import pytest
+
+# Isolate every test run from the machine's real data and config.json: point
+# the app's data directory at a throwaway folder BEFORE app modules import.
+_TEST_DATA_DIR = tempfile.mkdtemp(prefix='rscp-test-data-')
+os.environ['RSCP_DATA_DIR'] = _TEST_DATA_DIR
+os.environ['TESTING'] = 'True'
+with open(os.path.join(_TEST_DATA_DIR, 'config.json'), 'w') as _f:
+    json.dump({'SECRET_KEY': 'test_key', 'ORG_NAME': 'Test Store',
+               'INVENTORY_ENABLED': True, 'POS_ENABLED': True, 'TIMECLOCK_ENABLED': True}, _f)
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 

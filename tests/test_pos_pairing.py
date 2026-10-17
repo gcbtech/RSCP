@@ -26,7 +26,7 @@ from app.services.db import get_db_connection
 
 class PairingV3TestCase(unittest.TestCase):
     def setUp(self):
-        self.db_path = os.path.join(os.path.dirname(__file__), 'test_pos_pairing.db')
+        self.db_path = os.path.join(os.environ.get('RSCP_DATA_DIR') or os.path.dirname(__file__), 'test_pos_pairing.db')
         self._remove_db()
 
         self.app = create_app(test_config={

@@ -23,7 +23,7 @@ from app.utils.helpers import sanitize_for_csv
 from app.services.logger import log_error
 
 main_bp = Blueprint('main', __name__)
-CONFIG_FILE = os.path.join(BASE_DIR, 'config.json')
+from app.paths import CONFIG_FILE
 
 @main_bp.route('/')
 def index():

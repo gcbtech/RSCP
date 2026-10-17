@@ -4,7 +4,7 @@ import os
 import sys
 
 # Add app to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.append(os.path.abspath(os.path.join(os.environ.get('RSCP_DATA_DIR') or os.path.dirname(__file__), '..')))
 
 from app import create_app
 from app.services.db import init_db, get_db_connection

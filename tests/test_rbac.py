@@ -4,7 +4,7 @@ import sys
 import json
 
 # Add parent directory to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.environ.get('RSCP_DATA_DIR') or os.path.dirname(__file__), '..')))
 
 from app.services.db import get_db_connection
 
@@ -15,7 +15,7 @@ def app():
     import uuid
     
     db_name = f'test_rbac_{uuid.uuid4().hex}.db'
-    db_path = os.path.join(os.path.dirname(__file__), db_name)
+    db_path = os.path.join(os.environ.get('RSCP_DATA_DIR') or os.path.dirname(__file__), db_name)
     
     app = create_app(test_config={
         'TESTING': True,
