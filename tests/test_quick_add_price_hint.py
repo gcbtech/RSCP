@@ -41,7 +41,10 @@ def _make_app(monkeypatch, config):
     return client, db_path
 
 
-def _quick_add_html(monkeypatch, config):
+def _quick_add_page(monkeypatch, config):
+    """(Quick Add form markup, the page's JSON page data)."""
+    import json
+    import re
     client, db_path = _make_app(monkeypatch, config)
     try:
         resp = client.get('/inventory/items')
@@ -50,20 +53,27 @@ def _quick_add_html(monkeypatch, config):
     finally:
         os.remove(db_path)
     start = html.index('<!-- Quick Add Form -->')
-    end = html.index('})();', start) + len('})();\n    </script>')
-    return html[start:end]
+    end = html.index('<!-- Search -->', start)
+    data = json.loads(re.search(r'<script type="application/json" id="page-data">(.*?)</script>',
+                                html, re.S).group(1))
+    return html[start:end], data
+
+
+def _quick_add_html(monkeypatch, config):
+    return _quick_add_page(monkeypatch, config)[0]
 
 
 def test_price_hint_uses_preferred_margin(monkeypatch):
-    snippet = _quick_add_html(monkeypatch, {**BASE_CONFIG, 'PREFERRED_MARGIN_ENABLED': True, 'PREFERRED_MARGIN_PERCENT': 40.0})
+    snippet, data = _quick_add_page(monkeypatch, {**BASE_CONFIG, 'PREFERRED_MARGIN_ENABLED': True, 'PREFERRED_MARGIN_PERCENT': 40.0})
     assert 'id="quickAddBuyPrice"' in snippet and 'id="quickAddSellPrice"' in snippet
-    assert 'const marginEnabled = true;' in snippet
-    assert 'const marginPercent = 40.0;' in snippet
+    # static/js/pages/inventory-list.js reads the margin settings from the page data
+    assert data['quickAddMarginEnabled'] is True
+    assert data['quickAddMarginPercent'] == 40.0
 
 
 def test_price_hint_disabled_when_margin_setting_off(monkeypatch):
-    snippet = _quick_add_html(monkeypatch, {**BASE_CONFIG, 'PREFERRED_MARGIN_ENABLED': False})
-    assert 'const marginEnabled = false;' in snippet
+    _, data = _quick_add_page(monkeypatch, {**BASE_CONFIG, 'PREFERRED_MARGIN_ENABLED': False})
+    assert data['quickAddMarginEnabled'] is False
 
 
 AREAS = {'LOCATION_OPTIONS': {'area': ['Retail', 'Build']}}

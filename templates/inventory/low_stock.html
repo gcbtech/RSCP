@@ -73,13 +73,13 @@
                                 {% if item.image_url %}
                                 <img src="{{ item.image_url }}" alt=""
                                     style="width: 40px; height: 40px; object-fit: cover; border-radius: 4px; cursor: pointer;"
-                                    onclick="showImage({{ item.image_url|js }}, {{ item.name|js }})">
+                                    data-action="showImage" data-url="{{ item.image_url }}" data-title="{{ item.name }}">
                                 {% else %}
                                 <div class="bg-secondary text-white d-flex align-items-center justify-content-center"
                                     style="width: 40px; height: 40px; border-radius: 4px; font-size: 10px;">No Img</div>
                                 {% endif %}
                             </td>
-                            <td><code style="cursor: pointer;" onclick="copyToClipboard({{ item.sku|js }}, this)"
+                            <td><code style="cursor: pointer;" data-action="copyToClipboard" data-text="{{ item.sku }}"
                                     title="Click to copy">{{ item.sku }}</code></td>
                             <td>
                                 <a href="{{ url_for('inventory.edit_item', item_id=item.id) }}"
@@ -107,7 +107,7 @@
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <button type="submit" class="btn btn-sm btn-outline-secondary"
                                             title="Mark as legacy/discontinued"
-                                            onclick="return confirm('Mark this item as Legacy? It will be hidden from inventory lists.');">
+                                            data-confirm="Mark this item as Legacy? It will be hidden from inventory lists.">
                                             📦 Legacy
                                         </button>
                                     </form>
@@ -146,40 +146,6 @@
 {% endblock %}
 
 {% block scripts %}
-    <script>
-        // Dark mode check
-        if (localStorage.getItem('rscp_darkmode') === 'true') {
-            document.body.classList.add('dark-mode');
-            document.querySelector('.table-dark').classList.remove('table-dark'); // Optional: adjust header for dark mode if needed, or keep it
-            // Actually, bootstrap table-dark works fine in dark mode usually, but custom dark mode css might conflict.
-            // Let's keep it simple.
-        }
-
-        // Image modal
-        function showImage(url, title) {
-            document.getElementById('modalImage').src = url;
-            document.getElementById('imageModalLabel').textContent = title || 'Image';
-            new bootstrap.Modal(document.getElementById('imageModal')).show();
-        }
-
-        function copyToClipboard(text, element) {
-            navigator.clipboard.writeText(text).then(function () {
-                const originalTitle = element.getAttribute('title');
-
-                // Visual feedback
-                const tooltip = new bootstrap.Tooltip(element, {
-                    title: "Copied!",
-                    trigger: 'manual'
-                });
-                tooltip.show();
-
-                setTimeout(() => {
-                    tooltip.dispose();
-                    element.setAttribute('title', originalTitle); // Restore original title
-                }, 1000);
-            }, function (err) {
-                console.error('Could not copy text: ', err);
-            });
-        }
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/inventory-common.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/pages/inventory-low-stock.js') }}"></script>
 {% endblock %}

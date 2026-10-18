@@ -6,11 +6,6 @@
     {# Page-specific viewport (no pinch-zoom on scanner devices); the last viewport meta wins. #}
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     {{ vendor.tom_select_css() }}
-    <!-- Margin settings for suggested price calculation -->
-    <script>
-        var marginEnabled = {{ 'true' if config and config.PREFERRED_MARGIN_ENABLED else 'false' }};
-        var marginPercent = {{ config.PREFERRED_MARGIN_PERCENT if config and config.PREFERRED_MARGIN_PERCENT else 20 }};
-    </script>
     <style>
         body {
             padding: 20px;
@@ -245,7 +240,7 @@
                         <label class="form-label">SKU <small class="text-muted">(auto-generates if
                                 empty)</small></label>
                         <input type="text" name="sku" id="skuInput" class="form-control"
-                            placeholder="e.g., RSCP-PRI-0001-0001" onblur="checkSkuExists()">
+                            placeholder="e.g., RSCP-PRI-0001-0001" data-focusout="checkSkuExists">
                         <div id="skuFeedback" class="form-text text-danger" style="display:none;"></div>
                     </div>
                     <div class="col-md-6">
@@ -288,7 +283,7 @@
                                     </select>
                                 </div>
                                 <div class="col-md-6">
-                                    <button type="button" class="btn btn-warning w-100" onclick="regenerateSku()">
+                                    <button type="button" class="btn btn-warning w-100" data-action="regenerateSku">
                                         ✅ Generate New SKU
                                     </button>
                                 </div>
@@ -318,7 +313,7 @@
                     <label class="form-label">Item Photo</label>
                     <div class="input-group">
                         <input type="file" name="image" class="form-control" accept="image/*" id="fileInput">
-                        <button type="button" class="btn btn-outline-secondary" onclick="openCameraModal()">
+                        <button type="button" class="btn btn-outline-secondary" data-action="openCameraModal">
                             📷 Take Photo
                         </button>
                     </div>
@@ -455,7 +450,7 @@
                                 <input type="number" step="0.01" name="buy_price" id="buyPriceInput"
                                     class="form-control"
                                     value="{{ item.buy_price if edit_mode and item.buy_price else (prefill.buy_price if prefill and prefill.buy_price else '') }}"
-                                    placeholder="0.00" oninput="updateSuggestedPrice()">
+                                    placeholder="0.00" data-input="updateSuggestedPrice">
                             </div>
                             <div class="col-md-6 mb-2">
                                 <label class="form-label">Sell Price</label>
@@ -481,7 +476,7 @@
                                     <input type="url" name="source_url" id="sourceUrl" class="form-control"
                                         value="{{ (item.source_url if item.source_url and item.source_url != 'None' else ('https://www.amazon.com/dp/' + item.asin if item.asin else '')) if edit_mode else (prefill.source_url if prefill and prefill.source_url else '') }}"
                                         placeholder="https://ebay.com/... or other purchase link">
-                                    <button type="button" class="btn btn-outline-primary" onclick="fetchImageFromUrl()"
+                                    <button type="button" class="btn btn-outline-primary" data-action="fetchImageFromUrl"
                                         id="fetchImageBtn">
                                         🔍 Fetch Image
                                     </button>
@@ -617,7 +612,7 @@
                                         <div class="border rounded p-2 position-relative">
                                             <img src="{{ img }}" class="img-thumbnail" style="height: 100px; width: 100%; object-fit: contain;">
                                             <div class="mt-2 d-flex justify-content-between align-items-center">
-                                                <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" onclick="setSwapCover({{ img|js }})">Make Cover</button>
+                                                <button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" data-action="setSwapCover" data-img="{{ img }}">Make Cover</button>
                                                 <div class="form-check mb-0">
                                                     <input class="form-check-input" type="checkbox" name="delete_images" value="{{ img }}" id="del_img_{{ loop.index }}">
                                                     <label class="form-check-label text-danger small" for="del_img_{{ loop.index }}">Del</label>
@@ -694,7 +689,7 @@
                             </td>
                             <td>
                                 <form action="/inventory/transaction/delete/{{ tx.id }}" method="POST"
-                                    onsubmit="return confirm('Delete this record? Stock will be reverted.');"
+                                    data-confirm="Delete this record? Stock will be reverted."
                                     style="display:inline;">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button type="submit" class="btn btn-sm btn-outline-danger"
@@ -724,301 +719,24 @@
                     <canvas id="cameraCanvas" style="display:none;"></canvas>
                 </div>
                 <div class="modal-footer justify-content-center">
-                    <button type="button" class="btn btn-outline-secondary" onclick="switchCamera()">🔄 Flip</button>
-                    <button type="button" class="btn btn-primary" onclick="capturePhoto()">📸 Capture</button>
+                    <button type="button" class="btn btn-outline-secondary" data-action="switchCamera">🔄 Flip</button>
+                    <button type="button" class="btn btn-primary" data-action="capturePhoto">📸 Capture</button>
                 </div>
             </div>
         </div>
     </div>
 {% endblock %}
 
+{% block page_data %}
+    <script type="application/json" id="page-data">{{ {
+        'allowCustomLocations': true if config and config.LOCATION_ALLOW_CUSTOM else false,
+        'marginEnabled': true if config and config.PREFERRED_MARGIN_ENABLED else false,
+        'marginPercent': config.PREFERRED_MARGIN_PERCENT if config and config.PREFERRED_MARGIN_PERCENT else 20,
+    }|tojson }}</script>
+{% endblock %}
+
 {% block scripts %}
     {{ vendor.tom_select_js() }}
-
-    <!-- Tom Select Initialization for Location Dropdowns -->
-    <script>
-        var allowCustomLocations = {{ 'true' if config and config.LOCATION_ALLOW_CUSTOM else 'false' }};
-
-        document.querySelectorAll('.location-select').forEach(function (el) {
-            new TomSelect(el, {
-                create: allowCustomLocations,
-                createOnBlur: allowCustomLocations,
-                placeholder: 'Select or type...',
-                allowEmptyOption: true,
-                sortField: { field: 'text', direction: 'asc' }
-            });
-        });
-    </script>
-
-    <script>
-        // Custom category toggle
-        const catSelect = document.getElementById('categorySelect');
-        const customCat = document.getElementById('customCategory');
-
-        if (catSelect) {
-            catSelect.addEventListener('change', function () {
-                if (this.value === 'custom') {
-                    customCat.style.display = 'block';
-                    customCat.name = 'category';
-                    this.name = '';
-                } else {
-                    customCat.style.display = 'none';
-                    customCat.name = '';
-                    this.name = 'category';
-                }
-            });
-        }
-
-        // SKU Regeneration function (edit mode)
-        function regenerateSku() {
-            const category = document.getElementById('newSkuCategory').value;
-
-            // Call server to generate a new SKU
-            fetch('/inventory/generate-sku?category=' + encodeURIComponent(category))
-                .then(response => response.json())
-                .then(data => {
-                    if (data.sku) {
-                        document.getElementById('currentSku').value = data.sku;
-                        document.getElementById('regenerateSkuFlag').value = 'true';
-                        document.getElementById('newSkuCategoryHidden').value = category;
-
-                        // Collapse the regenerate section
-                        bootstrap.Collapse.getOrCreateInstance(document.getElementById('regenerateSkuSection')).hide();
-
-                        alert('SKU updated to: ' + data.sku + '\n\nDon\'t forget to save the item!');
-                    } else {
-                        alert('Error generating SKU: ' + (data.error || 'Unknown error'));
-                    }
-                })
-                .catch(err => {
-                    alert('Error: ' + err);
-                });
-        }
-
-        // Fetch image from eBay/Amazon URL
-        function fetchImageFromUrl() {
-            const url = document.getElementById('sourceUrl').value.trim();
-            const btn = document.getElementById('fetchImageBtn');
-
-            if (!url) {
-                alert('Please enter a product URL first');
-                return;
-            }
-
-            // Show loading state
-            const originalText = btn.innerHTML;
-            btn.innerHTML = '⏳ Fetching...';
-            btn.disabled = true;
-
-            fetch('/inventory/fetch-image-from-url', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': '{{ csrf_token() }}'
-                },
-                body: JSON.stringify({ url: url })
-            })
-                .then(response => {
-                    // Parse JSON regardless of status to get error message
-                    return response.json().then(data => {
-                        return { ok: response.ok, status: response.status, data: data };
-                    });
-                })
-                .then(result => {
-                    if (result.ok && result.data.image_url) {
-                        // Success - update the hidden image URL input
-                        const imageUrlInput = document.getElementById('imageUrlInput');
-                        if (imageUrlInput) {
-                            imageUrlInput.value = result.data.image_url;
-                        }
-
-                        // Update and show the preview
-                        const preview = document.getElementById('imagePreview');
-                        const previewContainer = document.getElementById('imagePreviewContainer');
-                        if (preview) {
-                            preview.src = result.data.image_url;
-                        }
-                        if (previewContainer) {
-                            previewContainer.style.display = 'block';
-                        }
-
-                        alert('✅ Image found and applied!\n\nDon\'t forget to save the item.');
-                    } else {
-                        // Error - show the error message
-                        const errorMsg = result.data.error || 'Could not find an image at that URL.';
-                        alert('❌ ' + errorMsg + '\n\nTry a different URL or enter the image URL manually.');
-                    }
-                })
-                .catch(err => {
-                    alert('❌ Error fetching image: ' + err.message);
-                })
-                .finally(() => {
-                    btn.innerHTML = originalText;
-                    btn.disabled = false;
-                });
-        }
-
-        // Check if SKU already exists (client-side validation)
-        function checkSkuExists() {
-            const skuInput = document.getElementById('skuInput');
-            const feedback = document.getElementById('skuFeedback');
-
-            if (!skuInput || !feedback) return;
-
-            const sku = skuInput.value.trim();
-            if (!sku) {
-                feedback.style.display = 'none';
-                skuInput.classList.remove('is-invalid');
-                return;
-            }
-
-            fetch('/inventory/check-sku-exists?sku=' + encodeURIComponent(sku))
-                .then(response => response.json())
-                .then(data => {
-                    if (data.exists) {
-                        feedback.textContent = '⚠️ This SKU already exists! Please use a different SKU.';
-                        feedback.style.display = 'block';
-                        skuInput.classList.add('is-invalid');
-                    } else {
-                        feedback.textContent = '✓ SKU is available';
-                        feedback.style.display = 'block';
-                        feedback.classList.remove('text-danger');
-                        feedback.classList.add('text-success');
-                        skuInput.classList.remove('is-invalid');
-                        skuInput.classList.add('is-valid');
-
-                        // Reset after 3 seconds
-                        setTimeout(() => {
-                            feedback.style.display = 'none';
-                            feedback.classList.add('text-danger');
-                            feedback.classList.remove('text-success');
-                            skuInput.classList.remove('is-valid');
-                        }, 3000);
-                    }
-                })
-                .catch(err => {
-                    console.error('Error checking SKU:', err);
-                });
-        }
-
-        // Dark mode
-        if (localStorage.getItem('rscp_darkmode') === 'true') {
-            document.body.classList.add('dark-mode');
-        }
-
-        // Suggested price calculation based on margin settings
-        function updateSuggestedPrice() {
-            if (!marginEnabled) return;
-
-            const buyPrice = parseFloat(document.getElementById('buyPriceInput').value) || 0;
-            const sellInput = document.getElementById('sellPriceInput');
-
-            if (buyPrice > 0 && !sellInput.value) {
-                const suggestedPrice = (buyPrice * (1 + marginPercent / 100)).toFixed(2);
-                sellInput.placeholder = '~$' + suggestedPrice;
-            } else if (buyPrice === 0) {
-                sellInput.placeholder = '0.00';
-            }
-        }
-
-        // Initialize on page load
-        updateSuggestedPrice();
-
-        // Camera Logic
-        let stream = null;
-        let currentFacingMode = 'environment'; // default to rear camera
-
-        function openCameraModal() {
-            const modal = new bootstrap.Modal(document.getElementById('cameraModal'));
-            modal.show();
-            startCamera();
-
-            // Stop camera when modal is closed
-            document.getElementById('cameraModal').addEventListener('hidden.bs.modal', stopCamera);
-        }
-
-        async function startCamera() {
-            try {
-                if (stream) stopCamera();
-
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: currentFacingMode }
-                });
-                const video = document.getElementById('cameraVideo');
-                video.srcObject = stream;
-            } catch (err) {
-                console.error("Camera error:", err);
-                alert("Could not access camera: " + err.message);
-            }
-        }
-
-        function stopCamera() {
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-                stream = null;
-            }
-        }
-
-        function switchCamera() {
-            currentFacingMode = currentFacingMode === 'environment' ? 'user' : 'environment';
-            startCamera();
-        }
-
-        function capturePhoto() {
-            const video = document.getElementById('cameraVideo');
-            const canvas = document.getElementById('cameraCanvas');
-
-            // Set canvas dimensions to match video
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-
-            const context = canvas.getContext('2d');
-            context.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-            // Get base64 data
-            const imageData = canvas.toDataURL('image/jpeg', 0.8);
-
-            // Upload
-            fetch('/inventory/upload_photo', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': '{{ csrf_token() }}'
-                },
-                body: JSON.stringify({ image: imageData })
-            })
-                .then(res => res.json())
-                .then(data => {
-                    if (data.url) {
-                        // Update preview and hidden input
-                        document.getElementById('imageUrlInput').value = data.url;
-
-                        const preview = document.getElementById('imagePreview');
-                        preview.src = data.url;
-                        document.getElementById('imagePreviewContainer').style.display = 'block';
-
-                        // Close modal
-                        const modalEl = document.getElementById('cameraModal');
-                        const modal = bootstrap.Modal.getInstance(modalEl);
-                        modal.hide();
-
-                        // Cleanup
-                        stopCamera();
-                    } else {
-                        alert('Upload failed: ' + data.error);
-                    }
-                })
-                .catch(err => alert('Error uploading photo: ' + err));
-        }
-
-        // Swap cover image
-        function setSwapCover(imgUrl) {
-            document.getElementById('swapCoverInput').value = imgUrl;
-            // Find the form and submit it
-            const form = document.getElementById('swapCoverInput').closest('form');
-            if (form) {
-                form.submit();
-            }
-        }
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/inventory-common.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/pages/inventory-add.js') }}"></script>
 {% endblock %}

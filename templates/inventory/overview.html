@@ -282,7 +282,7 @@
                                     <form method="POST" action="{{ url_for('inventory.toggle_legacy', item_id=item.id) }}" class="d-inline">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                         <button type="submit" class="btn btn-sm btn-outline-secondary py-0" title="Mark as legacy/discontinued"
-                                            onclick="return confirm('Mark this item as Legacy? It will be hidden from inventory lists.');">📦 Legacy</button>
+                                            data-confirm="Mark this item as Legacy? It will be hidden from inventory lists.">📦 Legacy</button>
                                     </form>
                                 </td>
                                 {% endif %}
@@ -309,54 +309,12 @@
     </div>
 {% endblock %}
 
+{% block page_data %}
+    <script type="application/json" id="page-data">{{ {'salesTrend': sales_trend}|tojson }}</script>
+{% endblock %}
+
 {% block scripts %}
     {{ vendor.chartjs() }}
-    <script>
-        // Dark mode
-        if (localStorage.getItem('rscp_darkmode') === 'true') {
-            document.body.classList.add('dark-mode');
-        }
-
-        // Sales trend chart
-        const ctx = document.getElementById('salesChart').getContext('2d');
-        const salesData = {{ sales_trend | tojson }};
-
-        new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: salesData.map(d => d.date),
-                datasets: [{
-                    label: 'Units Sold/Consumed',
-                    data: salesData.map(d => d.count),
-                    borderColor: '#6f42c1',
-                    backgroundColor: 'rgba(111, 66, 193, 0.1)',
-                    fill: true,
-                    tension: 0.3
-                }]
-            },
-            options: {
-                responsive: true,
-                plugins: {
-                    legend: { display: false }
-                },
-                scales: {
-                    y: { beginAtZero: true }
-                }
-            }
-        });
-
-        // Auto-Refresh Stats (every 5s while the tab is visible)
-        rscpPoll(function (signal) {
-            return fetch('/inventory/api/overview', { signal })
-                .then(r => r.json())
-                .then(data => {
-                    if (data.total_items !== undefined) document.getElementById('stat_total_items').innerText = data.total_items;
-                    if (data.total_quantity !== undefined) document.getElementById('stat_total_quantity').innerText = data.total_quantity;
-                    if (data.last_audit !== undefined) document.getElementById('stat_last_audit').innerText = data.last_audit;
-                    if (data.low_stock !== undefined) document.getElementById('stat_low_stock').innerText = data.low_stock;
-                    if (data.out_of_stock !== undefined) document.getElementById('stat_out_of_stock').innerText = data.out_of_stock;
-                })
-                .catch(e => console.error("Stats refresh failed", e));
-        }, 5000, { delayFirst: true });
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/inventory-common.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/pages/inventory-overview.js') }}"></script>
 {% endblock %}

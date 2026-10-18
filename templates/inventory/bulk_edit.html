@@ -204,29 +204,20 @@
 
         <div class="d-grid gap-2 mb-5">
             <button type="submit" class="btn btn-primary btn-lg"
-                onclick="return confirm('Are you sure you want to update these items?')">Update All Selected
+                data-confirm="Are you sure you want to update these items?">Update All Selected
                 Items</button>
         </div>
     </form>
 {% endblock %}
 
+{% block page_data %}
+    <script type="application/json" id="page-data">{{ {
+        'allowCustomLocations': true if config and config.LOCATION_ALLOW_CUSTOM else false,
+    }|tojson }}</script>
+{% endblock %}
+
 {% block scripts %}
     {{ vendor.tom_select_js() }}
-    <script>
-        // Dark mode
-        if (localStorage.getItem('rscp_darkmode') === 'true') {
-            document.body.classList.add('dark-mode');
-        }
-
-        // Init TomSelect for locations
-        var allowCustomLocations = {{ 'true' if config and config.LOCATION_ALLOW_CUSTOM else 'false' }};
-        document.querySelectorAll('.location-select').forEach(function (el) {
-            new TomSelect(el, {
-                create: allowCustomLocations,
-                createOnBlur: allowCustomLocations,
-                placeholder: '(Unchanged)',
-                allowEmptyOption: true
-            });
-        });
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/inventory-common.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/pages/inventory-bulk-edit.js') }}"></script>
 {% endblock %}
