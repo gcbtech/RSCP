@@ -7,16 +7,17 @@ import json
 import secrets
 import traceback
 from datetime import datetime
-from flask import request, redirect, url_for, flash, render_template, make_response
+from flask import request, redirect, url_for, flash, render_template, make_response, session
 from flask_login import current_user, login_required
 
 from app.routes.pos import pos_bp, PAYMENT_METHODS
 from app.utils.permissions import require_permission
 from app.routes.pos.core import (
-    get_cart, save_cart, clear_cart, get_tax_rate, calculate_tax,
+    get_cart, mutate_cart, current_cart_version, resolve_register_id, get_tax_rate,
     generate_order_number, round_money, calculate_percentage, compute_cart_totals,
     get_pos_setting
 )
+from app.services import pos_registers
 from app.services.db import get_db_connection, get_request_db
 from app.services.pos_ledger import allocate_payments, write_payments, order_payments
 
@@ -42,6 +43,7 @@ def checkout():
 
     return render_template('pos/checkout.html',
                            cart=cart,
+                           cart_version=current_cart_version(),
                            subtotal=totals['subtotal'],
                            order_discount=totals['order_discount'],
                            coupon_discount=totals['coupon_discount'],
@@ -62,11 +64,18 @@ def checkout():
 def checkout_process():
     """Record the sale.
 
-    Everything from re-validating the coupon to decrementing stock happens in
-    one write transaction (BEGIN IMMEDIATE), so concurrent registers cannot
-    interleave: order numbers stay unique, a single-use coupon is redeemed
-    once, and a resubmitted form (same checkout_token) is recorded once.
+    Everything from re-reading the cart to emptying it happens in one write
+    transaction (BEGIN IMMEDIATE), so concurrent registers cannot interleave:
+    order numbers stay unique, a single-use coupon is redeemed once, and a
+    resubmitted form (same checkout_token) is recorded once.
+
+    The register cart is re-read INSIDE that transaction and emptied in it
+    too: what is sold is exactly what is cleared. An item a paired scanner
+    adds after the checkout page opened either changes the total/version
+    (and the sale is refused for review) or lands after the commit in the
+    next, empty cart -- it is never sold unseen or silently wiped.
     """
+    register_id = resolve_register_id()
     cart = get_cart()
 
     if not cart['items']:
@@ -93,6 +102,24 @@ def checkout_process():
                 flash(f"Order {existing['order_number']} was already completed.")
                 return redirect(url_for('pos.receipt', order_number=existing['order_number']))
 
+        # The cart as it is NOW, under the write lock: nothing (scanner,
+        # handheld, another tab) can change it until this transaction ends.
+        if register_id:
+            cart, locked_version = pos_registers.read_register_cart(conn, register_id)
+            if not cart['items']:
+                conn.execute('ROLLBACK')
+                flash('Cart is empty.')
+                return redirect(url_for('pos.sales'))
+            expected_version = (request.form.get('cart_version') or '').strip()
+            if expected_version:
+                try:
+                    if int(expected_version) != locked_version:
+                        conn.execute('ROLLBACK')
+                        flash('The cart changed since this checkout page opened. Please review the new total.')
+                        return redirect(url_for('pos.checkout'))
+                except ValueError:
+                    pass
+
         # Re-validate the coupon against the cart as it is NOW. The discount
         # stored on the cart was computed when the coupon was applied; items
         # may have been removed since, and limits must be checked under the lock.
@@ -103,8 +130,8 @@ def checkout_process():
             result = evaluate_coupon(coupon.get('code'), cart['items'], subtotal_now, conn, cart=cart)
             if not result.get('valid'):
                 conn.execute('ROLLBACK')
-                cart['applied_coupon'] = None
-                save_cart(cart)
+                # Drop only the coupon; never write back this snapshot
+                mutate_cart(lambda c: c.update(applied_coupon=None) if c.get('applied_coupon') else None)
                 flash(f"Coupon removed: {result.get('error', 'no longer valid')} Please review the total.")
                 return redirect(url_for('pos.checkout'))
             coupon['discount'] = result['discount_amount']
@@ -276,8 +303,13 @@ def checkout_process():
                     raise ValueError('Coupon has reached its maximum number of uses.')
                 logger.info(f"Recorded redemption of coupon ID {coupon_id} for order {order_number}")
         
+        # Empty exactly the cart that was just sold, in the same transaction
+        if register_id:
+            pos_registers.write_register_cart(conn, register_id, pos_registers.empty_cart())
         conn.commit()
-        clear_cart()
+        if not register_id:
+            session.pop('pos_cart', None)
+            session.modified = True
         
         logger.info(f"Order {order_number} completed by {current_user.username}, total: ${total}")
         flash(f'Order {order_number} completed! Total: ${total:.2f}')

@@ -3,6 +3,7 @@
     {% if cart['items'] %}
     <form action="{{ url_for('pos.cart_clear') }}" method="POST" class="d-inline">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        {% if cart_version is not none %}<input type="hidden" name="cart_version" value="{{ cart_version }}">{% endif %}
         <button type="submit" class="btn btn-sm btn-outline-danger"
             onclick="return confirm('Clear entire cart?')">Clear</button>
     </form>
@@ -12,7 +13,7 @@
 <div class="pos-card-body flex-grow-1" style="overflow-y: auto;">
     {% if cart['items'] %}
     {% for item in cart['items'] %}
-    <div class="cart-item">
+    <div class="cart-item" data-line-id="{{ item.line_id }}">
         <div class="flex-grow-1">
             <div class="cart-item-name">{{ item.name }}</div>
             <div class="cart-item-sku">
@@ -38,9 +39,10 @@
                 {% endif %}
         </div>
         <div class="text-center mx-2">
-            <form action="{{ url_for('pos.cart_update', index=loop.index0) }}" method="POST"
+            <form action="{{ url_for('pos.cart_update', line_id=item.line_id) }}" method="POST"
                 class="d-inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                {% if cart_version is not none %}<input type="hidden" name="cart_version" value="{{ cart_version }}">{% endif %}
                 <input type="number" name="quantity" value="{{ item.quantity }}" min="1" max="999"
                     class="form-control form-control-sm text-center"
                     style="width: 60px; display: inline-block;" onchange="this.form.submit()"
@@ -56,8 +58,9 @@
             {% endif %}
             ${{ "%.2f"|format(item.line_total) }}
         </div>
-        <form action="{{ url_for('pos.cart_remove', index=loop.index0) }}" method="POST" class="d-inline">
+        <form action="{{ url_for('pos.cart_remove', line_id=item.line_id) }}" method="POST" class="d-inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            {% if cart_version is not none %}<input type="hidden" name="cart_version" value="{{ cart_version }}">{% endif %}
             <button type="submit" class="cart-item-remove">×</button>
         </form>
     </div>

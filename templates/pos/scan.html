@@ -331,6 +331,10 @@
             return div.innerHTML;
         }
 
+        function lineIdOf(item) {
+            return String(item.line_id || '').replace(/[^A-Za-z0-9_-]/g, '');
+        }
+
         function toast(msg, ms) {
             const el = document.getElementById('toastMsg');
             el.textContent = msg;
@@ -367,23 +371,26 @@
 
         // --- RENDER (consumes compute_cart_totals payload) ---
         function renderCart(data) {
+            if (typeof data.version === 'number') cartVersion = data.version;
             const items = data.items || [];
             const list = document.getElementById('itemList');
 
             if (!items.length) {
                 list.innerHTML = '<div class="empty-hint">🛒 Cart is empty<br><small>Scan an item to start</small></div>';
             } else {
-                list.innerHTML = items.map((item, i) => `
+                // Lines are addressed by their stable line_id, never by list
+                // position: the register may add/remove lines at any moment.
+                list.innerHTML = items.map((item) => `
                     <div class="scan-item">
                         <div class="info">
                             <div class="name">${esc(item.name)}</div>
                             <div class="meta">${fmt(item.unit_price)} each · ${fmt(item.line_total)}</div>
                         </div>
                         <div class="qty-controls">
-                            <button type="button" onclick="changeQty(${i}, ${item.quantity - 1})">−</button>
+                            <button type="button" onclick="changeQty('${lineIdOf(item)}', -1, ${Number(item.quantity)})">−</button>
                             <span class="qty">${esc(String(item.quantity))}</span>
-                            <button type="button" onclick="changeQty(${i}, ${item.quantity + 1})">+</button>
-                            <button type="button" class="remove-btn" onclick="removeItem(${i})">✕</button>
+                            <button type="button" onclick="changeQty('${lineIdOf(item)}', 1, ${Number(item.quantity)})">+</button>
+                            <button type="button" class="remove-btn" onclick="removeItem('${lineIdOf(item)}')">✕</button>
                         </div>
                     </div>
                 `).join('');
@@ -462,17 +469,21 @@
             }
         }
 
-        async function changeQty(index, qty) {
-            if (qty < 1) return removeItem(index);
+        // Relative change (+1/-1) so a concurrent add of the same item at the
+        // register isn't overwritten by this device's stale quantity.
+        async function changeQty(lineId, delta, shownQty) {
+            if (delta < 0 && shownQty + delta < 1) return removeItem(lineId);
             try {
-                const data = await mutate('/pos/cart/update/' + index, { quantity: qty });
+                const data = await mutate('/pos/cart/update/' + encodeURIComponent(lineId),
+                    { quantity_delta: delta, cart_version: cartVersion });
                 if (data) { renderCart(data); showMessages(data); }
             } catch (err) { toast('Update failed — check connection'); }
         }
 
-        async function removeItem(index) {
+        async function removeItem(lineId) {
             try {
-                const data = await mutate('/pos/cart/remove/' + index, {});
+                const data = await mutate('/pos/cart/remove/' + encodeURIComponent(lineId),
+                    { cart_version: cartVersion });
                 if (!data) return;
                 if (data.error === 'manager_required') {
                     toast('Manager approval required — void this item at the register.');
@@ -486,8 +497,8 @@
         async function clearCartRemote() {
             toggleMenu();
             try {
-                const data = await mutate('/pos/cart/clear', {});
-                if (data) renderCart(data);
+                const data = await mutate('/pos/cart/clear', { cart_version: cartVersion });
+                if (data) { renderCart(data); showMessages(data); }
             } catch (err) { toast('Clear failed — check connection'); }
         }
 
