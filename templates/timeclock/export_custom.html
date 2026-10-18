@@ -30,7 +30,7 @@
                     <!-- Period Selection -->
                     <div class="mb-4">
                         <label class="form-label fw-bold">Pay Period / Date Range</label>
-                        <select name="period" id="periodSelect" class="form-select mb-2" onchange="toggleCustomDates()">
+                        <select name="period" id="periodSelect" class="form-select mb-2" data-change="toggleCustomDates">
                             {% for p in periods %}
                             <option value="{{ p.start }}|{{ p.end }}">{{ p.label }}</option>
                             {% endfor %}
@@ -61,24 +61,5 @@
 {% endblock %}
 {% block scripts %}
     {{ vendor.tom_select_js() }}
-    <script>
-        new TomSelect('#userSelect', {
-            plugins: ['remove_button'],
-            create: false
-        });
-
-        function toggleCustomDates() {
-            const val = document.getElementById('periodSelect').value;
-            const customDiv = document.getElementById('customDates');
-            const inputs = customDiv.querySelectorAll('input');
-
-            if (val === 'custom') {
-                customDiv.style.display = 'flex';
-                inputs.forEach(i => i.required = true);
-            } else {
-                customDiv.style.display = 'none';
-                inputs.forEach(i => i.required = false);
-            }
-        }
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/timeclock-export-custom.js') }}"></script>
 {% endblock %}

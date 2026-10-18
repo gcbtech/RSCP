@@ -103,7 +103,7 @@
                                             method="POST" style="display:inline;">
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                             <button type="submit" class="btn btn-sm btn-outline-danger"
-                                                onclick="return confirm('Delete this shift?')">Delete</button>
+                                                data-confirm="Delete this shift?">Delete</button>
                                         </form>
                                     </td>
                                 </tr>
@@ -162,7 +162,7 @@
 
                         <div class="mb-3">
                             <label class="form-label">Frequency</label>
-                            <select name="frequency" class="form-select" onchange="toggleRefDate(this.value)">
+                            <select name="frequency" class="form-select" data-change="toggleRefDate">
                                 <option value="weekly">Weekly</option>
                                 <option value="biweekly">Bi-Weekly</option>
                             </select>
@@ -259,13 +259,10 @@
                 </div>
             </div>
         </div>
-
-        <script>
-            function toggleRefDate(val) {
-                document.getElementById('refDateDiv').style.display = val === 'biweekly' ? 'block' : 'none';
-            }
-        </script>
         {% endif %}
 
     </div>
+{% endblock %}
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/pages/timeclock-shifts.js') }}"></script>
 {% endblock %}

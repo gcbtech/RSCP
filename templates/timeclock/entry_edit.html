@@ -55,7 +55,7 @@
             <hr class="my-4">
 
             <form action="{{ url_for('timeclock.delete_entry', entry_id=entry.id) }}" method="POST"
-                onsubmit="return confirm('Are you sure you want to PERMANENTLY delete this record?');">
+                data-confirm="Are you sure you want to PERMANENTLY delete this record?">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-danger w-100">Delete Record</button>
             </form>

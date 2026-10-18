@@ -51,10 +51,10 @@
                                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                                 <button type="submit" name="action" value="approve"
                                                     class="btn btn-success btn-sm"
-                                                    onclick="return confirm('Approve this request?')">✓</button>
+                                                    data-confirm="Approve this request?">✓</button>
                                                 <button type="submit" name="action" value="deny"
                                                     class="btn btn-danger btn-sm"
-                                                    onclick="return confirm('Deny this request?')">✕</button>
+                                                    data-confirm="Deny this request?">✕</button>
                                             </form>
                                         </td>
                                     </tr>

@@ -202,18 +202,7 @@
 </style>
 
 <!-- Sidebar Toggle Button -->
-<button class="sidebar-toggle" onclick="toggleSidebar()" title="Toggle Sidebar">☰</button>
-
-<script>
-    function toggleSidebar() {
-        document.body.classList.toggle('sidebar-hidden');
-        localStorage.setItem('rscp_sidebar_hidden', document.body.classList.contains('sidebar-hidden'));
-    }
-    // Restore sidebar state on load
-    if (localStorage.getItem('rscp_sidebar_hidden') === 'true') {
-        document.body.classList.add('sidebar-hidden');
-    }
-</script>
+<button class="sidebar-toggle" data-action="toggleSidebar" title="Toggle Sidebar">☰</button>
 
 <nav id="quickSidebar">
     {% set is_inventory = '/inventory' in request.path %}
@@ -304,7 +293,7 @@
         <!-- Notification Bell -->
         <div class="notification-wrapper mb-3" style="position: relative;">
             <button class="btn btn-outline-light btn-sm w-100 d-flex align-items-center justify-content-between"
-                onclick="toggleNotifications()" id="notificationBtn">
+                data-action="toggleNotifications" id="notificationBtn">
                 <span>🔔 Notifications</span>
                 <span id="notificationBadge" class="badge bg-danger" style="display: none;">0</span>
             </button>
@@ -313,7 +302,7 @@
             <div id="notificationDropdown" class="notification-dropdown" style="display: none;">
                 <div class="notification-header d-flex justify-content-between align-items-center p-2 border-bottom">
                     <strong>Notifications</strong>
-                    <button class="btn btn-link btn-sm p-0 text-decoration-none" onclick="markAllRead()">Mark all
+                    <button class="btn btn-link btn-sm p-0 text-decoration-none" data-action="markAllRead">Mark all
                         read</button>
                 </div>
                 <div id="notificationList" class="notification-list">
@@ -353,243 +342,7 @@
     <a href="{{ url_for('admin.admin_panel', tab='settings') }}#backups-card" class="alert-link">Check backups</a>
     <button type="button" class="btn-close" aria-label="Dismiss"></button>
 </div>
-<script>
-    (function () {
-        var el = document.getElementById('backupWarning'), key = 'rscp_backup_warning_dismissed';
-        try { if (sessionStorage.getItem(key) === el.dataset.key) return; } catch (e) { }
-        el.style.display = '';
-        el.querySelector('.btn-close').addEventListener('click', function () {
-            el.remove();
-            try { sessionStorage.setItem(key, el.dataset.key); } catch (e) { }
-        });
-    })();
-</script>
 {% endif %}
 
-<script>
-    // Dark Mode Persistence
-    (function () {
-        const darkModeKey = 'rscp_dark_mode';
-
-        // Load saved preference on page load
-        function loadDarkMode() {
-            const savedMode = localStorage.getItem(darkModeKey);
-            if (savedMode === 'true') {
-                document.body.classList.add('dark-mode');
-            } else if (savedMode === 'false') {
-                document.body.classList.remove('dark-mode');
-            }
-            // If no saved preference, do nothing (use default)
-        }
-
-        // Save preference when toggled
-        function saveDarkMode(enabled) {
-            localStorage.setItem(darkModeKey, enabled.toString());
-        }
-
-        // Run on page load
-        loadDarkMode();
-
-        // Expose toggle function globally for any dark mode buttons
-        window.toggleDarkMode = function () {
-            document.body.classList.toggle('dark-mode');
-            saveDarkMode(document.body.classList.contains('dark-mode'));
-        };
-    })();
-
-    // Toast Notifications - Auto-dismiss flash messages
-    (function () {
-        function createToast(message, type) {
-            const container = document.getElementById('toastContainer');
-            if (!container) return;
-
-            const bgClass = type === 'error' ? 'bg-danger' :
-                type === 'warning' ? 'bg-warning text-dark' :
-                    type === 'info' ? 'bg-info text-dark' : 'bg-success';
-
-            const toast = document.createElement('div');
-            toast.className = `toast show align-items-center ${bgClass} text-white border-0`;
-            toast.setAttribute('role', 'alert');
-            toast.innerHTML = `
-            <div class="d-flex">
-                <div class="toast-body"></div>
-                <button type="button" class="btn-close btn-close-white me-2 m-auto" onclick="this.parentElement.parentElement.remove()"></button>
-            </div>
-        `;
-            toast.querySelector('.toast-body').textContent = message;
-
-            container.appendChild(toast);
-
-            // Auto-dismiss after 5 seconds
-            setTimeout(() => {
-                toast.classList.remove('show');
-                setTimeout(() => toast.remove(), 300);
-            }, 5000);
-        }
-
-        // Convert any existing flash messages to toasts on page load
-        document.addEventListener('DOMContentLoaded', function () {
-            const alerts = document.querySelectorAll('.alert-dismissible, .alert-toast');
-            alerts.forEach(alert => {
-                const message = alert.textContent.trim();
-                const type = alert.classList.contains('alert-danger') ? 'error' :
-                    alert.classList.contains('alert-warning') ? 'warning' :
-                        alert.classList.contains('alert-info') ? 'info' : 'success';
-                createToast(message, type);
-                alert.remove();
-            });
-        });
-
-        // Expose globally for manual use
-        window.showToast = createToast;
-    })();
-
-    // Sidebar toggle persistence
-    (function () {
-        const sidebarKey = 'rscp_sidebar_hidden';
-        if (localStorage.getItem(sidebarKey) === 'true') {
-            document.body.classList.add('sidebar-hidden');
-        }
-
-        window.toggleSidebar = function () {
-            document.body.classList.toggle('sidebar-hidden');
-            localStorage.setItem(sidebarKey, document.body.classList.contains('sidebar-hidden'));
-        };
-    })();
-
-    // Notification System
-    (function () {
-        let notificationDropdownOpen = false;
-
-        window.toggleNotifications = function () {
-            const dropdown = document.getElementById('notificationDropdown');
-            if (!dropdown) return;
-
-            notificationDropdownOpen = !notificationDropdownOpen;
-            dropdown.style.display = notificationDropdownOpen ? 'block' : 'none';
-
-            if (notificationDropdownOpen) {
-                loadNotifications();
-            }
-        };
-
-        window.loadNotifications = function () {
-            const list = document.getElementById('notificationList');
-            if (!list) return;
-
-            fetch('/api/notifications/list?include_read=true&limit=15')
-                .then(r => r.json())
-                .then(data => {
-                    if (data.notifications && data.notifications.length > 0) {
-                        list.innerHTML = data.notifications.map(n => `
-                            <div class="notification-item ${n.is_read ? '' : 'unread'} notification-type-${escapeHtml(n.type)}"
-                                 data-id="${escapeHtml(n.id)}" data-link="${escapeHtml(n.link || '')}"
-                                 onclick="openNotification(this.dataset.id, this.dataset.link)">
-                                <div class="title">${escapeHtml(n.title)}</div>
-                                ${n.message ? `<div class="message">${escapeHtml(n.message)}</div>` : ''}
-                                <div class="time">${formatTimeAgo(n.created_at)}</div>
-                            </div>
-                        `).join('');
-                    } else {
-                        list.innerHTML = '<div class="text-center text-muted py-4">No notifications</div>';
-                    }
-                    updateBadge(data.unread_count);
-                })
-                .catch(() => {
-                    list.innerHTML = '<div class="text-center text-muted py-3">Could not load notifications</div>';
-                });
-        };
-
-        window.openNotification = function (id, link) {
-            // Mark as read
-            fetch(`/api/notifications/${id}/read`, { method: 'POST', headers: { 'X-CSRFToken': '{{ csrf_token() }}' } })
-                .then(() => {
-                    if (link) {
-                        window.location.href = link;
-                    } else {
-                        loadNotifications();
-                    }
-                });
-        };
-
-        window.markAllRead = function () {
-            fetch('/api/notifications/read-all', { method: 'POST', headers: { 'X-CSRFToken': '{{ csrf_token() }}' } })
-                .then(() => loadNotifications());
-        };
-
-        function updateBadge(count) {
-            const badge = document.getElementById('notificationBadge');
-            if (badge) {
-                badge.textContent = count > 99 ? '99+' : count;
-                badge.style.display = count > 0 ? 'inline-block' : 'none';
-            }
-        }
-
-        function formatTimeAgo(dateStr) {
-            const date = new Date(dateStr);
-            const now = new Date();
-            const diff = Math.floor((now - date) / 1000);
-
-            if (diff < 60) return 'Just now';
-            if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
-            if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
-            if (diff < 604800) return Math.floor(diff / 86400) + 'd ago';
-            return date.toLocaleDateString();
-        }
-
-        // Close dropdown when clicking outside
-        document.addEventListener('click', function (e) {
-            const wrapper = document.querySelector('.notification-wrapper');
-            if (wrapper && !wrapper.contains(e.target) && notificationDropdownOpen) {
-                toggleNotifications();
-            }
-        });
-
-        // Load unread count on page load
-        document.addEventListener('DOMContentLoaded', function () {
-            fetch('/api/notifications/count')
-                .then(r => r.json())
-                .then(data => updateBadge(data.count))
-                .catch(() => { });
-        });
-    })();
-
-    // Background polling for live-updating pages. Each run waits for the previous one to
-    // finish, a request that hangs is aborted after `timeoutMs`, and polling pauses while
-    // the tab is hidden, then runs again the moment the tab is shown. (setInterval + fetch
-    // keeps starting requests whether or not the last ones finished, so a tab left open
-    // can build a queue of stuck requests that the next click has to wait behind.)
-    //   task(signal) -> Promise   pass `signal` to fetch()
-    //   options.delayFirst        wait one interval before the first run (data already on the page)
-    window.rscpPoll = function (task, intervalMs, options) {
-        options = options || {};
-        const timeoutMs = options.timeoutMs || 10000;
-        let timer = null;
-        let running = false;
-
-        async function run() {
-            clearTimeout(timer);
-            timer = null;
-            if (running || document.visibilityState === 'hidden') return;
-            running = true;
-            const controller = new AbortController();
-            const abortTimer = setTimeout(() => controller.abort(), timeoutMs);
-            try {
-                await task(controller.signal);
-            } catch (e) {
-                if (e.name !== 'AbortError') console.warn('[rscpPoll]', e);
-            } finally {
-                clearTimeout(abortTimer);
-                running = false;
-                if (document.visibilityState !== 'hidden') timer = setTimeout(run, intervalMs);
-            }
-        }
-
-        document.addEventListener('visibilitychange', function () {
-            if (document.visibilityState === 'visible') run();
-        });
-        if (options.delayFirst) timer = setTimeout(run, intervalMs);
-        else run();
-        return { refresh: run };
-    };
-</script>
+{# Sidebar state, backup warning, dark mode, toasts, notifications, rscpPoll #}
+<script src="{{ url_for('static', filename='js/nav.js') }}"></script>

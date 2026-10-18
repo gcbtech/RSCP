@@ -28,5 +28,5 @@
     {% endif %}
 {% endblock %}
 {% block scripts %}
-    <script>if (localStorage.getItem('rscp_darkmode') === 'true') { document.body.style.backgroundColor = '#121212'; document.body.style.color = '#e0e0e0'; }</script>
+    <script src="{{ url_for('static', filename='js/pages/receiving-lists.js') }}"></script>
 {% endblock %}

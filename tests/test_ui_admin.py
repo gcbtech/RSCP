@@ -2,6 +2,7 @@
 (templates/base.html): one document, one Bootstrap, every tab's forms present,
 no secrets in the HTML."""
 import json
+import os
 import re
 
 import pytest
@@ -21,7 +22,7 @@ TABS = {
         'action="/admin/reset_password/cashier"', 'name="group" value="security"',
         'name="group" value="sso"',
         'name="group" value="notifications"', 'name="group" value="modules"',
-        'onclick="checkForUpdates()"', 'id="updateProgressModal"', 'id="rollbackSection"']),
+        'data-action="checkForUpdates"', 'id="updateProgressModal"', 'id="rollbackSection"']),
 }
 
 SECRETS = {
@@ -52,7 +53,7 @@ def test_admin_tab_renders_through_layout(fresh_client, tab):
     # Chart.js comes from the pinned vendor macro, not an unpinned CDN URL
     assert 'chart.js@4.4.0' in body and 'npm/chart.js"' not in body
     # page scripts run after the Bootstrap bundle
-    assert body.index('bootstrap.bundle.min.js') < body.index('function refreshPackages')
+    assert body.index('bootstrap.bundle.min.js') < body.index('js/pages/admin.js')
     # no Jinja left unrendered
     assert '{{' not in body and '{%' not in body
 
@@ -68,14 +69,19 @@ def test_admin_tab_renders_through_layout(fresh_client, tab):
 def test_admin_page_data_is_valid_json(fresh_client):
     login(fresh_client, 1)
     body = _get(fresh_client, 'packages')
-    m = re.search(r'<script type="application/json" id="adminData">(.*?)</script>', body, re.S)
+    m = re.search(r'<script type="application/json" id="page-data">(.*?)</script>', body, re.S)
     assert m
     data = json.loads(m.group(1))
     assert isinstance(data['graphData'], list)
     assert data['settingsSaveUrl'] == '/admin/settings/save'
     assert 'csrfToken' in data
-    # the inline script reads it instead of embedding Jinja
-    assert 'ADMIN_DATA.csrfToken' in body and 'ADMIN_DATA.settingsSaveUrl' in body
+    # the page script (static/js/pages/admin.js) reads it instead of embedding Jinja
+    with open(os.path.join(os.path.dirname(__file__), '..', 'static', 'js', 'pages', 'admin.js'),
+              encoding='utf-8') as f:
+        admin_js = f.read()
+    assert 'RSCP.pageData()' in admin_js
+    assert 'ADMIN_DATA.csrfToken' in admin_js and 'ADMIN_DATA.settingsSaveUrl' in admin_js
+    assert '{{' not in admin_js
 
 
 def test_admin_partial_rows_stay_a_fragment(fresh_client):
