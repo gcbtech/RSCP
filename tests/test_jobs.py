@@ -360,7 +360,14 @@ def _import_wsgi(monkeypatch):
     monkeypatch.setattr(jobs, 'run_job', lambda name, **kw: calls.append((name, kw.get('trigger'))))
     sys.modules.pop('wsgi', None)
     try:
-        importlib.import_module('wsgi')
+        mod = importlib.import_module('wsgi')
+        # Release the real background-task flock (Linux): this process keeps
+        # importing wsgi in later tests, and a still-open lock from an earlier
+        # import would make the next one lose (no fcntl on Windows, so it
+        # never showed there).
+        lock = getattr(mod, '_lock_fd', None)
+        if hasattr(lock, 'close'):
+            lock.close()
     finally:
         sys.modules.pop('wsgi', None)
     return calls
