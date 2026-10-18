@@ -262,6 +262,27 @@ def test_legacy_status_path_unchanged(admin, tmp_path, monkeypatch):
     assert admin.get('/admin/update_status').get_json()['status'] == 'restarting'
 
 
+def test_legacy_layout_updater_refuses(admin, monkeypatch):
+    """A 2.x-layout install never updates itself in place: code swapped in
+    there would run without the systemd job units (no jobs, no backups)."""
+    from app import paths
+    import app.routes.admin.updates as updates
+    monkeypatch.setattr(paths, 'USES_DATA_DIR', False)
+
+    def no_network(*a, **kw):
+        raise AssertionError('the legacy updater must not download anything')
+    monkeypatch.setattr(updates.requests, 'get', no_network)
+
+    resp = admin.get('/admin/check_update')
+    assert resp.status_code == 409
+    assert '--migrate-from' in resp.get_json()['error']
+    for url in ('/admin/update', '/admin/rollback'):
+        resp = admin.post(url, data={'branch': 'beta'})
+        assert resp.status_code == 409, url
+        assert 'install.sh --migrate-from' in resp.get_json()['error']
+    assert admin.get('/admin/release_info').get_json() == {'layout': 'legacy', 'releases': []}
+
+
 # ---------------------------------------------------------------------------
 # Deployment files
 # ---------------------------------------------------------------------------

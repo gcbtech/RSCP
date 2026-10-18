@@ -11,17 +11,13 @@ Exit code 0 when the job succeeded or had nothing to do (including "another
 run of this job is still going"), 1 when it failed, 2 for a usage error.
 Logs go to stderr (journald under systemd).
 
-Who runs them:
-
-* Data-dir installs with the job units installed (install.sh): systemd.
-  rscp-package-maintenance.timer and rscp-eod-email.timer start
-  rscp-job@<name>.service, and rscp.service runs `system-migrations` as an
-  ExecStartPre, once per start and before any gunicorn worker exists. The
-  web process starts no scheduler at all (see use_systemd_timers()).
-* Everything else (the 2.x/legacy layout, or a data-dir install whose updater
-  predates these units): the APScheduler in the one web worker that wins
-  wsgi.py's lock, exactly as before. It calls run_job() too, so locking,
-  idempotency and the status panel work the same way.
+Who runs them: systemd, and nothing else. install.sh installs
+rscp-package-maintenance.timer and rscp-eod-email.timer, which start
+rscp-job@<name>.service, and rscp.service runs `system-migrations` as an
+ExecStartPre, once per start and before any gunicorn worker exists. The web
+process never schedules anything; when the units are missing (or the install
+still uses the 2.x layout) scheduling_warning() says so, in the log at
+startup and on the admin panel.
 
 Each run takes a per-job lock (an flock on <tmp>/job-locks/<name>.lock), so
 two runs of one job never overlap, whoever started them; a run that finds
@@ -241,21 +237,36 @@ JOBS = {j.name: j for j in (
 
 # --- where the jobs run ------------------------------------------------------
 
-def systemd_timers_installed():
-    """True when install.sh has installed the job service and every timer."""
+def missing_units():
+    """Job units (and the backup timer) that install.sh should have put in
+    SYSTEMD_UNIT_DIR but are not there."""
+    from app import backup
     names = [JOB_SERVICE_UNIT] + [j.timer for j in JOBS.values() if j.timer]
-    return all(os.path.exists(os.path.join(SYSTEMD_UNIT_DIR, n)) for n in names)
+    missing = [n for n in names if not os.path.exists(os.path.join(SYSTEMD_UNIT_DIR, n))]
+    if not backup.timer_installed():
+        missing.append(os.path.basename(backup.SYSTEMD_TIMER))
+    return missing
 
 
 def use_systemd_timers():
-    """Whether systemd runs the jobs (then the web process must not start
-    APScheduler or run system migrations): the data-dir layout with the job
-    units and the backup timer installed. The legacy layout always keeps the
-    in-app scheduler."""
-    if not paths.USES_DATA_DIR or not systemd_timers_installed():
-        return False
-    from app import backup
-    return not backup.app_scheduler_should_run()
+    """True when systemd runs the jobs: the data-dir layout with every job
+    unit and the backup timer installed."""
+    return paths.USES_DATA_DIR and not missing_units()
+
+
+def scheduling_warning():
+    """Why scheduled jobs are not running, or None when systemd runs them."""
+    if not paths.USES_DATA_DIR:
+        return ('This install still uses the 2.x folder layout, so package status upkeep, '
+                'the end-of-day email and nightly backups are NOT running (RSCP 3 runs them '
+                'from systemd timers). Move it to the 3.x layout with the installer: '
+                f'sudo bash install.sh --migrate-from {paths.APP_DIR}')
+    missing = missing_units()
+    if missing:
+        return (f"Scheduled jobs are NOT running: systemd unit(s) {', '.join(missing)} "
+                f"missing from {SYSTEMD_UNIT_DIR}. Reinstall them on the server: "
+                'sudo /opt/rscp/bin/rscp-update --install-units /opt/rscp/current')
+    return None
 
 
 # --- locking -----------------------------------------------------------------
@@ -437,8 +448,7 @@ def overview(db_path=None):
         })
     except Exception as e:
         logger.debug(f"[Jobs] backup status unavailable: {e}")
-    runner = ('systemd timers (systemctl list-timers \'rscp-*\')' if systemd
-              else 'the in-app scheduler (one web worker)')
+    runner = 'systemd timers (systemctl list-timers \'rscp-*\')' if systemd else None
     return runner, rows
 
 
@@ -550,6 +560,6 @@ def main(argv=None):
 
 if __name__ == '__main__':
     # Run the canonical app.jobs module, not this __main__ copy, so code that
-    # imports app.jobs (wsgi, background_tasks) shares its state and classes.
+    # imports app.jobs (wsgi, the admin panel) shares its state and classes.
     from app.jobs import main as _main
     sys.exit(_main())

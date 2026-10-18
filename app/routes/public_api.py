@@ -7,13 +7,13 @@ Security:
 - SELECT queries only — no write operations exist in this module
 - Explicit column allowlist — internal fields are never queried
 - Hardcoded aisle filter — only the aisles in ALLOWED_AISLES are returned
-- Rate limited to 30 requests per minute per IP
+- No per-IP rate limit: only API-key holders get past require_api_key
 - Out-of-stock and legacy items are excluded
 """
 import hmac
 import logging
 from datetime import datetime
-from flask import Blueprint, request, jsonify, current_app
+from flask import Blueprint, request, jsonify
 from functools import wraps
 
 from app.services import throttle
@@ -71,13 +71,6 @@ def get_public_inventory():
                    keywords, description, alert_threshold, source_url, etc.
     """
     try:
-        # Apply rate limiting if available
-        try:
-            limiter = current_app.limiter
-            limiter.limit("30 per minute")(lambda: None)()
-        except Exception:
-            pass  # Rate limiter not available, continue without it
-        
         conn = get_db_connection()
         try:
             # Build parameterized placeholders for the aisle filter

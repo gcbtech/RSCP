@@ -34,8 +34,8 @@ loglevel = "info"
 # those ride threads without tying up a whole worker, while CPU-bound work
 # (image processing, SQLite) spreads across worker processes/cores. This
 # replaced the old single eventlet worker, where any blocking call froze
-# every terminal at once. Background tasks are started exactly once via a
-# lock-file guard in wsgi.py, so scaling workers does not duplicate them.
+# every terminal at once. Scheduled jobs run from systemd timers, not in the
+# workers, so scaling workers does not duplicate them.
 worker_class = "gthread"
 threads = 4
 keepalive = 2

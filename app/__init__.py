@@ -2,8 +2,6 @@ from flask import Flask, session, g, request
 import os
 import logging
 from datetime import timedelta
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 
 # Import Routes
 from app.routes.main import main_bp
@@ -83,16 +81,6 @@ def create_app(test_config=None):
     
     # File Upload Size Limit (32MB)
     app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
-    
-    # Rate Limiter (attached to app, used in routes)
-    # Per-IP rate limiting to prevent abuse
-    limiter = Limiter(
-        key_func=get_remote_address,
-        app=app,
-        default_limits=[],
-        storage_uri="memory://"
-    )
-    app.limiter = limiter  # Make accessible to blueprints
     
     # Static file caching (1 week for images, CSS, JS)
     app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 604800  # 7 days in seconds

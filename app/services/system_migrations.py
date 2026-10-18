@@ -12,12 +12,9 @@ How it works:
 - Applied ids are recorded in the `system_migrations` table, so each step
   runs exactly once per install (including prod boxes updated via the
   in-app updater — no manual SSH steps).
-- Where they run: in the data-dir layout with the systemd job units
-  installed, rscp.service's ExecStartPre (`python -m app.jobs
-  system-migrations`) runs them once per start, before any worker exists.
-  Otherwise (legacy layout, or before the updater installed those units)
-  the ONE worker that owns background tasks runs them at startup
-  (wsgi.py's flock guard), so multi-worker deployments don't race.
+- Where they run: rscp.service's ExecStartPre (`python -m app.jobs
+  system-migrations`), once per start, before any worker exists. Nothing
+  runs them in the 2.x layout any more (RSCP 3 needs install.sh's units).
 - A migration that cannot apply on this host (wrong OS, not root, file
   missing) records itself as skipped-but-done where that is permanent, or
   leaves itself unrecorded to retry next boot where the condition is
@@ -257,12 +254,19 @@ def migrate_003_share_manifest():
     sits in the one and only app dir.
     """
     import shutil
-    from app.routes.admin.updates import _is_release_layout, _release_paths
+    from app import paths
     from app.services.auth import BASE_DIR
 
-    if not _is_release_layout():
+    if paths.USES_DATA_DIR:
+        return True, 'skipped: data-dir layout'
+    # 2.x atomic-release layout: <DATA>/releases/<active>, <DATA>/shared,
+    # <DATA>/current (scripts/migrate_to_releases.py).
+    releases_root = os.path.dirname(os.path.realpath(BASE_DIR))
+    data_root = os.path.dirname(releases_root)
+    shared_dir = os.path.join(data_root, 'shared')
+    if not (os.path.basename(releases_root) == 'releases' and os.path.isdir(shared_dir)
+            and os.path.islink(os.path.join(data_root, 'current'))):
         return True, 'skipped: not the release layout'
-    releases_root, shared_dir, _current = _release_paths()
     shared = os.path.join(shared_dir, 'manifest.csv')
     link = os.path.join(BASE_DIR, 'manifest.csv')
 
@@ -300,8 +304,7 @@ _INLINE_CAPABLE = {'002_backfill_thumbnails'}
 
 def run_system_migrations(inline=False):
     """Run pending system migrations. Call from ONE process only: rscp.service's
-    ExecStartPre (via app.jobs, inline=True) or the web worker holding the
-    background-task lock (wsgi.py).
+    ExecStartPre (via app.jobs, inline=True).
 
     Returns {'applied': [...], 'pending': [...], 'failed': [(id, error)]}
     (a runner error is reported as failed ('runner', error)). Never raises.
