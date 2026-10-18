@@ -173,11 +173,21 @@ def sale_adjustments(conn, order, default_tax_rate=0.0):
         'coupon': float(coupon or 0),
         'cash_discount': cash_discount,
         'tax_rate': float(order['tax_rate'] if order['tax_rate'] is not None else default_tax_rate),
+        'orig_subtotal': subtotal,
     }
 
 
 def reprice_sale(new_subtotal, adj):
-    """(order_discount, tax, total) for an edited sale; mirrors edit_sale.html's preview."""
+    """(order_discount, tax, total) for an edited sale; mirrors edit_sale.html's preview.
+
+    The coupon and cash discount were recorded in dollars for the original
+    sale. When items are removed they shrink with the subtotal (never grow),
+    so removing most of a sale can't leave the whole coupon on what remains.
+    """
+    orig = adj.get('orig_subtotal') or 0
+    scale = min(1.0, new_subtotal / orig) if orig > 0 else 1.0
+    adj = dict(adj, coupon=round_money(adj['coupon'] * scale),
+               cash_discount=round_money(adj['cash_discount'] * scale))
     if adj['discount_pct'] is not None:
         order_discount = round_money(new_subtotal * adj['discount_pct'])
     else:
@@ -237,9 +247,11 @@ def edit_sale(conn, order_id, lines, deleted_ids, user, *, new_date='', new_time
         changes = []
 
         # 1. Removed lines go back on the shelf
+        seen = set()   # a double-posted removal must not restock twice
         for raw_id in deleted_ids:
-            if not raw_id:
+            if not raw_id or raw_id in seen:
                 continue
+            seen.add(raw_id)
             del_id = int(raw_id)
             old = old_items.get(del_id)
             if not old:

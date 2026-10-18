@@ -228,6 +228,32 @@ def current_cart_version():
     return g.get('cart_version')
 
 
+def _refreshing_coupon(fn, conn):
+    """Wrap a cart change so an applied coupon is re-evaluated against the
+    resulting cart, in the same transaction.
+
+    The cart stores the coupon's dollar discount from when it was applied;
+    without this, removing an item (or a scanner adding one) left the old
+    amount on screen while checkout recomputed it, so checkout kept refusing
+    with "the cart changed". A coupon that no longer qualifies is removed
+    with a message saying why.
+    """
+    def wrapped(cart):
+        result = fn(cart)
+        coupon = cart.get('applied_coupon')
+        if coupon and coupon.get('code'):
+            items = cart.get('items') or []
+            subtotal = sum(item.get('line_total', 0) for item in items)
+            check = pos_pricing.evaluate_coupon(coupon['code'], items, subtotal, conn, cart=cart)
+            if check.get('valid'):
+                coupon['discount'] = check['discount_amount']
+            else:
+                cart['applied_coupon'] = None
+                flash(f"Coupon {coupon['code']} removed: {check.get('error', 'no longer applies')}")
+        return result
+    return wrapped
+
+
 def mutate_cart(fn, expected_version=None):
     """THE way to change the cart: fn(cart) mutates it in place (and may
     return a value). Returns (cart, fn_result).
@@ -249,6 +275,7 @@ def mutate_cart(fn, expected_version=None):
     from app.services import pos_registers
 
     conn = get_request_db()
+    fn = _refreshing_coupon(fn, conn)
     register_id = resolve_register_id()
     if register_id:
         try:

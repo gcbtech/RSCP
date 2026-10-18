@@ -82,12 +82,22 @@ main() {
     STAGING_DIR=""
     STATUS_ENABLED=0
     BACKUP_PATHS_ONLY=0
+    INSTALL_UNITS_REL=""
 
     setup_colors
     parse_args "$@"
 
     [ "$(id -u)" -eq 0 ] || die "Please run as root (sudo)."
     cd /
+
+    # Internal: called by an OLDER installer during an upgrade so that the
+    # NEW release's unit list is used (the caller already holds the lock).
+    if [ -n "$INSTALL_UNITS_REL" ]; then
+        install_units "$INSTALL_UNITS_REL"
+        enable_units
+        exit 0
+    fi
+
     take_lock
     trap cleanup EXIT
     STATUS_ENABLED=1
@@ -187,6 +197,7 @@ parse_args() {
             --upgrade)        UPGRADE=1; NONINTERACTIVE=1; shift ;;
             --rollback)       ROLLBACK=1; NONINTERACTIVE=1; shift ;;
             --backup-paths)   BACKUP_PATHS_ONLY=1; NONINTERACTIVE=1; shift ;;
+            --install-units)  need_arg "$@"; INSTALL_UNITS_REL="$2"; NONINTERACTIVE=1; shift 2 ;;
             --noninteractive|--non-interactive|-y) NONINTERACTIVE=1; shift ;;
             -h|--help)        usage; exit 0 ;;
             *)                die "Unknown option: $1 (see --help)" ;;
@@ -666,7 +677,16 @@ JOB_UNITS="rscp-job@.service"
 JOB_TIMERS="rscp-package-maintenance.timer rscp-eod-email.timer"
 
 install_units() {  # install_units RELEASE_DIR
-    local rel="$1" f changed=0
+    local rel="$1" f changed=0 self
+    # An upgrade runs the OLD release's copy of this script, whose list of
+    # units may predate units the new release ships. Let the new release's
+    # installer do this step when it can (it knows its own units).
+    self=$(readlink -f "$0" 2>/dev/null || true)
+    if [ -z "$INSTALL_UNITS_REL" ] && [ -f "$rel/install.sh" ] && [ -f "$self" ]         && ! cmp -s "$rel/install.sh" "$self" && grep -q -- '--install-units' "$rel/install.sh"; then
+        info "Installing systemd units with $(basename "$rel")'s installer"
+        bash "$rel/install.sh" --install-units "$rel" || die "Installing the new release's systemd units failed."
+        return 0
+    fi
     for f in rscp.service rscp-update.service rscp-update.path rscp-backup.service rscp-backup.timer \
         $JOB_UNITS $JOB_TIMERS; do
         if [ -f "$rel/deploy/$f" ]; then

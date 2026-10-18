@@ -306,7 +306,10 @@ def validate_coupon():
                 f"Live cart items count: {len(cart_items)}, subtotal: {cart_subtotal}")
 
     conn = get_db_connection()
-    return jsonify(evaluate_coupon(code, cart_items, cart_subtotal, conn))
+    try:
+        return jsonify(evaluate_coupon(code, cart_items, cart_subtotal, conn))
+    finally:
+        conn.close()
 
 
 @pos_bp.route('/api/coupon/apply', methods=['POST'])

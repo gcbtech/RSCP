@@ -43,9 +43,13 @@
             ? Math.round(subtotal * adj.discount_pct * 100) / 100
             : Math.min(adj.discount_fixed, subtotal);
         const afterDiscount = Math.max(0, subtotal - discount);
-        const afterCoupon = Math.max(0, afterDiscount - Math.min(adj.coupon, afterDiscount));
+        // Coupon and cash discount shrink with the subtotal (see reprice_sale)
+        const scale = adj.orig_subtotal > 0 ? Math.min(1, subtotal / adj.orig_subtotal) : 1;
+        const coupon = Math.round(adj.coupon * scale * 100) / 100;
+        const cashDiscount = Math.round(adj.cash_discount * scale * 100) / 100;
+        const afterCoupon = Math.max(0, afterDiscount - Math.min(coupon, afterDiscount));
         const tax = Math.round(afterCoupon * adj.tax_rate * 100) / 100;
-        const total = Math.round(Math.max(0, afterCoupon + tax - adj.cash_discount) * 100) / 100;
+        const total = Math.round(Math.max(0, afterCoupon + tax - cashDiscount) * 100) / 100;
 
         document.getElementById('editSubtotal').textContent = '$' + subtotal.toFixed(2);
         document.getElementById('editTax').textContent = '$' + tax.toFixed(2);

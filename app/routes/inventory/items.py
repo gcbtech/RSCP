@@ -247,7 +247,11 @@ def add_item():
         if not f['first_stock_date'] and load_config().get('TRACK_FIRST_STOCK_DATE'):
             from datetime import date
             f['first_stock_date'] = date.today().isoformat()
-        _convert_numbers(f, request.form)
+        try:
+            _convert_numbers(f, request.form)
+        except (TypeError, ValueError):
+            flash("Error adding item: prices, interval and alert threshold must be numbers.")
+            return redirect(url_for('inventory.add_item'))
         f['quantity'] = quantity
 
         conn = get_db_connection()
