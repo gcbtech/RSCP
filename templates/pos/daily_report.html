@@ -77,19 +77,19 @@
                     <form action="{{ url_for('pos.daily_report') }}" method="GET"
                         class="d-flex gap-2 align-items-center">
                         <input type="date" name="date" class="form-control"
-                            value="{{ report_date.strftime('%Y-%m-%d') }}" onchange="this.form.submit()">
+                            value="{{ report_date.strftime('%Y-%m-%d') }}" data-change="submitForm">
                     </form>
                     <form action="{{ url_for('pos.send_eod_email') }}" method="POST" class="d-inline"
-                        onsubmit="return confirm('Send EOD Email to configured recipients?');">
+                        data-confirm="Send EOD Email to configured recipients?">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="date" value="{{ report_date.strftime('%Y-%m-%d') }}">
                         <button type="submit" class="btn btn-success me-2">📧 Send Email Report</button>
                     </form>
                     <a href="{{ url_for('pos.daily_report_print', date=report_date.strftime('%Y-%m-%d')) }}"
                         target="_blank"
-                        onclick="window.open(this.href, 'eod_print', 'width=350,height=600'); return false;"
+                        data-action="openPopup" data-popup-name="eod_print" data-popup-features="width=350,height=600"
                         class="btn btn-outline-dark me-2">🧾 Print Thermal Summary</a>
-                    <button onclick="window.print()" class="btn btn-secondary">🖨️ Print Full Report</button>
+                    <button data-action="print" class="btn btn-secondary">🖨️ Print Full Report</button>
                     <a href="{{ url_for('pos.management') }}" class="btn btn-outline-secondary">Back to Dashboard</a>
                 </div>
             </div>
@@ -173,4 +173,7 @@
             </div>
         </div>
     </div>
+{% endblock %}
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/pages/pos-mgmt-common.js') }}"></script>
 {% endblock %}

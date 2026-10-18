@@ -97,7 +97,7 @@
                         </div>
                         <button type="submit" class="btn btn-primary btn-sm">Generate</button>
                     </form>
-                    <button onclick="window.print()" class="btn btn-secondary btn-sm">🖨️ Print</button>
+                    <button data-action="print" class="btn btn-secondary btn-sm">🖨️ Print</button>
                     <a href="{{ url_for('pos.management') }}" class="btn btn-outline-secondary btn-sm">Back to
                         Dashboard</a>
                 </div>
@@ -208,4 +208,7 @@
             </div>
         </div>
     </div>
+{% endblock %}
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/pages/pos-mgmt-common.js') }}"></script>
 {% endblock %}

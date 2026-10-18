@@ -183,7 +183,7 @@
                                 </form>
                                 <form action="{{ url_for('pos.delete_coupon', coupon_id=coupon.id) }}" method="POST"
                                     class="d-inline"
-                                    onsubmit="return confirm('Delete this coupon? This cannot be undone.');">
+                                    data-confirm="Delete this coupon? This cannot be undone.">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button type="submit" class="btn btn-outline-danger">Delete</button>
                                 </form>

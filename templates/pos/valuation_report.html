@@ -49,7 +49,7 @@
                 <p class="text-muted mb-0">Financial Snapshot: {{ today.strftime('%B %d, %Y') }}</p>
             </div>
             <div>
-                <button onclick="window.print()" class="btn btn-secondary">🖨️ Print</button>
+                <button data-action="print" class="btn btn-secondary">🖨️ Print</button>
                 <a href="{{ url_for('pos.management') }}" class="btn btn-outline-secondary">Back to Dashboard</a>
             </div>
         </div>
@@ -144,4 +144,7 @@
             </div>
         </div>
     </div>
+{% endblock %}
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/pages/pos-mgmt-common.js') }}"></script>
 {% endblock %}
