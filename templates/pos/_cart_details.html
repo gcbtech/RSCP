@@ -5,7 +5,7 @@
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         {% if cart_version is not none %}<input type="hidden" name="cart_version" value="{{ cart_version }}">{% endif %}
         <button type="submit" class="btn btn-sm btn-outline-danger"
-            onclick="return confirm('Clear entire cart?')">Clear</button>
+            data-confirm="Clear entire cart?">Clear</button>
     </form>
     {% endif %}
 </div>
@@ -45,7 +45,7 @@
                 {% if cart_version is not none %}<input type="hidden" name="cart_version" value="{{ cart_version }}">{% endif %}
                 <input type="number" name="quantity" value="{{ item.quantity }}" min="1" max="999"
                     class="form-control form-control-sm text-center"
-                    style="width: 60px; display: inline-block;" onchange="this.form.submit()"
+                    style="width: 60px; display: inline-block;" data-change="submitForm"
                     title="Click to edit quantity">
             </form>
         </div>
@@ -104,7 +104,7 @@
 
 <div class="pos-actions">
     {% if allow_hold %}
-    <button class="pos-btn pos-btn-secondary" onclick="holdOrder()">Hold</button>
+    <button class="pos-btn pos-btn-secondary" data-action="holdOrder">Hold</button>
     {% endif %}
     <button class="pos-btn pos-btn-secondary" type="button" data-bs-toggle="modal"
         data-bs-target="#discountModal">Discount</button>
@@ -156,11 +156,11 @@
                 <!-- Coupon Code -->
                 <h6>Coupon Code</h6>
                 <div class="input-group">
-                    <input type="text" id="couponCodeModal" class="form-control" placeholder="Enter code..."
+                    <input type="text" id="couponCodeModal" class="form-control" placeholder="Enter code..." data-keydown="couponModalKeydown"
                         style="text-transform: uppercase;"
                         value="{{ (cart.get('applied_coupon') or {}).get('code', '') }}">
                     <button type="button" class="btn btn-success"
-                        onclick="applyCouponFromModal()">Apply</button>
+                        data-action="applyCouponFromModal">Apply</button>
                 </div>
                 {% if cart.get('applied_coupon') %}
                 <div class="mt-2 text-center">
@@ -169,7 +169,7 @@
                         "%.2f"|format(cart['applied_coupon']['discount']) }})
                     </span>
                     <button type="button" class="btn btn-sm btn-outline-danger ms-1"
-                        onclick="removeCoupon()">×</button>
+                        data-action="removeCoupon">×</button>
                 </div>
                 {% endif %}
                 <div id="couponErrorModal" class="alert alert-danger py-1 px-2 mt-2"

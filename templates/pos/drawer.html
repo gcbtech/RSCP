@@ -41,7 +41,7 @@
                     </tbody>
                 </table>
                 <form action="{{ url_for('pos.drawer_close') }}" method="POST" class="row g-2 align-items-end"
-                    onsubmit="return confirm('Close the drawer with this counted amount?');">
+                    data-confirm="Close the drawer with this counted amount?">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="session_id" value="{{ current.id }}">
                     <div class="col-sm-4">
