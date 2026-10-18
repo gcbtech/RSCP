@@ -289,7 +289,8 @@ def _validate_backup_dir(v):
         return ''
     if not os.path.isabs(v):
         raise ValueError("must be an absolute path, e.g. /mnt/nas/rscp-backups")
-    bad = set(' "\'$%;`') | ({'\\'} if os.sep == '/' else set())
+    # frozenset, not set(): this module defines its own set(key, value)
+    bad = frozenset(' "\'$%;`') | (frozenset({'\\'}) if os.sep == '/' else frozenset())
     if any(c in bad for c in v) or any(ord(c) < 32 or c.isspace() for c in v):
         raise ValueError("may not contain spaces, quotes or special characters")
     v = v.rstrip('/')

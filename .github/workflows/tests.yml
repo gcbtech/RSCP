@@ -61,7 +61,10 @@ jobs:
       - name: shellcheck install.sh
         run: |
           shellcheck --version
-          shellcheck install.sh
+          # warning and above fail the build; info-level notes (e.g. the
+          # deliberate `[ a ] && [ b ] || die` guards, SC2015) are style hints
+          # whose set differs between shellcheck versions.
+          shellcheck --severity=warning install.sh
 
       - name: Byte-compile app/
         run: python -m compileall -q app
