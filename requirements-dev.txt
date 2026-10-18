@@ -3,3 +3,6 @@ pytest>=8.0
 # IANA zone data for zoneinfo where the OS has none (Windows, slim containers);
 # the timeclock tests pin America/Denver and skip without it.
 tzdata
+# Browser end-to-end tests (tests/e2e, run with RSCP_E2E=1). Browsers are
+# installed separately: python -m playwright install chromium
+playwright>=1.44

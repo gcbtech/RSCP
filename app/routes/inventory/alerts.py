@@ -9,6 +9,7 @@ from app.utils.permissions import require_permission
 
 from app.routes.inventory import inventory_bp
 from app.services.db import get_db_connection
+from app.services import inventory
 from app.services.data_manager import load_config, save_config
 
 logger = logging.getLogger(__name__)
@@ -63,19 +64,12 @@ def save_alerts_bulk():
     conn = get_db_connection()
     try:
         items = conn.execute('SELECT id FROM inventory_items').fetchall()
-        
-        for item in items:
-            item_id = item['id']
-            alert_enabled = f'alert_{item_id}' in request.form
-            threshold = int(request.form.get(f'threshold_{item_id}', 0) or 0)
-            
-            conn.execute('''
-                UPDATE inventory_items 
-                SET alert_enabled = ?, alert_threshold = ?
-                WHERE id = ?
-            ''', (1 if alert_enabled else 0, threshold, item_id))
-        
-        conn.commit()
+        settings = {
+            item['id']: (f"alert_{item['id']}" in request.form,
+                         int(request.form.get(f"threshold_{item['id']}", 0) or 0))
+            for item in items
+        }
+        inventory.save_alert_settings(conn, settings)
         flash("Alert settings saved.")
     except Exception as e:
         logger.error(f"Error saving alert settings: {e}")

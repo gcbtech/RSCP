@@ -3,12 +3,12 @@ Inventory Core Module
 Helper functions, before_request hooks, and overview routes.
 """
 import logging
-from datetime import datetime, date, timedelta
 from flask import request, redirect, url_for, flash, render_template, jsonify
 from flask_login import login_required, current_user
 
 from app.routes.inventory import inventory_bp, CATEGORY_CODES
 from app.services.db import get_db_connection, get_request_db
+from app.services import inventory
 from app.services.data_manager import load_config
 from app.utils.permissions import require_permission
 
@@ -21,61 +21,22 @@ def is_inventory_enabled():
     return config.get('INVENTORY_ENABLED', False) if config else False
 
 
-def generate_sku(category='ATO'):
+def generate_sku(category='ATO', conn=None):
     """Generate a unique SKU in format RSCP-XXX-XXXX-XXXX."""
-    category = category.upper()[:3].ljust(3, 'X')
-    
+    if conn is not None:
+        return inventory.generate_sku(conn, category)
     conn = get_db_connection()
     try:
-        # Find the highest existing SKU number for this category
-        result = conn.execute('''
-            SELECT sku FROM inventory_items 
-            WHERE sku LIKE ? 
-            ORDER BY sku DESC LIMIT 1
-        ''', (f'RSCP-{category}-%',)).fetchone()
-        
-        if result:
-            try:
-                parts = result['sku'].split('-')
-                if len(parts) == 4:
-                    num_str = parts[2] + parts[3]
-                    next_num = int(num_str) + 1
-                else:
-                    next_num = 1
-            except (ValueError, IndexError):
-                next_num = 1
-        else:
-            next_num = 1
-        
-        # Try up to 10 times to find a unique SKU
-        for attempt in range(10):
-            num_str = str(next_num + attempt).zfill(8)
-            sku = f"RSCP-{category}-{num_str[:4]}-{num_str[4:]}"
-            
-            # Verify this SKU doesn't already exist
-            existing = conn.execute(
-                'SELECT 1 FROM inventory_items WHERE sku = ?', (sku,)
-            ).fetchone()
-            
-            if not existing:
-                return sku
-        
-        # Fallback: use timestamp to ensure uniqueness
-        import time
-        timestamp = str(int(time.time()))[-8:]
-        sku = f"RSCP-{category}-{timestamp[:4]}-{timestamp[4:]}"
-        return sku
+        return inventory.generate_sku(conn, category)
     finally:
         conn.close()
 
 
-def validate_location(area, aisle, shelf, bin_loc):
-    """Validate that at least one location field is provided."""
-    return any([area, aisle, shelf, bin_loc])
+validate_location = inventory.validate_location
 
 
 def get_inventory_item(sku, conn=None):
-    """Get an inventory item by SKU, UPC, or Part Number."""
+    """Get an inventory item (dict with sale pricing) by SKU, UPC, or Part Number."""
     close_conn = False
     if conn is None:
         try:
@@ -88,82 +49,8 @@ def get_inventory_item(sku, conn=None):
         except ImportError:
             conn = get_db_connection()
             close_conn = True
-
     try:
-        # Helper to apply standard sale logic to an item dictionary
-        def apply_sale_logic(item):
-            now = datetime.now()
-            item['regular_price'] = item['sell_price'] # Keep track of original price
-            item['is_on_sale'] = False
-            item['current_price'] = item['sell_price']
-            
-            if item.get('sale_enabled'):
-                try:
-                    start_valid = True
-                    end_valid = True
-                    
-                    if item.get('sale_start'):
-                        start_dt = datetime.strptime(item['sale_start'], '%Y-%m-%dT%H:%M')
-                        if now < start_dt:
-                            start_valid = False
-                            
-                    if item.get('sale_end'):
-                        end_dt = datetime.strptime(item['sale_end'], '%Y-%m-%dT%H:%M')
-                        if now > end_dt:
-                            end_valid = False
-                            
-                    if start_valid and end_valid:
-                        item['current_price'] = item['sale_price']
-                        item['is_on_sale'] = True
-                except (ValueError, TypeError) as e:
-                    logger.warning(f"Error parsing sale dates for item {item.get('sku')}: {e}")
-            return item
-
-        # First try exact SKU match
-        result = conn.execute('''
-            SELECT * FROM inventory_items WHERE sku = ?
-        ''', (sku,)).fetchone()
-        
-        if result:
-            return apply_sale_logic(dict(result))
-            
-        # If not found, search in secondary_ids (UPC, part_number)
-        import sqlite3
-        search_sku = sku.strip() if sku else ""
-        
-        # Try native SQLite JSON extraction first (extremely fast, < 1ms)
-        try:
-            row = conn.execute('''
-                SELECT * FROM inventory_items 
-                WHERE secondary_ids IS NOT NULL 
-                  AND secondary_ids != '{}'
-                  AND (
-                    TRIM(json_extract(secondary_ids, '$.upc')) = ? 
-                    OR TRIM(json_extract(secondary_ids, '$.part_number')) = ?
-                  )
-            ''', (search_sku, search_sku)).fetchone()
-            if row:
-                return apply_sale_logic(dict(row))
-        except sqlite3.OperationalError as e:
-            # Fallback to the slow Python-level parsing if SQLite json_extract is not supported
-            logger.warning(f"Native SQLite JSON search failed (falling back to slow scan): {e}")
-            
-            import json
-            all_items = conn.execute('''
-                SELECT * FROM inventory_items WHERE secondary_ids IS NOT NULL AND secondary_ids != '{}'
-            ''').fetchall()
-            
-            for row in all_items:
-                try:
-                    if row['secondary_ids']:
-                        ids = json.loads(row['secondary_ids'])
-                        # Check UPC or Part Number
-                        if str(ids.get('upc', '')).strip() == sku or str(ids.get('part_number', '')).strip() == sku:
-                            return apply_sale_logic(dict(row))
-                except json.JSONDecodeError:
-                    continue
-        
-        return None
+        return inventory.find_item_by_code(conn, sku)
     except Exception as e:
         logger.error(f"Error looking up inventory item: {e}")
         return None
@@ -172,68 +59,16 @@ def get_inventory_item(sku, conn=None):
             conn.close()
 
 
+def _low_stock_threshold():
+    conf = load_config()
+    return int(conf.get('LOW_STOCK_THRESHOLD', 5))
+
+
 def get_inventory_stats():
     """Helper to calculate inventory statistics."""
     conn = get_db_connection()
     try:
-        stats = {}
-        conf = load_config()
-        low_threshold = int(conf.get('LOW_STOCK_THRESHOLD', 5))
-        
-        # Exclude legacy items from all counts
-        stats['total_items'] = conn.execute('SELECT COUNT(*) FROM inventory_items WHERE COALESCE(is_legacy, 0) = 0').fetchone()[0]
-        stats['total_quantity'] = conn.execute('SELECT COALESCE(SUM(quantity), 0) FROM inventory_items WHERE COALESCE(is_legacy, 0) = 0').fetchone()[0]
-        stats['out_of_stock'] = conn.execute('SELECT COUNT(*) FROM inventory_items WHERE quantity <= 0 AND COALESCE(is_legacy, 0) = 0').fetchone()[0]
-        stats['low_stock'] = conn.execute('''
-            SELECT COUNT(*) FROM inventory_items 
-            WHERE quantity > 0 
-            AND COALESCE(is_legacy, 0) = 0
-            AND (
-                (COALESCE(alert_threshold, 0) > 0 AND quantity <= alert_threshold)
-                OR 
-                (COALESCE(alert_threshold, 0) = 0 AND ? > 0 AND quantity <= ?)
-            )
-        ''', (low_threshold, low_threshold)).fetchone()[0]
-        
-        # Profit Calculation
-        financials = conn.execute('''
-            SELECT 
-                SUM(quantity * sell_price) as revenue,
-                SUM(quantity * buy_price) as cost
-            FROM inventory_items
-            WHERE quantity > 0 AND buy_price > 0 AND sell_price > 0
-        ''').fetchone()
-        
-        revenue = financials['revenue'] or 0
-        cost = financials['cost'] or 0
-        potential_profit = revenue - cost
-        margin_percent = 0
-        if revenue > 0:
-            margin_percent = round((potential_profit / revenue) * 100, 1)
-        
-        stats['margin_percent'] = margin_percent
-        stats['potential_profit'] = potential_profit
-
-        # Last Audit Date
-        last_audit = conn.execute("SELECT end_time FROM audit_sessions WHERE status='completed' ORDER BY end_time DESC LIMIT 1").fetchone()
-        last_audit_str = "Never"
-        if last_audit and last_audit['end_time']:
-            audit_dt = datetime.strptime(str(last_audit['end_time']).split('.')[0], '%Y-%m-%d %H:%M:%S')
-            delta = datetime.now() - audit_dt
-            
-            if delta.days >= 1:
-                last_audit_str = f"{delta.days} days"
-            else:
-                seconds = delta.seconds
-                if seconds < 3600:
-                    mins = int(seconds / 60)
-                    last_audit_str = f"{mins} mins"
-                else:
-                    hours = int(seconds / 3600)
-                    last_audit_str = f"{hours} hours"
-        
-        stats['last_audit'] = last_audit_str
-        return stats
+        return inventory.inventory_stats(conn, _low_stock_threshold())
     finally:
         conn.close()
 
@@ -241,102 +76,29 @@ def get_inventory_stats():
 @inventory_bp.route('/')
 def overview():
     """Inventory analytics overview page."""
-    stats = get_inventory_stats()
-    
+    low_threshold = _low_stock_threshold()
     conn = get_db_connection()
     try:
-        thirty_days_ago = (date.today() - timedelta(days=30)).strftime('%Y-%m-%d')
-        top_movers = conn.execute('''
-            SELECT i.id, i.name, i.sku, ABS(SUM(t.quantity_change)) as sold
-            FROM inventory_transactions t
-            JOIN inventory_items i ON t.inventory_item_id = i.id
-            WHERE t.quantity_change < 0 
-              AND t.reason IN ('Sold/Consumed', 'Damaged')
-              AND t.created_at > ?
-            GROUP BY i.id
-            ORDER BY sold DESC
-            LIMIT 5
-        ''', (thirty_days_ago,)).fetchall()
-        
-        conf = load_config()
-        low_threshold = int(conf.get('LOW_STOCK_THRESHOLD', 5))
-        now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-
-        attention_where = '''
-            WHERE COALESCE(is_legacy, 0) = 0
-            AND (
-                quantity <= 0
-                OR (
-                    quantity > 0 AND (
-                        (COALESCE(alert_threshold, 0) > 0 AND quantity <= alert_threshold)
-                        OR
-                        (COALESCE(alert_threshold, 0) = 0 AND ? > 0 AND quantity <= ?)
-                    )
-                )
-            )
-        '''
-
-        attention_items = conn.execute(f'''
-            SELECT id, name, quantity
-            FROM inventory_items
-            {attention_where}
-            AND (attention_snoozed_until IS NULL OR attention_snoozed_until <= ?)
-            ORDER BY quantity ASC, name ASC
-            LIMIT 10
-        ''', (low_threshold, low_threshold, now_str)).fetchall()
-
-        snoozed_count = conn.execute(f'''
-            SELECT COUNT(*) FROM inventory_items
-            {attention_where}
-            AND attention_snoozed_until > ?
-        ''', (low_threshold, low_threshold, now_str)).fetchone()[0]
-        
-        # Sales trend
-        sales_data = conn.execute('''
-            SELECT date(created_at) as day, COALESCE(SUM(ABS(quantity_change)), 0) as cnt
-            FROM inventory_transactions 
-            WHERE quantity_change < 0 
-              AND reason = 'Sold/Consumed'
-              AND date(created_at) >= ?
-            GROUP BY date(created_at)
-        ''', (thirty_days_ago,)).fetchall()
-        
-        sales_dict = {row['day']: row['cnt'] for row in sales_data}
-        
-        sales_trend = []
-        for i in range(30, -1, -1):
-            day = (date.today() - timedelta(days=i)).strftime('%Y-%m-%d')
-            count = sales_dict.get(day, 0)
-            sales_trend.append({'date': day[-5:], 'count': count})
-        
-        return render_template('inventory/overview.html',
-                               stats=stats,
-                               top_movers=top_movers,
-                               attention_items=attention_items,
-                               snoozed_count=snoozed_count,
-                               sales_trend=sales_trend)
+        stats = inventory.inventory_stats(conn, low_threshold)
+        data = inventory.overview_data(conn, low_threshold)
+        return render_template('inventory/overview.html', stats=stats, **data)
     finally:
         conn.close()
 
 
-ATTENTION_SNOOZE_DAYS = 5
+ATTENTION_SNOOZE_DAYS = inventory.ATTENTION_SNOOZE_DAYS
 
 
 @inventory_bp.route('/attention/<int:item_id>/snooze', methods=['POST'])
 @require_permission('inventory.manage')
 def snooze_attention_item(item_id):
     """Hide an item from 'Items Needing Attention' for ATTENTION_SNOOZE_DAYS days."""
-    until = datetime.now() + timedelta(days=ATTENTION_SNOOZE_DAYS)
     conn = get_db_connection()
     try:
-        item = conn.execute('SELECT name FROM inventory_items WHERE id = ?', (item_id,)).fetchone()
-        if not item:
-            flash("Item not found.")
-        else:
-            conn.execute('UPDATE inventory_items SET attention_snoozed_until = ? WHERE id = ?',
-                         (until.strftime('%Y-%m-%d %H:%M:%S'), item_id))
-            conn.commit()
-            flash(f"Snoozed '{item['name']}' until {until.strftime('%b %d')}.")
+        name, until = inventory.snooze_attention(conn, item_id, ATTENTION_SNOOZE_DAYS)
+        flash(f"Snoozed '{name}' until {until.strftime('%b %d')}.")
+    except inventory.ItemNotFound:
+        flash("Item not found.")
     finally:
         conn.close()
     return redirect(url_for('inventory.overview'))

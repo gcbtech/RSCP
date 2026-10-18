@@ -2,8 +2,6 @@
 Admin Packages Routes
 Handles package CRUD operations and the main admin panel view.
 """
-import os
-import datetime
 import logging
 from flask import render_template, request, redirect, url_for, session, flash, jsonify, has_app_context
 from flask_login import current_user
@@ -12,7 +10,7 @@ from app.routes.admin import admin_bp, require_admin, save_config_value
 from app.services.db import get_db_connection, get_request_db
 from app.services.auth import load_users
 from app.services.data_manager import load_config, get_analytics_stats
-from app.services import package_imports
+from app.services import receiving
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +149,14 @@ def admin_panel():
                            inventory_enabled=config.get('INVENTORY_ENABLED', False) if config else False)
 
 
+def _conn():
+    """Request-scoped connection inside a request, else a fresh one
+    (second value: whether the caller must close it)."""
+    if has_app_context():
+        return get_request_db(), False
+    return get_db_connection(), True
+
+
 @admin_bp.route('/add_manual_item', methods=['POST'])
 def add_manual_item():
     """Add a package manually."""
@@ -158,44 +164,22 @@ def add_manual_item():
     name = request.form.get('name', '').strip()
     sku = request.form.get('sku', '').strip() or None
     date_input = request.form.get('date', '')
-    is_priority = request.form.get('priority') == 'on' 
-    
+    is_priority = request.form.get('priority') == 'on'
+
     if tracking and name:
-        close_conn = False
-        if has_app_context():
-            conn = get_request_db()
-        else:
-            conn = get_db_connection()
-            close_conn = True
+        conn, close_conn = _conn()
         try:
-            # Date Status Logic
-            # "Pending" is removed. Default is 'on_time' until it is past due.
-            status = 'on_time' 
-            today = datetime.date.today()
-            if date_input:
-                try:
-                    dt_obj = datetime.datetime.strptime(date_input, '%Y-%m-%d').date()
-                    if dt_obj == today: status = 'expected'
-                    elif dt_obj < today: status = 'past_due'
-                except ValueError:
-                    pass  # Date parsing failed
-            
-            conn.execute('''
-                INSERT INTO packages (tracking_number, item_name, date_expected, quantity, status, source, priority, manual_date, sku)
-                VALUES (?, ?, ?, 1, ?, 'manual', ?, ?, ?)
-            ''', (tracking, name, date_input, status, 1 if is_priority else 0, date_input, sku))
-            package_imports.record_import(conn, 'manual', None, 1, 0, current_user.username)
-            conn.commit()
-            
+            receiving.add_manual_package(conn, tracking, name, sku, date_input, is_priority,
+                                         current_user.username)
+
             # In-app notification for new package
             try:
-                from app.services.data_manager import load_config
                 from app.routes.notifications import create_notification
                 conf = load_config() or {}
-                
+
                 should_notify = (is_priority and conf.get('NOTIFY_PRIORITY_PACKAGES', False)) or \
                                 (not is_priority and conf.get('NOTIFY_NORMAL_PACKAGES', False))
-                
+
                 if should_notify:
                     priority_label = "🔴 PRIORITY" if is_priority else "📦"
                     create_notification(
@@ -207,14 +191,14 @@ def add_manual_item():
                     )
             except Exception as e:
                 logger.error(f"Package notification error: {e}")
-            
+
             flash(f"Added {name}")
         except Exception as e:
             flash(f"Error adding item: {e}")
         finally:
             if close_conn:
                 conn.close()
-            
+
     return redirect(url_for('admin.admin_panel'))
 
 
@@ -222,16 +206,9 @@ def add_manual_item():
 def set_package_sku(package_id):
     """Update package SKU."""
     sku = request.form.get('sku', '').strip() or None
-    
-    close_conn = False
-    if has_app_context():
-        conn = get_request_db()
-    else:
-        conn = get_db_connection()
-        close_conn = True
+    conn, close_conn = _conn()
     try:
-        conn.execute("UPDATE packages SET sku = ? WHERE id = ?", (sku, package_id))
-        conn.commit()
+        receiving.set_package_sku(conn, package_id, sku)
         return {'success': True}
     except Exception as e:
         logger.error(f"Error setting SKU: {e}")
@@ -241,27 +218,19 @@ def set_package_sku(package_id):
             conn.close()
 
 
-
-
-
 @admin_bp.route('/set_quantity/<int:package_id>', methods=['POST'])
 def set_package_quantity(package_id):
     """Update package Quantity."""
     try:
         qty = int(request.form.get('quantity', '1'))
-        if qty < 0: raise ValueError("Negative quantity")
+        if qty < 0:
+            raise ValueError("Negative quantity")
     except ValueError:
         return jsonify({'success': False, 'error': 'Invalid Quantity'}), 400
-    
-    close_conn = False
-    if has_app_context():
-        conn = get_request_db()
-    else:
-        conn = get_db_connection()
-        close_conn = True
+
+    conn, close_conn = _conn()
     try:
-        conn.execute("UPDATE packages SET quantity = ? WHERE id = ?", (qty, package_id))
-        conn.commit()
+        receiving.set_package_quantity(conn, package_id, qty)
         return {'success': True}
     except Exception as e:
         logger.error(f"Error setting Quantity: {e}")
@@ -274,49 +243,29 @@ def set_package_quantity(package_id):
 @admin_bp.route('/delete_package/<int:package_id>', methods=['POST'])
 def delete_package_from_db(package_id):
     """Delete a package."""
-    close_conn = False
-    if has_app_context():
-        conn = get_request_db()
-    else:
-        conn = get_db_connection()
-        close_conn = True
-    tracking = None
+    conn, close_conn = _conn()
     try:
-        # Get package details for logging
-        pkg = conn.execute("SELECT tracking_number, item_name FROM packages WHERE id = ?", (package_id,)).fetchone()
-        
-        conn.execute("DELETE FROM packages WHERE id = ?", (package_id,))
-        # Also delete history for this specific package ID
-        conn.execute("DELETE FROM history WHERE package_id = ?", (package_id,))
-        conn.commit()
-        
+        pkg = receiving.delete_package(conn, package_id)
         if pkg:
             tracking = pkg['tracking_number']
             logger.info(f"Deleted package {tracking} ({pkg['item_name']})")
             flash(f"Deleted package {tracking}", 'success')
-            
     except Exception as e:
         logger.error(f"Delete error: {e}")
         flash(f"Error deleting package: {e}", 'error')
     finally:
         if close_conn:
             conn.close()
-    
+
     return redirect(url_for('admin.admin_panel'))
 
 
 @admin_bp.route('/toggle_priority/<tracking>', methods=['POST'])
 def toggle_priority(tracking):
     """Toggle priority flag on a package."""
-    close_conn = False
-    if has_app_context():
-        conn = get_request_db()
-    else:
-        conn = get_db_connection()
-        close_conn = True
+    conn, close_conn = _conn()
     try:
-        conn.execute("UPDATE packages SET priority = NOT COALESCE(priority, 0) WHERE tracking_number = ?", (tracking,))
-        conn.commit()
+        receiving.toggle_priority(conn, tracking)
     except Exception as e:
         logger.error(f"Toggle priority error: {e}")
     finally:
@@ -330,50 +279,30 @@ def set_date(tracking):
     """Set expected date for a package."""
     new_date = request.form.get('new_date')
     if new_date:
-        close_conn = False
-        if has_app_context():
-            conn = get_request_db()
-        else:
-            conn = get_db_connection()
-            close_conn = True
+        conn, close_conn = _conn()
         try:
-            conn.execute("UPDATE packages SET manual_date = ?, date_expected = ? WHERE tracking_number = ?",
-                         (new_date, new_date, tracking))
-            package_imports.refresh_package_statuses(conn)
-            conn.commit()
+            receiving.set_expected_date(conn, tracking, new_date)
         except Exception as e:
             logger.error(f"Set date error: {e}")
         finally:
             if close_conn:
                 conn.close()
-            
+
     return redirect(url_for('admin.admin_panel'))
 
 
 @admin_bp.route('/set_status/<tracking>/<status>')
 def set_status(tracking, status):
     """Set status for a package."""
-    close_conn = False
-    if has_app_context():
-        conn = get_request_db()
-    else:
-        conn = get_db_connection()
-        close_conn = True
+    conn, close_conn = _conn()
     try:
-        if status == 'received':
-            conn.execute("UPDATE packages SET status='received', date_scanned=CURRENT_TIMESTAMP WHERE tracking_number=?", (tracking,))
-        elif status == 'refunded':
-            today = datetime.date.today().strftime('%Y-%m-%d')
-            conn.execute("UPDATE packages SET status='refunded', refund_date=? WHERE tracking_number=?", (today, tracking))
-        else:
-            conn.execute("UPDATE packages SET status=? WHERE tracking_number=?", (status, tracking))
-        conn.commit()
+        receiving.set_status(conn, tracking, status)
     except Exception as e:
         logger.error(f"Set status error: {e}")
     finally:
         if close_conn:
             conn.close()
-        
+
     return redirect(url_for('admin.admin_panel'))
 
 
@@ -382,63 +311,35 @@ def bulk_action():
     """Perform bulk actions on selected packages."""
     action = request.form.get('action_type')
     trackings = request.form.getlist('trackings')
-    
-    if not trackings: 
+
+    if not trackings:
         return redirect(url_for('admin.admin_panel'))
-        
-    close_conn = False
-    if has_app_context():
-        conn = get_request_db()
-    else:
-        conn = get_db_connection()
-        close_conn = True
+
+    conn, close_conn = _conn()
     try:
         if action == 'mark_received':
-            for t in trackings:
-                from app.services.data_manager import log_receipt
-                log_receipt(t, "Bulk Item", "1", current_user.username, conn=conn)
-                 
+            receiving.bulk_receive(conn, trackings, current_user.username, conf=load_config())
         elif action == 'mark_late':
-            placeholders = ','.join(['?']*len(trackings))
-            conn.execute(f"UPDATE packages SET status='past_due' WHERE tracking_number IN ({placeholders})", trackings)
-            conn.commit()
-             
+            receiving.mark_late(conn, trackings)
         elif action == 'delete':
-            placeholders = ','.join(['?']*len(trackings))
-            conn.execute(f"DELETE FROM packages WHERE tracking_number IN ({placeholders})", trackings)
-            conn.commit()
-             
+            receiving.delete_by_tracking(conn, trackings)
         elif action == 'unreceive':
-            for t in trackings:
-                # Get ALL packages with this tracking number (not just one)
-                rows = conn.execute("SELECT id FROM packages WHERE tracking_number=?", (t,)).fetchall()
-                for row in rows:
-                    pid = row['id']
-                    conn.execute("DELETE FROM history WHERE package_id=? AND action='received'", (pid,))
-                    conn.execute("UPDATE packages SET status='expected', date_scanned=NULL WHERE id=?", (pid,))
-            conn.commit()
-             
+            receiving.unreceive(conn, trackings)
     except Exception as e:
         logger.error(f"Bulk action error: {e}")
     finally:
         if close_conn:
             conn.close()
-        
+
     return redirect(url_for('admin.admin_panel'))
 
 
 @admin_bp.route('/clear_history', methods=['POST'])
 def clear_history():
     """Clear all history records."""
-    close_conn = False
-    if has_app_context():
-        conn = get_request_db()
-    else:
-        conn = get_db_connection()
-        close_conn = True
+    conn, close_conn = _conn()
     try:
-        conn.execute("DELETE FROM history")
-        conn.commit()
+        receiving.clear_history(conn)
     finally:
         if close_conn:
             conn.close()
@@ -451,31 +352,14 @@ def set_tracking(package_id):
     new_tracking = request.form.get('tracking', '').strip()
     if not new_tracking:
         return jsonify({'success': False, 'error': 'Empty tracking number'}), 400
-        
-    close_conn = False
-    if has_app_context():
-        conn = get_request_db()
-    else:
-        conn = get_db_connection()
-        close_conn = True
-    try:
-        # Get old tracking first
-        old_pkg = conn.execute("SELECT tracking_number, item_name FROM packages WHERE id = ?", (package_id,)).fetchone()
-        if not old_pkg:
-            return jsonify({'success': False, 'error': 'Package not found'}), 404
-            
-        old_tracking = old_pkg['tracking_number']
-        
-        # Several items may share a tracking number; the same item may not appear twice
-        exists = conn.execute("SELECT id FROM packages WHERE tracking_number = ? AND item_name IS ? AND id != ?",
-                              (new_tracking, old_pkg['item_name'], package_id)).fetchone()
-        if exists:
-             return jsonify({'success': False, 'error': 'This item already exists under that tracking number'}), 409
 
-        conn.execute("UPDATE packages SET tracking_number = ? WHERE id = ?", (new_tracking, package_id))
-        conn.commit()
-        
+    conn, close_conn = _conn()
+    try:
+        if not receiving.set_package_tracking(conn, package_id, new_tracking):
+            return jsonify({'success': False, 'error': 'Package not found'}), 404
         return {'success': True}
+    except receiving.TrackingConflict as e:
+        return jsonify({'success': False, 'error': str(e)}), 409
     except Exception as e:
         logger.error(f"Error setting Tracking: {e}")
         return {'success': False, 'error': str(e)}, 500

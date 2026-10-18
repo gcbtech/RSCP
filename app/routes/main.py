@@ -16,10 +16,9 @@ from app.utils.permissions import has_permission
 from app.services.db import get_db_connection, DB_PATH, get_request_db
 from app.services.auth import BASE_DIR, create_first_admin, validate_password
 from app.services.data_manager import (
-    get_dashboard_stats, log_receipt, load_config, save_config,
-    get_scan_count, check_history
+    get_dashboard_stats, load_config, save_config, get_scan_count,
 )
-from app.utils.helpers import sanitize_for_csv
+from app.services import receiving
 from app.services.logger import log_error
 
 main_bp = Blueprint('main', __name__)
@@ -138,187 +137,38 @@ def report_issue():
 def scan_page_legacy():
     logger.debug(f"[Scan] scan_page_legacy called. Method: {request.method}")
     if request.method == 'POST':
-        tracking = request.form.get('tracking_input')
-        user_input = request.form.get('user_input')
-        
-        # Call Logic (Simulating API logic but returning template)
-        # We can repurpose logic or just call handle_scan if we mocked request? 
-        # Better: Duplicate minimal logic or extract to service.
-        # Extracting logic is best, but for now, inline.
-        
-        conn = get_request_db()
-        msg = "Scan Failed"
-        color = ""
-        items = []
-        is_priority = False
+        config = load_config()
+        inv_enabled = config.get('INVENTORY_ENABLED', False) if config else False
+
+        msg, color, items, is_priority, inventory_match = "Scan Failed", "", [], False, None
         try:
-
-            # 1. Sanitize but KEEP the string intact for searching
-            # sanitize_for_csv is for WRITE safety, here we need READ accuracy.
-            raw_input = (tracking or "").strip()
-            tracking_clean = raw_input.replace('=', '').replace('"', '').replace("'", "")
-            
-
-            
-            # 2. Try Exact Match (Case Insensitive)
-            rows = conn.execute("SELECT * FROM packages WHERE tracking_number = ? COLLATE NOCASE", (tracking_clean,)).fetchall()
-
-            
-            # 3. Fallback: Substring Search (for FedEx/Long barcodes)
-            if not rows and len(tracking_clean) > 8:
-                # Find valid tracking numbers that are substrings of the scan OR vice versa
-                # Reverse check: Is the DB tracking inside the Scan?
-                candidates = conn.execute("""
-                    SELECT * FROM packages 
-                    WHERE length(tracking_number) > 5 
-                    AND instr(UPPER(?), UPPER(tracking_number)) > 0
-                """, (tracking_clean,)).fetchall()
-                
-                best_match = None
-                for c in candidates:
-                    t = c['tracking_number']
-                    # Pick the longest match that is at the END of the scan (common barcode format)
-                    if len(t) > 6:
-                        # Check strict suffix first
-                        if tracking_clean.upper().endswith(t.upper()):
-                             if best_match is None or len(t) > len(best_match['tracking_number']):
-                                 best_match = c
-                
-                if best_match:
-                    # Found a match from the long string!
-                    real_tracking = best_match['tracking_number']
-                    # Fetch ALL items for this found tracking number
-                    rows = conn.execute("SELECT * FROM packages WHERE tracking_number = ?", (real_tracking,)).fetchall()
-                    # Update tracking variable for logging references
-                    tracking = real_tracking
-            
-            # Logic: Receive
-            if not rows:
-                 # Inventory Lookup (Legacy)
-                 inv_item = None
-                 try:
-                     conf = load_config()
-                     if conf and conf.get('INVENTORY_ENABLED'):
-                         from app.routes.inventory import get_inventory_item
-                         inv_item = get_inventory_item(tracking, conn=conn)
-                 except Exception as e:
-                     logger.warning(f"Inventory SKU lookup failed during scan: {e}")
-                 
-                 if inv_item:
-                     return render_template('scan.html', 
-                         message=f"📦 {inv_item['name']}", color="#6f42c1", mode='inventory',
-                         inventory_item={
-                             'id': inv_item['id'],
-                             'sku': inv_item['sku'],
-                             'name': inv_item['name'],
-                             'quantity': inv_item['quantity'],
-                             'image_url': inv_item['image_url'],
-                             'sell_price': inv_item['sell_price'],
-                             'location': ' / '.join(filter(None, [inv_item['location_area'], inv_item['location_aisle'], inv_item['location_shelf'], inv_item['location_bin']]))
-                         })
-                 else:
-                     msg = "Unknown Item (Not in Manifest)"
-                     color = "#ff6961" # Red
-            
+            result = receiving.receive_scan(get_request_db(), request.form.get('tracking_input'),
+                                            current_user.username, inventory_enabled=inv_enabled,
+                                            conf=config)
+            if result.kind == 'inventory':
+                return render_template('scan.html',
+                    message=f"📦 {result.inventory_item['name']}", color="#6f42c1", mode='inventory',
+                    inventory_item=result.inventory_item)
+            if result.kind == 'unknown':
+                msg, color = "Unknown Item (Not in Manifest)", "#ff6961"  # Red
+            elif result.kind == 'duplicate':
+                msg, color = f"Duplicate: {len(result.rows)} Items", "#ffd700"  # Gold
+            elif result.kind == 'priority':
+                msg, color, is_priority = "PRIORITY RECEIVED", "#C77DFF", True
             else:
-                # Check status BEFORE processing (to detect duplicates)
-                all_received = all(r['date_scanned'] for r in rows)
-                already_in_history = check_history(tracking, conn=conn)
-                
-                if all_received and already_in_history:
-                     msg = f"Duplicate: {len(rows)} Items"
-                     color = "#ffd700" # Gold
-                else:
-                     # Log Receipt (Updates ALL items with this tracking)
-                     # We use the first item's name for the log summary, but specific items are updated in DB
-                     log_receipt(tracking, rows[0]['item_name'], str(rows[0]['quantity']), current_user.username, conn=conn)
-                     
-                     # Check Priority (If ANY item is priority)
-                     is_priority = any((r['priority'] for r in rows if 'priority' in r.keys() and r['priority']))
-                     
-                     if is_priority:
-                         msg = "PRIORITY RECEIVED"
-                         color = "#C77DFF" 
-                     else:
-                         msg = f"Received: {len(rows)} Items"
-                         color = "#77dd77" # Green
-                
-                # Build Item List
-                items = []
-                for r in rows:
-                    items.append({
-                        "name": r['item_name'], 
-                        "image": r['image_url'], 
-                        "subtext": tracking,
-                        "qty": r['quantity'] or 1,
-                        "image_url": r['image_url'],
-                        "asin": r['asin'] if 'asin' in r.keys() else '',
-                        "source_url": r['source_url'] if 'source_url' in r.keys() else ''
-                    })
-            
+                msg, color = f"Received: {len(result.rows)} Items", "#77dd77"  # Green
+            items = result.items
+            inventory_match = result.inventory_match
         except Exception as e:
             msg = f"Error: {e}"
             color = "#ff6961"
             items = []
-        finally:
-            pass
-        
-        # Check if inventory is enabled for Add to Inventory button
-        inventory_match = None
-        config = load_config()
-        inv_enabled = config.get('INVENTORY_ENABLED', False) if config else False
-        
-        # V1.16.1: Check if received package matches existing inventory item
-        if inv_enabled and color == "#77dd77" and items:
-            try:
-                pkg_asin = items[0].get('asin', '') or ''
-                pkg_name = items[0].get('name', '') or ''
-                
-                # 1. Try SKU Match (if package has one from Manifest or Mapping)
-                # We need to fetch the SKU from the package row we just fetched if it exists
-                pkg_sku = None
-                if rows and 'sku' in rows[0].keys():
-                    pkg_sku = rows[0]['sku']
-                
-                # If no SKU on package, check product_mappings (Real-time check)
-                if not pkg_sku:
-                    mapping = conn.execute("SELECT inventory_sku FROM product_mappings WHERE package_name = ?", (pkg_name,)).fetchone()
-                    if mapping: pkg_sku = mapping['inventory_sku']
 
-                if pkg_sku:
-                    match = conn.execute("SELECT id, name, sku, quantity, image_url FROM inventory_items WHERE sku = ?", (pkg_sku,)).fetchone()
-                    if match:
-                        inventory_match = dict(match)
-
-                # 2. Try ASIN match (exact)
-                if not inventory_match and pkg_asin and pkg_asin.strip():
-                    match = conn.execute(
-                        "SELECT id, name, sku, quantity, image_url FROM inventory_items WHERE asin = ?",
-                        (pkg_asin.strip(),)
-                    ).fetchone()
-                    if match:
-                        inventory_match = dict(match)
-                
-                # 3. Try name match (fuzzy - case insensitive contains)
-                if not inventory_match and pkg_name and pkg_name.strip():
-                    # Use first 30 chars for matching (handles truncated names)
-                    search_prefix = pkg_name[:30].lower().rstrip('.').rstrip()
-                    match = conn.execute(
-                        """SELECT id, name, sku, quantity, image_url FROM inventory_items 
-                           WHERE LOWER(name) LIKE ? 
-                           LIMIT 1""",
-                        (f'{search_prefix}%',)
-                    ).fetchone()
-                    if match:
-                        inventory_match = dict(match)
-            except Exception as e:
-                logger.error(f"Error checking inventory match: {e}")
-            
-        return render_template('scan.html', message=msg, color=color, items=items, mode='receive', 
+        return render_template('scan.html', message=msg, color=color, items=items, mode='receive',
                                priority_alert=is_priority, inventory_enabled=inv_enabled,
                                inventory_match=inventory_match)
-        
-    return scan_page('receive') 
+
+    return scan_page('receive')
 
 @main_bp.route('/scan/<mode>', methods=['GET'])
 def scan_page(mode):
@@ -334,32 +184,6 @@ def api_dashboard_stats():
         "scans": get_scan_count(14),
         "graph": get_analytics_stats(14)
     }
-    
-    data = request.json
-    tracking = sanitize_for_csv(data.get('tracking'))
-    mode = data.get('mode')
-    
-    conn = get_db_connection()
-    try:
-        item = conn.execute("SELECT * FROM packages WHERE tracking_number = ?", (tracking,)).fetchone()
-        item_name = item['item_name'] if item else "Unknown Item"
-        
-        if mode == 'receive':
-            if item:
-                if item['date_scanned']: # Treated as 'received' if scanned date exists
-                     if check_history(tracking):
-                         return {"status": "duplicate", "msg": "Already Received", "name": item_name}
-            
-            # Log It (Sync Manifest called inside get_dashboard_stats? no need here?)
-            # log_receipt handles DB updates and history logging
-            qty = str(item['quantity']) if item else '1'
-            log_receipt(tracking, item_name, qty, current_user.username)
-            return {"status": "success", "msg": "Received", "name": item_name}
-            
-    finally:
-        conn.close()
-    
-    return {"status": "error", "msg": "Invalid Mode"}
 
 @main_bp.route('/history')
 def history_view():
@@ -496,53 +320,28 @@ def process_return():
     original_tracking = request.form.get('original_tracking')
     return_tracking = request.form.get('return_tracking')
     reason = request.form.get('reason')
-    
+
     if original_tracking:
         conn = get_db_connection()
         try:
-             conn.execute('''
-                 UPDATE packages SET 
-                 status='return_pending'
-                 WHERE tracking_number=?
-             ''', (original_tracking,))
-             # Store reason? (packages doesn't have reason column, HistoryLog does!)
-             # We should log this action.
-             
-             # Need package ID
-             res = conn.execute("SELECT id FROM packages WHERE tracking_number=?", (original_tracking,)).fetchone()
-             if res:
-                 pid = res['id']
-                 conn.execute('''
-                     INSERT INTO history (package_id, user_id, action, details)
-                     VALUES (?, (SELECT id FROM users WHERE username=?), ?, ?)
-                 ''', (pid, current_user.username, 'return_initiated', f"Reason: {reason}, New Track: {return_tracking}"))
-                 
-             conn.commit()
-             flash("Return Initiated")
+            receiving.initiate_return(conn, original_tracking, return_tracking, reason, current_user.username)
+            flash("Return Initiated")
         except Exception as e:
             flash(f"Error: {e}")
         finally:
             conn.close()
-            
+
     return redirect(url_for('main.return_mode'))
 
 @main_bp.route('/mark_refunded/<tracking>', methods=['POST'])
 def mark_refunded(tracking):
     conn = get_db_connection()
     try:
-        today = datetime.datetime.now().strftime('%Y-%m-%d')
-        conn.execute("UPDATE packages SET status='refunded', refund_date=? WHERE tracking_number=?", (today, tracking))
-        
-        # Log Logic?
-        res = conn.execute("SELECT id FROM packages WHERE tracking_number=?", (tracking,)).fetchone()
-        if res:
-             conn.execute("INSERT INTO history (package_id, user_id, action) VALUES (?, (SELECT id FROM users WHERE username=?), 'refunded')", 
-                          (res['id'], current_user.username))
-        conn.commit()
+        receiving.mark_refunded(conn, tracking, current_user.username)
     except Exception as e:
         logger.error(f"mark_refunded failed for {tracking}: {e}")
     finally:
-         conn.close()
+        conn.close()
     return redirect(url_for('main.open_returns_view'))
 
 @main_bp.route('/open_returns')
@@ -618,40 +417,8 @@ def link_item():
 
     conn = get_db_connection()
     try:
-        # 1. Update Package SKU
-        conn.execute("UPDATE packages SET sku = ? WHERE tracking_number = ?", (inventory_sku, tracking))
-        
-        # 2. Update Product Mapping (if requested)
-        if save_mapping and package_name:
-            # Check if mapping exists
-            existing = conn.execute("SELECT id FROM product_mappings WHERE package_name = ?", (package_name,)).fetchone()
-            if existing:
-                conn.execute("UPDATE product_mappings SET inventory_sku = ? WHERE id = ?", (inventory_sku, existing['id']))
-            else:
-                conn.execute("INSERT INTO product_mappings (package_name, inventory_sku) VALUES (?, ?)", (package_name, inventory_sku))
-        
-        # 3. Add to Inventory (if package was already received)
-        # Calculate total quantity of RECEIVED packages with this tracking that were just linked
-        # We assume they weren't added before because the user is manually linking them now.
-        received_rows = conn.execute("""
-            SELECT quantity FROM packages 
-            WHERE tracking_number = ? AND date_scanned IS NOT NULL
-        """, (tracking,)).fetchall()
-        
-        total_qty = sum([r['quantity'] for r in received_rows])
-        logger.info(f"Link Item: Tracking={tracking}, SKU={inventory_sku}, ReceivedRows={len(received_rows)}, TotalQty={total_qty}")
-        
-        if total_qty > 0:
-            inv_item = conn.execute("SELECT id, name FROM inventory_items WHERE sku = ?", (inventory_sku,)).fetchone()
-            if inv_item:
-                conn.execute("UPDATE inventory_items SET quantity = quantity + ? WHERE id = ?", (total_qty, inv_item['id']))
-                logger.info(f"Linked & Added Stock: ID={inv_item['id']} ({inv_item['name']}) += {total_qty}")
-            else:
-                logger.warning(f"Link Item: Inventory Item NOT FOUND for SKU={inventory_sku}")
-        else:
-             logger.warning(f"Link Item: No received packages found (or qty=0) for {tracking}. date_scanned might be NULL.")
-
-        conn.commit()
+        receiving.link_package_to_item(conn, tracking, inventory_sku, current_user.username,
+                                       save_mapping=save_mapping, package_name=package_name)
         return {"status": "success"}
     except Exception as e:
         logger.error(f"Link Item Error: {e}")
