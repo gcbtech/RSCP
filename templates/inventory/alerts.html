@@ -132,9 +132,9 @@
             <div class="card-header d-flex justify-content-between align-items-center">
                 <span>Manage Alerts</span>
                 <div>
-                    <button type="button" class="btn btn-sm btn-outline-success" onclick="enableAll()">Enable
+                    <button type="button" class="btn btn-sm btn-outline-success" data-action="enableAll">Enable
                         All</button>
-                    <button type="button" class="btn btn-sm btn-outline-danger" onclick="disableAll()">Disable
+                    <button type="button" class="btn btn-sm btn-outline-danger" data-action="disableAll">Disable
                         All</button>
                 </div>
             </div>
@@ -187,18 +187,6 @@
 {% endblock %}
 
 {% block scripts %}
-    <script>
-        // Dark mode
-        if (localStorage.getItem('rscp_darkmode') === 'true') {
-            document.body.classList.add('dark-mode');
-        }
-
-        function enableAll() {
-            document.querySelectorAll('.alert-toggle').forEach(cb => cb.checked = true);
-        }
-
-        function disableAll() {
-            document.querySelectorAll('.alert-toggle').forEach(cb => cb.checked = false);
-        }
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/inventory-common.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/pages/inventory-alerts.js') }}"></script>
 {% endblock %}

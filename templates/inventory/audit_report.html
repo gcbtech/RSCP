@@ -106,7 +106,5 @@
 {% endblock %}
 
 {% block scripts %}
-    <script>
-        if (localStorage.getItem('rscp_darkmode') === 'true') document.body.classList.add('dark-mode');
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/inventory-common.js') }}"></script>
 {% endblock %}

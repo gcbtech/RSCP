@@ -62,6 +62,13 @@ def _assert_layout(html, *, nav=True, bootstrap_js=True):
         assert '@' in url, 'unpinned asset: ' + url
 
 
+def _static_js(rel):
+    import os
+    path = os.path.join(os.path.dirname(__file__), '..', 'static', 'js', *rel.split('/'))
+    with open(path, encoding='utf-8') as f:
+        return f.read()
+
+
 def _get(client, url):
     resp = client.get(url)
     assert resp.status_code == 200, (url, resp.status_code)
@@ -103,10 +110,13 @@ def test_list_page_keeps_ajax_targets(seeded, admin):
     assert 'sort-controls' in html
     assert 'UI Widget' in html
     assert 'id="imageModal"' in html
-    assert 'escapeHtml(newSku)' in html
+    # Page code lives in static JS (no inline scripts), still escaping inserted values.
+    list_js = _static_js('pages/inventory-list.js')
+    assert 'escapeHtml(newSku)' in list_js
+    assert 'function loadInventoryPage' in list_js and "new TomSelect('#quickAddLocation'" in list_js
     # Page scripts run after the Bootstrap bundle and Tom Select.
-    assert html.index(BOOTSTRAP_JS) < html.index('function loadInventoryPage')
-    assert html.index('tom-select.complete.min.js') < html.index("new TomSelect('#quickAddLocation'")
+    assert html.index(BOOTSTRAP_JS) < html.index('js/pages/inventory-list.js')
+    assert html.index('tom-select.complete.min.js') < html.index('js/pages/inventory-list.js')
     assert html.index('id="inventoryBody"') < html.index(BOOTSTRAP_JS)
 
 
@@ -120,18 +130,22 @@ def test_overview_uses_pinned_chartjs(seeded, admin):
     html = _get(admin, '/inventory/')
     assert 'chart.js@4.4.0/dist/chart.umd.min.js' in html
     assert 'npm/chart.js"' not in html
-    assert html.index('chart.umd.min.js') < html.index('new Chart(')
+    assert 'new Chart(' in _static_js('pages/inventory-overview.js')
+    assert html.index('chart.umd.min.js') < html.index('js/pages/inventory-overview.js')
 
 
 def test_lookup_uses_shared_escape(seeded, admin):
     import os
     html = _get(admin, '/inventory/lookup')
-    assert 'escapeHtml(item.image_url)' in html
+    assert 'js/pages/inventory-lookup.js' in html
+    lookup_js = _static_js('pages/inventory-lookup.js')
+    assert 'escapeHtml(item.image_url)' in lookup_js
     # The page relies on window.escapeHtml from rscp-common.js (the copy in
     # _nav.html is private to an IIFE), so it must not define its own.
     src = os.path.join(os.path.dirname(__file__), '..', 'templates', 'inventory', 'lookup.html')
     with open(src, encoding='utf-8') as f:
         assert 'function escapeHtml' not in f.read()
+    assert 'function escapeHtml' not in lookup_js
 
 
 def test_import_keeps_body_class(seeded, admin):
@@ -152,7 +166,8 @@ def test_audit_live_is_full_screen(seeded, admin):
     assert '<title>RSCP | Audit Live</title>' in html
     assert 'Ready to Scan' in html
     # new bootstrap.Modal(...) runs at parse time: the bundle must load first.
-    assert html.index(BOOTSTRAP_JS) < html.index('new bootstrap.Modal')
+    assert 'new bootstrap.Modal' in _static_js('pages/inventory-audit-live.js')
+    assert html.index(BOOTSTRAP_JS) < html.index('js/pages/inventory-audit-live.js')
 
 
 def test_add_stock_has_no_nav_or_bootstrap_js(seeded, admin):
@@ -160,7 +175,8 @@ def test_add_stock_has_no_nav_or_bootstrap_js(seeded, admin):
     _assert_layout(html, nav=False, bootstrap_js=False)
     assert '<title>RSCP | Add Stock</title>' in html
     assert 'Add Stock to Inventory' in html
-    assert 'function printDymoLabel' in html
+    assert html.index('js/dymo-print.js') < html.index('js/pages/inventory-add-stock.js')
+    assert 'function printDymoLabel' in _static_js('dymo-print.js')
 
 
 def test_bulk_edit(seeded, admin):
@@ -170,4 +186,5 @@ def test_bulk_edit(seeded, admin):
     _assert_layout(html)
     assert '<title>RSCP | Bulk Edit Items</title>' in html
     assert 'Bulk Edit Inventory' in html
-    assert html.index('tom-select.complete.min.js') < html.index('new TomSelect')
+    assert 'new TomSelect' in _static_js('pages/inventory-bulk-edit.js')
+    assert html.index('tom-select.complete.min.js') < html.index('js/pages/inventory-bulk-edit.js')
