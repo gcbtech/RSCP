@@ -20,6 +20,15 @@
     //      the display can boot before the server and still recover.
     //   3. Waking up (tablet sleep, network back) triggers an
     //      immediate poll instead of waiting out the backoff.
+    //   4. A request can never stall the loop: every fetch has a
+    //      timeout, and a watchdog restarts polling if it goes quiet.
+    //   5. When polling keeps failing but the server answers a probe,
+    //      the problem is this page (e.g. a Cloudflare Access session
+    //      that expired and now redirects every fetch to a login page,
+    //      which only a real page load can complete), so the page
+    //      reloads itself. It never reloads while the server is
+    //      unreachable, so it can't strand itself on a browser error
+    //      page; the pairing token in localStorage survives reloads.
     // ============================================================
 
     const csrfToken = RSCP.csrfToken();
@@ -29,6 +38,10 @@
     const OVERLAY_AFTER_FAILURES = 4;  // show the reconnect overlay after ~5s of failures
     const PAIRING_STATUS_MS = 2000;    // "am I paired yet?" cadence
     const IDLE_RELOAD_HOURS = 24;      // kiosk hygiene reload (only when idle + connected)
+    const FETCH_TIMEOUT_MS = 10000;    // abort any request that hangs longer than this
+    const WATCHDOG_MS = 15000;         // how often the watchdog checks the poll loop
+    const STALL_MS = 30000;            // no poll settled for this long = loop is stuck
+    const RECOVER_AFTER_MS = 60000;    // failing this long: probe the server, maybe reload
 
     const LS_PERIPHERAL_ID = 'rscp_customer_terminal_id';
     const LS_TOKEN = 'rscp_customer_terminal_token';
@@ -41,6 +54,19 @@
     let paired = false;
     const bootTime = Date.now();
     let lastCartEmpty = true;
+    let lastPollSettled = Date.now();  // when a poll last finished (ok or not)
+    let failingSince = 0;              // when the current run of failures started
+    let probing = false;
+    const PAGE_VERSION = (RSCP.pageData() || {}).appVersion || null;
+
+    // fetch() has no timeout of its own: a request on a half-open
+    // connection can hang for many minutes, and the poll loop with it.
+    function fetchWithTimeout(url, opts) {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+        return fetch(url, Object.assign({}, opts, { signal: ctrl.signal }))
+            .finally(() => clearTimeout(timer));
+    }
 
     function getPeripheralId() {
         let id = localStorage.getItem(LS_PERIPHERAL_ID);
@@ -165,10 +191,18 @@
         if (!token) return;
 
         try {
-            const res = await fetch(`/pos/api/peripheral/poll?since=${cartVersion}`, {
+            const res = await fetchWithTimeout(`/pos/api/peripheral/poll?since=${cartVersion}`, {
                 headers: { 'X-Pairing-Token': token },
-                cache: 'no-store'
+                cache: 'no-store',
+                // RSCP never redirects this endpoint, so a redirect means
+                // something in front of it (Cloudflare Access) wants a login.
+                redirect: 'manual'
             });
+
+            if (res.type === 'opaqueredirect') {
+                reloadPage('login redirect from proxy');
+                throw new Error('redirected to a login page');
+            }
 
             if (res.status === 403) {
                 // Authoritative: this pairing was revoked at the register.
@@ -188,7 +222,9 @@
             if (!data.success) throw new Error(data.message || 'Poll failed');
 
             // Recovered (or normal) - reset failure state
+            lastPollSettled = Date.now();
             consecutiveFailures = 0;
+            failingSince = 0;
             hideDisconnectOverlay();
             setStatusBadge('connected', '🟢 Live');
 
@@ -202,11 +238,15 @@
             }
 
             maybeIdleReload();
+            maybeVersionReload();
             scheduleNextPoll(POLL_MS);
         } catch (err) {
             // Transient failure (server rebooting, network blip, tablet
             // just woke up...): keep credentials, keep retrying forever.
+            lastPollSettled = Date.now();
             consecutiveFailures++;
+            if (!failingSince) failingSince = Date.now();
+            if (Date.now() - failingSince >= RECOVER_AFTER_MS) probeAndRecover();
             const delay = Math.min(POLL_MS * Math.pow(1.5, consecutiveFailures), BACKOFF_MAX_MS);
             setStatusBadge('disconnected', '🔄 Reconnecting...');
             if (consecutiveFailures >= OVERLAY_AFTER_FAILURES) {
@@ -216,6 +256,66 @@
             }
             scheduleNextPoll(delay);
         }
+    }
+
+    // Polling has failed for a while. Ask /healthz (public, no token)
+    // whether the server is reachable through the same path. If it is,
+    // or a proxy answers with a login redirect, reload the page; if
+    // the network or server is down, keep retrying.
+    async function probeAndRecover() {
+        if (probing) return;
+        probing = true;
+        try {
+            const res = await fetchWithTimeout('/healthz', { cache: 'no-store', redirect: 'manual' });
+            if (res.type === 'opaqueredirect') {
+                reloadPage('login redirect from proxy');
+            } else if (res.ok) {
+                reloadPage('server healthy but polls failing');
+            }
+        } catch (e) {
+            // unreachable: nothing a reload could fix
+        } finally {
+            probing = false;
+        }
+    }
+
+    // At most one self-reload every few minutes, in case whatever
+    // breaks polling survives the reload too.
+    function reloadPage(reason) {
+        let last = 0;
+        try { last = parseInt(sessionStorage.getItem('rscp_cd_reload') || '0', 10); } catch (e) { /* ignore */ }
+        if (Date.now() - last < 5 * 60 * 1000) return;
+        try { sessionStorage.setItem('rscp_cd_reload', String(Date.now())); } catch (e) { /* ignore */ }
+        console.warn('Customer display reloading: ' + reason);
+        window.location.reload();
+    }
+
+    // Restart the poll loop if nothing has settled for a while (a
+    // stalled request, an exception that skipped scheduling, a timer
+    // the browser dropped while throttling the page).
+    function watchdog() {
+        if (!paired) return;
+        if (Date.now() - lastPollSettled > STALL_MS) {
+            console.warn('Poll loop stalled - restarting');
+            lastPollSettled = Date.now();
+            scheduleNextPoll(0);
+        }
+    }
+
+    // After an RSCP update, pick up the new page (and its fixes) once
+    // the cart is empty instead of running the old script for days.
+    let lastVersionCheck = Date.now();
+    async function maybeVersionReload() {
+        if (!PAGE_VERSION || !lastCartEmpty) return;
+        if (Date.now() - lastVersionCheck < 10 * 60 * 1000) return;
+        lastVersionCheck = Date.now();
+        try {
+            const res = await fetchWithTimeout('/healthz', { cache: 'no-store' });
+            const data = await res.json();
+            if (data.version && data.version !== PAGE_VERSION && lastCartEmpty) {
+                reloadPage('RSCP updated to ' + data.version);
+            }
+        } catch (e) { /* try again next time */ }
     }
 
     // Kiosk hygiene: reload once a day, but only when nothing is
@@ -237,6 +337,7 @@
         document.getElementById('merchantName').textContent =
             localStorage.getItem(LS_REGISTER_NAME) || 'Welcome';
         setStatusBadge('disconnected', '⚪ Connecting...');
+        setInterval(watchdog, WATCHDOG_MS);
         pollCart();
     }
 
@@ -380,8 +481,7 @@
         if (!paired) return;
         console.log('Wake event - polling immediately');
         consecutiveFailures = 0;
-        if (pollTimer) clearTimeout(pollTimer);
-        pollCart();
+        scheduleNextPoll(0);
     }
 
     document.addEventListener('visibilitychange', () => {

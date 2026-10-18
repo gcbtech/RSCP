@@ -198,13 +198,6 @@ def _rendered_pages(fresh_app, fresh_client, world):
     pages.append(('/pos/scan', _get(cashier, '/pos/scan')))
     pages.append(('/pos/customer-display', _get(fresh_client, '/pos/customer-display')))
 
-    locked = fresh_app.test_client()
-    login(locked, 2)
-    with locked.session_transaction() as sess:
-        sess['pos_locked'] = True
-        sess['pos_locked_by'] = 'cashier'
-    pages.append(('/pos/unlock', _get(locked, '/pos/unlock')))
-
     # Anonymous GET /pos/login is bounced by the global session guard; render it directly.
     from flask import render_template
     with fresh_app.test_request_context('/pos/login'):
@@ -293,7 +286,7 @@ POS_JS = sorted('js/pages/' + name for name in os.listdir(os.path.join(STATIC, '
 
 def test_pos_js_files_exist():
     for name in ('sales', 'scan', 'customer-display', 'checkout', 'receipt', 'receipt-print',
-                 'receipt-preview', 'lock-screen', 'login', 'refunds', 'edit-sale'):
+                 'receipt-preview', 'login', 'refunds', 'edit-sale'):
         assert 'js/pages/pos-%s.js' % name in POS_JS, name
 
 

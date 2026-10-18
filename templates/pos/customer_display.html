@@ -434,5 +434,6 @@
 {% endblock %}
 
 {% block scripts %}
+    <script type="application/json" id="page-data">{{ {'appVersion': app_version}|tojson }}</script>
     <script src="{{ url_for('static', filename='js/pages/pos-customer-display.js') }}"></script>
 {% endblock %}

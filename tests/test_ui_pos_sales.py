@@ -107,14 +107,24 @@ def test_customer_display_is_full_screen(fresh_client):
     assert '| Customer Display</title>' in html
 
 
-def test_lock_screen(fresh_client):
+def test_customer_display_self_heals(fresh_client):
+    """The display gets the app version (to reload after updates) and its
+    script guards the poll loop against hung requests and login redirects."""
+    import json, os, re
+    html = _page(fresh_client, '/pos/customer-display')
+    data = json.loads(re.search(r'id="page-data">(.*?)</script>', html, re.S).group(1))
+    assert data['appVersion']
+    js_path = os.path.join(os.path.dirname(__file__), '..', 'static', 'js', 'pages', 'pos-customer-display.js')
+    with open(js_path, encoding='utf-8') as f:
+        js = f.read()
+    for needle in ('AbortController', "redirect: 'manual'", 'opaqueredirect', 'setInterval(watchdog'):
+        assert needle in js, needle
+
+
+def test_lock_screen_is_gone(fresh_client):
     login(fresh_client, 2)
-    with fresh_client.session_transaction() as sess:
-        sess['pos_locked'] = True
-        sess['pos_locked_by'] = 'cashier'
-    html = _page(fresh_client, '/pos/unlock')
-    _assert_layout(html, 'id="pinInput"', nav=False, bootstrap_js=False)
-    assert 'id="unlockForm"' in html
+    assert fresh_client.get('/pos/unlock').status_code == 404
+    assert fresh_client.post('/pos/lock').status_code in (400, 404)  # 400 = CSRF before routing
 
 
 def test_pos_login(fresh_app):

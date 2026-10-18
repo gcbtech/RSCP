@@ -23,10 +23,6 @@ logger = logging.getLogger(__name__)
 @pos_bp.route('/')
 def sales():
     """Main POS sales interface."""
-    # Check if POS is locked
-    if session.get('pos_locked'):
-        return redirect(url_for('pos.pos_unlock'))
-    
     cart = get_cart()
     totals = compute_cart_totals(cart)
 
@@ -72,8 +68,7 @@ def sales():
                            total=totals['card_total'],
                            held_orders=held_orders,
                            allow_hold=allow_hold_orders(),
-                           require_manager_void=require_manager_for_void(),
-                           pos_operator=session.get('pos_operator'))
+                           require_manager_void=require_manager_for_void())
 
 
 def _render_cart_ajax(cart):
