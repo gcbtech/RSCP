@@ -10,7 +10,8 @@ from flask_login import current_user, login_required
 
 from app.routes.pos import pos_bp, REFUND_REASONS
 from app.services.db import get_db_connection, get_request_db
-from app.services.pos_ledger import REFUND_METHODS, default_refund_method, order_payments, money
+from app.services import pos_refunds
+from app.services.pos_ledger import REFUND_METHODS, default_refund_method, order_payments
 
 logger = logging.getLogger(__name__)
 
@@ -307,208 +308,31 @@ def refund_process():
         flash('Invalid order.')
         return redirect(url_for('pos.refunds'))
     
+    form = request.form
+    items = [(iid, form.get(f'quantity_{iid}', 0)) for iid in form.getlist('item_id')]
+    restock_actions = {key[len('restock_'):]: value for key, value in form.items()
+                       if key.startswith('restock_')}
+    manager_username = (session.get('pos_refund_manager_auth') or {}).get('username')
+
     conn = get_db_connection()
+    conn.isolation_level = None
     try:
-        # Take the write lock BEFORE reading what has already been refunded, so
-        # two submissions (double-click, two managers) cannot both pass the
-        # caps below. Early returns leave the transaction open; close() in the
-        # finally block discards it.
-        conn.isolation_level = None
-        conn.execute('BEGIN IMMEDIATE')
-
-        # Get order
-        order = conn.execute('SELECT * FROM pos_orders WHERE id = ?', (order_id,)).fetchone()
-        if not order:
-            flash('Order not found.')
-            return redirect(url_for('pos.refunds'))
-
-        # How much of each line item has ALREADY been refunded, plus the total
-        # dollars already refunded on this order. These cap every refund below
-        # so the total refunded can never exceed what was sold / paid.
-        refunded_rows = conn.execute('''
-            SELECT oi.id, oi.quantity, oi.line_total, oi.inventory_item_id,
-                   COALESCE((SELECT SUM(ri.quantity) FROM pos_refund_items ri
-                             JOIN pos_refunds r ON ri.refund_id = r.id
-                             WHERE ri.order_item_id = oi.id), 0) AS refunded_qty
-            FROM pos_order_items oi
-            WHERE oi.order_id = ?
-        ''', (order_id,)).fetchall()
-        refunded_map = {row['id']: row for row in refunded_rows}
-        already = conn.execute('''
-            SELECT COALESCE(SUM(amount), 0) AS t,
-                   COALESCE(SUM(COALESCE(tax_refunded, CASE WHEN ? > 0 THEN amount * ? / ? ELSE 0 END)), 0) AS tax
-            FROM pos_refunds WHERE order_id = ?
-        ''', (order['total'], order['tax_amount'], order['total'], order_id)).fetchone()
-        already_refunded_total = already['t']
-        already_tax_refunded = already['tax']
-        remaining_paid = round(order['total'] - already_refunded_total, 2)
-
-        # What the customer actually paid per $1 of line value: folds in the
-        # order discount, coupon, cash discount and tax. A refunded unit is
-        # worth its line value times this ratio, never more.
-        lines_total = sum(r['line_total'] for r in refunded_rows)
-        paid_ratio = (order['total'] / lines_total) if lines_total > 0 else 0
-
-        # Calculate refund amount and process items
-        refund_amount = 0
-        items_to_refund = []
-        items_restocked = 0
-        items_damaged = 0
-        
-        # Reasons that should automatically restock inventory  
-        # (item is still sellable and going back to inventory)
-        RESTOCK_REASONS = {'customer_changed_mind', 'wrong_item', 'price_adjustment'}
-        # Reasons that should NOT restock (item is damaged/defective or no physical return)
-        NO_RESTOCK_REASONS = {'defective', 'duplicate_charge', 'other'}
-        
-        # Auto-determine default restock action based on reason
-        if reason in RESTOCK_REASONS:
-            default_restock = 'restock'
-        elif reason in NO_RESTOCK_REASONS:
-            default_restock = 'none'  # 'defective' marking handled separately if needed
-        else:
-            default_restock = 'none'
-        
-        if refund_type == 'full':
-            # "Full" refunds everything NOT already refunded. The header amount
-            # is the order total minus what was already refunded, so repeated
-            # full refunds (or a full refund after partials) can't exceed paid.
-            refund_amount = round(order['total'] - already_refunded_total, 2)
-            for item in refunded_rows:
-                remaining = item['quantity'] - item['refunded_qty']
-                if remaining <= 0:
-                    continue  # this line already fully refunded
-                restock_action = request.form.get(f'restock_{item["id"]}', default_restock)
-                per_unit = (item['line_total'] / item['quantity']) if item['quantity'] else 0
-                items_to_refund.append({
-                    'order_item_id': item['id'],
-                    'quantity': remaining,
-                    'amount': round(per_unit * remaining, 2),
-                    'restock_action': restock_action,
-                    'inventory_item_id': item['inventory_item_id']
-                })
-                if restock_action == 'restock':
-                    items_restocked += remaining
-                elif restock_action == 'damaged':
-                    items_damaged += remaining
-        else:
-            # Partial refund - selected items
-            item_ids = request.form.getlist('item_id')
-            for item_id in item_ids:
-                try:
-                    qty = int(request.form.get(f'quantity_{item_id}', 0))
-                except (TypeError, ValueError):
-                    qty = 0
-                if qty <= 0:
-                    continue
-                item = refunded_map.get(int(item_id)) if str(item_id).isdigit() else None
-                if not item:
-                    continue
-                remaining = item['quantity'] - item['refunded_qty']
-                if qty > remaining:
-                    # Refusing outright (rather than silently clamping) so the
-                    # manager sees exactly what's refundable instead of a
-                    # surprise smaller refund.
-                    flash(f'Cannot refund {qty} of that item — only {remaining} left to refund.')
-                    return redirect(url_for('pos.refund_order', order_number=order['order_number']))
-                per_unit = (item['line_total'] / item['quantity']) if item['quantity'] else 0
-                list_value = round(per_unit * qty, 2)
-                restock_action = request.form.get(f'restock_{item_id}', default_restock)
-                items_to_refund.append({
-                    'order_item_id': item['id'],
-                    'quantity': qty,
-                    'amount': list_value,  # list value; reports apply the paid/tax ratios
-                    'restock_action': restock_action,
-                    'inventory_item_id': item['inventory_item_id']
-                })
-                refund_amount += list_value * paid_ratio
-                if restock_action == 'restock':
-                    items_restocked += qty
-                elif restock_action == 'damaged':
-                    items_damaged += qty
-
-        if refund_type != 'full':
-            # Never refund more than is left of what was paid. If this partial
-            # refund returns every remaining unit, refund exactly what is left
-            # so no stray cent remains from rounding.
-            units_left = sum(r['quantity'] - r['refunded_qty'] for r in refunded_rows)
-            units_now = sum(i['quantity'] for i in items_to_refund)
-            if units_now >= units_left:
-                refund_amount = remaining_paid
-            refund_amount = round(min(refund_amount, remaining_paid), 2)
-
-        if not items_to_refund or refund_amount <= 0:
-            flash('No items available to refund (order may already be fully refunded).')
-            return redirect(url_for('pos.refund_order', order_number=order['order_number']))
-
-        # The tax inside this refund: the order's tax share of the amount, or
-        # exactly the tax not yet refunded when this refund empties the order.
-        refund_amount = money(refund_amount)
-        tax_left = max(0.0, money(order['tax_amount'] - already_tax_refunded))
-        if refund_amount >= remaining_paid:
-            tax_refunded = tax_left
-        elif order['total'] > 0:
-            tax_refunded = money(refund_amount * order['tax_amount'] / order['total'])
-        else:
-            tax_refunded = 0.0
-        tax_refunded = min(tax_refunded, tax_left, refund_amount)
-        refund_method = refund_method or default_refund_method(order['payment_method'])
-
-# Get manager info
-        manager_auth = session.get('pos_refund_manager_auth', {})
-        manager_username = manager_auth.get('username', current_user.username)
-        manager = conn.execute('SELECT id FROM users WHERE username = ?', (manager_username,)).fetchone()
-        manager_id = manager['id'] if manager else current_user.id
-        
-        # Create refund record
-        cursor = conn.execute('''
-            INSERT INTO pos_refunds (
-                order_id, refund_type, amount, reason, reason_notes,
-                items_restocked, items_damaged, manager_id, refund_method, tax_refunded
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            order_id, refund_type, round(refund_amount, 2), reason, reason_notes,
-            items_restocked, items_damaged, manager_id, refund_method, tax_refunded
-        ))
-        refund_id = cursor.lastrowid
-        
-        # Create refund item records and handle restocking
-        for item in items_to_refund:
-            conn.execute('''
-                INSERT INTO pos_refund_items (refund_id, order_item_id, quantity, amount, restock_action)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (refund_id, item['order_item_id'], item['quantity'], item['amount'], item['restock_action']))
-            
-            # Handle inventory
-            if item['inventory_item_id'] and item['restock_action'] == 'restock':
-                conn.execute('''
-                    UPDATE inventory_items SET quantity = quantity + ? WHERE id = ?
-                ''', (item['quantity'], item['inventory_item_id']))
-                
-                conn.execute('''
-                    INSERT INTO inventory_transactions (
-                        inventory_item_id, quantity_change, reason, user_id
-                    ) VALUES (?, ?, ?, ?)
-                ''', (item['inventory_item_id'], item['quantity'], 'Refund Restock', str(manager_id)))
-        
-        # Update order status: fully refunded once no unit is left to refund
-        units_left = sum(r['quantity'] - r['refunded_qty'] for r in refunded_rows)
-        fully_refunded = refund_type == 'full' or sum(i['quantity'] for i in items_to_refund) >= units_left
-        new_status = 'refunded' if fully_refunded else 'partial_refund'
-        conn.execute('UPDATE pos_orders SET status = ? WHERE id = ?', (new_status, order_id))
-        
-        conn.commit()
-        
-        logger.info(f"Refund processed: Order {order['order_number']}, Amount: ${refund_amount:.2f}, Manager: {manager_username}")
-        flash(f'Refund of ${refund_amount:.2f} processed successfully '
-              f'({REFUND_METHODS.get(refund_method, refund_method)}).')
-        
-        return redirect(url_for('pos.refund_order', order_number=order['order_number']))
-        
+        result = pos_refunds.process_refund(
+            conn, order_id, refund_type, reason, current_user,
+            reason_notes=reason_notes, refund_method=refund_method, items=items,
+            restock_actions=restock_actions, manager_username=manager_username)
+    except pos_refunds.RefundError as e:
+        flash(e.message)
+        if e.order_number:
+            return redirect(url_for('pos.refund_order', order_number=e.order_number))
+        return redirect(url_for('pos.refunds'))
     except Exception as e:
-        conn.rollback()
         logger.error(f"Refund error: {e}")
         flash('Error processing refund.')
         return redirect(url_for('pos.refunds'))
     finally:
         conn.close()
+
+    flash(f'Refund of ${result.amount:.2f} processed successfully '
+          f'({REFUND_METHODS.get(result.refund_method, result.refund_method)}).')
+    return redirect(url_for('pos.refund_order', order_number=result.order_number))

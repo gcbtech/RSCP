@@ -16,6 +16,7 @@ from flask_login import current_user, login_required
 
 from app.routes.pos import pos_bp
 from app.routes.pos.core import get_pos_setting, set_pos_setting, get_tax_rate
+from app.services import pos_sales
 from app.services.db import get_db_connection, get_request_db
 from app.utils.permissions import require_permission
 
@@ -884,49 +885,12 @@ def daily_items_report():
 
 
 def _sale_adjustments(conn, order):
-    """The order-level adjustments of a completed sale, as recorded at checkout.
-
-    Re-pricing an edited sale must reuse these (not today's settings):
-      discount_pct    - order discount as a fraction of the subtotal, when it
-                        was entered as a percentage (stored in dollars)
-      discount_fixed  - order discount in dollars, when entered as dollars
-      coupon          - coupon dollars redeemed on this order
-      cash_discount   - cash discount dollars from payment_details
-      tax_rate        - the tax rate in force at the time of sale
-    """
-    discount_dollars = float(order['discount_amount'] or 0)
-    subtotal = float(order['subtotal'] or 0)
-    pct = None
-    if discount_dollars and order['discount_type'] == 'percent' and subtotal > 0:
-        pct = discount_dollars / subtotal
-    coupon = conn.execute(
-        'SELECT COALESCE(SUM(discount_applied), 0) AS c FROM pos_coupon_redemptions WHERE order_id = ?',
-        (order['id'],)).fetchone()['c']
-    try:
-        cash_discount = float((json.loads(order['payment_details'] or '{}') or {}).get('cash_discount') or 0)
-    except (ValueError, TypeError, AttributeError):
-        cash_discount = 0.0
-    return {
-        'discount_pct': pct,
-        'discount_fixed': 0.0 if pct is not None else discount_dollars,
-        'coupon': float(coupon or 0),
-        'cash_discount': cash_discount,
-        'tax_rate': float(order['tax_rate'] if order['tax_rate'] is not None else get_tax_rate()),
-    }
+    """The sale's own order-level adjustments (pos_sales.sale_adjustments)."""
+    return pos_sales.sale_adjustments(conn, order, default_tax_rate=get_tax_rate())
 
 
-def _reprice_sale(new_subtotal, adj):
-    """(order_discount, tax, total) for an edited sale; mirrors edit_sale.html's preview."""
-    from app.routes.pos.core import round_money
-    from decimal import Decimal, ROUND_HALF_UP
-    if adj['discount_pct'] is not None:
-        order_discount = round_money(new_subtotal * adj['discount_pct'])
-    else:
-        order_discount = round_money(min(adj['discount_fixed'], new_subtotal))
-    after = max(0.0, new_subtotal - order_discount - min(adj['coupon'], max(0.0, new_subtotal - order_discount)))
-    tax = float((Decimal(str(after)) * Decimal(str(adj['tax_rate']))).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
-    total = round_money(max(0.0, after + tax - adj['cash_discount']))
-    return order_discount, tax, total
+# (order_discount, tax, total) for an edited sale; mirrors edit_sale.html's preview
+_reprice_sale = pos_sales.reprice_sale
 
 
 @pos_bp.route('/management/edit-sale/<int:order_id>')
@@ -967,178 +931,45 @@ def edit_sale(order_id):
                            local_time=local_dt.strftime('%H:%M:%S') if local_dt else '')
 
 
-def _sale_has_refunds(conn, order_id):
-    return conn.execute('SELECT 1 FROM pos_refunds WHERE order_id = ? LIMIT 1',
-                        (order_id,)).fetchone() is not None
+_sale_has_refunds = pos_sales.has_refunds
 
 
 @pos_bp.route('/management/edit-sale/<int:order_id>', methods=['POST'])
 @require_permission('pos.manage')
 def edit_sale_post(order_id):
-    """Process sale edit (admin only)."""
+    """Process sale edit (admin only): pos_sales.edit_sale."""
+    form = request.form
+    item_ids = form.getlist('item_id')
+    quantities = form.getlist('item_quantity')
+    prices = form.getlist('item_price')
+    names = form.getlist('item_name')
+
+    def _at(values, i):
+        return values[i] if i < len(values) else None
+
+    lines = [pos_sales.SaleLineEdit(item_ids[i], _at(quantities, i), _at(prices, i), _at(names, i) or '')
+             for i in range(len(item_ids))]
+
     conn = get_request_db()
-    
-    order = conn.execute('SELECT * FROM pos_orders WHERE id = ?', (order_id,)).fetchone()
-    if not order:
-        flash("Order not found.")
-        return redirect(url_for('pos.sales_history'))
-    
-    if _sale_has_refunds(conn, order_id):
-        flash("This sale has refunds and can no longer be edited. Use a refund instead.")
-        return redirect(url_for('pos.sales_history'))
-
-    old_items = conn.execute('SELECT * FROM pos_order_items WHERE order_id = ?', (order_id,)).fetchall()
-    old_items_map = {item['id']: dict(item) for item in old_items}
-    
-    # Parse form data
-    new_date = request.form.get('sale_date', '')
-    new_time = request.form.get('sale_time', '')
-    
-    # Get item arrays from form
-    item_ids = request.form.getlist('item_id')
-    item_quantities = request.form.getlist('item_quantity')
-    item_prices = request.form.getlist('item_price')
-    item_names = request.form.getlist('item_name')
-    item_skus = request.form.getlist('item_sku')
-    deleted_ids = request.form.getlist('deleted_items')
-    
-    # Validate everything before touching stock or the order
     try:
-        parsed_items = []
-        for i in range(len(item_ids)):
-            qty = int(item_quantities[i])
-            price = round(float(item_prices[i]), 2)
-            if qty < 1 or price < 0:
-                raise ValueError
-            parsed_items.append((int(item_ids[i]), qty, price))
-    except (ValueError, IndexError):
-        flash("Quantities must be whole numbers of at least 1 and prices cannot be negative. "
-              "Use the remove button to take an item off the sale.")
+        result = pos_sales.edit_sale(
+            conn, order_id, lines, form.getlist('deleted_items'), current_user,
+            new_date=form.get('sale_date', ''), new_time=form.get('sale_time', ''),
+            default_tax_rate=get_tax_rate(), ip=request.remote_addr)
+    except pos_sales.InvalidSaleItems as e:
+        flash(str(e))
         return redirect(url_for('pos.edit_sale', order_id=order_id))
+    except pos_sales.SaleError as e:  # not found / has refunds
+        flash(str(e))
+        return redirect(url_for('pos.sales_history'))
+    if conn.in_transaction:
+        conn.commit()
 
-    from app.routes.pos.core import calculate_line_total
-    adj = _sale_adjustments(conn, order)
-    changes = []
-
-    # 1. Handle deleted items — restore inventory
-    for del_id_str in deleted_ids:
-        if not del_id_str:
-            continue
-        del_id = int(del_id_str)
-        if del_id in old_items_map:
-            old_item = old_items_map[del_id]
-            # Restore inventory
-            if old_item.get('inventory_item_id'):
-                conn.execute(
-                    'UPDATE inventory_items SET quantity = quantity + ? WHERE id = ?',
-                    (old_item['quantity'], old_item['inventory_item_id'])
-                )
-                conn.execute(
-                    'INSERT INTO inventory_transactions (inventory_item_id, quantity_change, reason, user_id, source_tracking) VALUES (?, ?, ?, ?, ?)',
-                    (old_item['inventory_item_id'], old_item['quantity'], 'Sale Edit (item removed)', current_user.username, order['order_number'])
-                )
-            conn.execute('DELETE FROM pos_order_items WHERE id = ?', (del_id,))
-            changes.append(f"Removed: {old_item['name']} x{old_item['quantity']}")
-    
-    # 2. Update remaining items
-    new_subtotal = 0
-    for i, (item_id, new_qty, new_price) in enumerate(parsed_items):
-        new_name = item_names[i] if i < len(item_names) else ''
-        
-        if item_id in old_items_map:
-            old_item = old_items_map[item_id]
-            old_qty = old_item['quantity']
-            old_price = old_item['unit_price']
-            
-            qty_diff = old_qty - new_qty  # positive = returned units
-            
-            # Adjust inventory if quantity changed
-            if qty_diff != 0 and old_item.get('inventory_item_id'):
-                conn.execute(
-                    'UPDATE inventory_items SET quantity = quantity + ? WHERE id = ?',
-                    (qty_diff, old_item['inventory_item_id'])
-                )
-                reason = 'Sale Edit (qty decreased)' if qty_diff > 0 else 'Sale Edit (qty increased)'
-                conn.execute(
-                    'INSERT INTO inventory_transactions (inventory_item_id, quantity_change, reason, user_id, source_tracking) VALUES (?, ?, ?, ?, ?)',
-                    (old_item['inventory_item_id'], qty_diff, reason, current_user.username, order['order_number'])
-                )
-            
-            # Keep the line's own discount (it was part of what was charged)
-            line_total = calculate_line_total(new_price, new_qty,
-                                              old_item.get('discount_amount') or 0,
-                                              old_item.get('discount_type'))
-            new_subtotal += line_total
-            
-            conn.execute('''
-                UPDATE pos_order_items 
-                SET quantity = ?, unit_price = ?, line_total = ?, name = ?
-                WHERE id = ?
-            ''', (new_qty, new_price, line_total, new_name, item_id))
-            
-            # Log what changed
-            if new_qty != old_qty:
-                changes.append(f"{old_item['name']}: qty {old_qty} → {new_qty}")
-            if abs(new_price - old_price) > 0.001:
-                changes.append(f"{old_item['name']}: price ${old_price:.2f} → ${new_price:.2f}")
-            if new_name and new_name != old_item['name']:
-                changes.append(f"Renamed: {old_item['name']} → {new_name}")
-    
-    # 3. Re-price with the sale's own discount, coupon, cash discount and
-    # tax rate. (The order discount is stored in dollars even when it was
-    # entered as a percentage; reading it as a percent used to turn $20 off
-    # into 20% off on any edit.)
-    new_subtotal = round(new_subtotal, 2)
-    new_discount, new_tax, new_total = _reprice_sale(new_subtotal, adj)
-    
-    # 4. Date/time: the form shows and accepts store-local time; created_at
-    # is stored in UTC like every other timestamp.
-    from app.utils.helpers import local_to_utc_str, utc_to_local_dt
-    new_timestamp = order['created_at']
-    if new_date:
-        old_local = utc_to_local_dt(order['created_at'])
-        local_time = new_time or (old_local.strftime('%H:%M:%S') if old_local else '00:00:00')
-        try:
-            candidate = local_to_utc_str(f"{new_date} {local_time}")
-            if candidate != str(order['created_at'])[:19]:
-                new_timestamp = candidate
-                old_txt = old_local.strftime('%Y-%m-%d %H:%M:%S') if old_local else order['created_at']
-                changes.append(f"Date: {old_txt} → {new_date} {local_time}")
-        except ValueError:
-            flash("Invalid date or time; the sale date was not changed.")
-    
-    # 5. Log totals changes
-    if abs(new_total - order['total']) > 0.001:
-        changes.append(f"Total: ${order['total']:.2f} → ${new_total:.2f}")
-    
-    # 6. Update order header
-    conn.execute('''
-        UPDATE pos_orders
-        SET subtotal = ?, discount_amount = ?, tax_amount = ?, total = ?, created_at = ?
-        WHERE id = ?
-    ''', (new_subtotal, new_discount, new_tax, new_total, new_timestamp, order_id))
-    from app.services.pos_ledger import rebuild_order_payments
-    rebuild_order_payments(conn, order_id)
-    
-    # 7. Audit log
-    if changes:
-        conn.execute('''
-            INSERT INTO pos_audit_log (action, user_id, user_name, target_type, target_id, details, ip_address)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            'edit_sale',
-            current_user.id,
-            current_user.username,
-            'order',
-            str(order['order_number']),
-            json.dumps({'changes': changes, 'old_total': order['total'], 'new_total': new_total}),
-            request.remote_addr
-        ))
-    
-    conn.commit()
-    
-    flash(f"Sale {order['order_number']} updated successfully. {len(changes)} change(s) made.")
+    if result.date_rejected:
+        flash("Invalid date or time; the sale date was not changed.")
+    flash(f"Sale {result.order_number} updated successfully. {len(result.changes)} change(s) made.")
     return redirect(url_for('pos.sales_history'))
+
 
 @pos_bp.route('/management/stale-inventory')
 @require_permission('pos.manage')

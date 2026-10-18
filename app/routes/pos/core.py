@@ -4,8 +4,7 @@ Helper functions, before_request hooks, settings management, and overview routes
 """
 import logging
 import json
-from decimal import Decimal, ROUND_HALF_UP
-from datetime import datetime, date
+from datetime import datetime
 from flask import request, redirect, url_for, flash, render_template, session
 from flask_login import login_required, current_user
 
@@ -74,66 +73,49 @@ def get_tax_rate():
         return 0.0
 
 
-def round_money(value):
-    """Round a monetary value to 2 decimal places using ROUND_HALF_UP.
-    
-    Python's built-in round() uses banker's rounding (round half to even),
-    which can cause penny discrepancies. This function uses traditional
-    rounding where .5 always rounds up.
-    """
-    return float(Decimal(str(value)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+# Money math lives in app.services.pos_pricing; these names stay importable
+# from here (sales, checkout, tests). calculate_tax / compute_cart_totals read
+# the current settings through get_tax_rate / get_pos_setting in this module.
+from app.services.pos_pricing import (  # noqa: E402,F401
+    round_money, calculate_percentage, calculate_line_total, PricingConfig,
+)
+from app.services import pos_pricing  # noqa: E402
 
 
 def calculate_tax(subtotal):
-    """Calculate tax amount for a given subtotal."""
-    rate = get_tax_rate()
-    result = Decimal(str(subtotal)) * Decimal(str(rate))
-    return float(result.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
+    """Calculate tax amount for a given subtotal at the current tax rate."""
+    return pos_pricing.calculate_tax(subtotal, get_tax_rate())
 
 
-def calculate_percentage(amount, percent):
-    """Calculate percentage using Decimal to avoid floating point precision loss and round with ROUND_HALF_UP."""
-    try:
-        if not amount or not percent:
-            return 0.0
-        result = Decimal(str(amount)) * Decimal(str(percent)) / Decimal('100')
-        return float(result.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
-    except Exception:
-        return 0.0
-
-
-def calculate_line_total(unit_price, quantity, discount_amount=0, discount_type=None):
-    """Calculate line total with optional discount."""
-    base = unit_price * quantity
-    
-    if discount_amount and discount_type:
-        if discount_type == 'percent':
-            discount = calculate_percentage(base, discount_amount)
-        else:  # fixed
-            discount = discount_amount
-        base = max(0, base - discount)
-    
-    return round_money(base)
+def pricing_config():
+    """The current pricing settings (tax rate, cash discount) for pos_pricing."""
+    enabled = get_pos_setting('CASH_DISCOUNT_ENABLED', 'false') == 'true'
+    amount = 0.0
+    if enabled:
+        try:
+            amount = float(get_pos_setting('CASH_DISCOUNT_AMOUNT', '0') or 0)
+        except (TypeError, ValueError):
+            amount = 0.0
+    return PricingConfig(
+        tax_rate=get_tax_rate(),
+        cash_discount_enabled=enabled,
+        cash_discount_amount=amount,
+        cash_discount_type=get_pos_setting('CASH_DISCOUNT_TYPE', 'percent') if enabled else 'percent',
+    )
 
 
 def generate_order_number(terminal_id='POS-1', conn=None):
     """Next order number for today, format POS-YYYYMMDD-NNN.
 
     Call with the checkout transaction's connection (after BEGIN IMMEDIATE)
-    so the read and the insert are atomic across registers. The sequence is
-    compared numerically, so it keeps counting past 999.
+    so the read and the insert are atomic across registers.
     """
-    prefix = f"POS-{date.today().strftime('%Y%m%d')}"
+    from app.services.pos_checkout import next_order_number
     own_conn = conn is None
     if own_conn:
         conn = get_db_connection()
     try:
-        row = conn.execute('''
-            SELECT MAX(CAST(substr(order_number, ?) AS INTEGER)) AS seq
-            FROM pos_orders WHERE order_number LIKE ?
-        ''', (len(prefix) + 2, f"{prefix}-%")).fetchone()
-        next_seq = (row['seq'] or 0) + 1
-        return f"{prefix}-{str(next_seq).zfill(3)}"
+        return next_order_number(conn)
     finally:
         if own_conn:
             conn.close()
@@ -327,65 +309,15 @@ def clear_cart():
 
 
 def compute_cart_totals(cart):
-    """Single source of truth for cart math.
+    """Single source of truth for cart math (pos_pricing.cart_totals at the
+    current settings).
 
     Used by the sales page, the cart fragment, /api/cart, peripheral
     polling (customer displays and scanners), and checkout parity so
-    every screen shows identical numbers — including dual cash/card
+    every screen shows identical numbers -- including dual cash/card
     pricing when a cash discount is configured.
     """
-    items = cart.get('items', []) or []
-    subtotal = round_money(sum(item.get('line_total', 0) for item in items))
-
-    order_discount = 0.0
-    if cart.get('discount_amount') and cart.get('discount_type'):
-        if cart['discount_type'] == 'percent':
-            order_discount = calculate_percentage(subtotal, cart['discount_amount'])
-        else:
-            try:
-                order_discount = round_money(min(float(cart['discount_amount']), subtotal))
-            except (TypeError, ValueError):
-                order_discount = 0.0
-
-    try:
-        coupon_discount = float((cart.get('applied_coupon') or {}).get('discount', 0) or 0)
-    except (TypeError, ValueError):
-        coupon_discount = 0.0
-
-    discounted_subtotal = max(0.0, subtotal - order_discount - coupon_discount)
-    tax_rate = get_tax_rate()
-    tax_amount = calculate_tax(discounted_subtotal)
-    card_total = round_money(discounted_subtotal + tax_amount)
-
-    cash_discount_enabled = get_pos_setting('CASH_DISCOUNT_ENABLED', 'false') == 'true'
-    cash_discount_value = 0.0
-    if cash_discount_enabled:
-        try:
-            cd_amount = float(get_pos_setting('CASH_DISCOUNT_AMOUNT', '0') or 0)
-        except (TypeError, ValueError):
-            cd_amount = 0.0
-        cd_type = get_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
-        if cd_amount > 0:
-            if cd_type == 'percent':
-                cash_discount_value = calculate_percentage(discounted_subtotal, cd_amount)
-            else:
-                cash_discount_value = round_money(min(cd_amount, discounted_subtotal))
-    cash_total = round_money(card_total - cash_discount_value)
-
-    return {
-        'items': items,
-        'item_count': len(items),
-        'subtotal': subtotal,
-        'order_discount': round_money(order_discount),
-        'coupon_discount': round_money(coupon_discount),
-        'applied_coupon': cart.get('applied_coupon'),
-        'tax_rate_pct': round(tax_rate * 100, 2),
-        'tax_amount': tax_amount,
-        'card_total': card_total,
-        'cash_discount_enabled': cash_discount_enabled,
-        'cash_discount_value': cash_discount_value,
-        'cash_total': cash_total,
-    }
+    return pos_pricing.cart_totals(cart, pricing_config())
 
 
 @pos_bp.route('/preview-receipt')
