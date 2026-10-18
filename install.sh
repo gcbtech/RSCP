@@ -432,6 +432,8 @@ copy_local_tree() {  # copy_local_tree SRC DEST: code only, never state or junk
         --exclude=./update_status.json \
         --exclude=./.background_tasks.lock \
         --exclude=./ignore \
+        --exclude=./.claude \
+        --exclude=./DEV_NOTES.md \
         --no-anchored \
         --exclude=venv \
         --exclude=.venv \
