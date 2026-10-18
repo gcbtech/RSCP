@@ -9,6 +9,7 @@ from app.utils.permissions import require_permission
 
 from app.routes.inventory import inventory_bp
 from app.services.db import get_db_connection
+from app.services import inventory
 
 logger = logging.getLogger(__name__)
 
@@ -132,45 +133,13 @@ def audit_submit_count():
     count = int(data.get('count'))
     
     conn = get_db_connection()
-    # Read the current quantity and write the count under one write lock so
-    # the logged difference matches what actually changed.
-    conn.isolation_level = None
-    conn.execute('BEGIN IMMEDIATE')
-
-    item = conn.execute("SELECT * FROM inventory_items WHERE id = ?", (item_id,)).fetchone()
-    if not item:
-        conn.execute('ROLLBACK')
-        conn.close()
+    try:
+        inventory.record_audit_count(conn, session_id, item_id, count, current_user.username)
+    except inventory.ItemNotFound:
         return jsonify({'error': 'Item not found'}), 404
-        
-    record = conn.execute("SELECT * FROM audit_records WHERE session_id = ? AND item_id = ?", 
-                          (session_id, item_id)).fetchone()
-                          
-    diff = count - item['quantity']
-    
-    if diff != 0:
-        # Update live inventory immediately
-        conn.execute("UPDATE inventory_items SET quantity = ? WHERE id = ?", (count, item_id))
-        
-        # Log the transaction
-        user = current_user.username
-        conn.execute('''
-            INSERT INTO inventory_transactions (inventory_item_id, quantity_change, reason, user_id) 
-            VALUES (?, ?, 'Live Audit Correction', ?)
-        ''', (item_id, diff, user))
+    finally:
+        conn.close()
 
-    if record:
-        conn.execute("UPDATE audit_records SET counted_qty = ?, timestamp = CURRENT_TIMESTAMP WHERE id = ?", 
-                     (count, record['id']))
-    else:
-        conn.execute('''
-            INSERT INTO audit_records (session_id, item_id, sku, name, expected_qty, counted_qty)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (session_id, item_id, item['sku'], item['name'], item['quantity'], count))
-        
-    conn.commit()
-    conn.close()
-    
     return jsonify({'success': True})
 
 

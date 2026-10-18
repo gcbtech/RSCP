@@ -343,8 +343,9 @@ def send_priority_alert(tracking: str, item_name: str, quantity: str, user: str,
         logger.error(f"Webhook error: {e}")
 
 def log_receipt(tracking: str, item_name: str, quantity: str, user: str, conn=None) -> None:
-    # 1. Add to History Table
-    # 2. Update Package as Scanned
+    """Receive a tracking number (see receiving.receive_packages). Kept for
+    older callers; errors are logged, never raised."""
+    from app.services.receiving import receive_packages
     close_conn = False
     if conn is None:
         try:
@@ -358,71 +359,7 @@ def log_receipt(tracking: str, item_name: str, quantity: str, user: str, conn=No
             conn = get_db_connection()
             close_conn = True
     try:
-        # Get User ID
-        res = conn.execute("SELECT id FROM users WHERE username = ?", (user,)).fetchone()
-        user_id = res['id'] if res else None
-        
-        # Get ALL matching packages (Handle multiple items with same tracking)
-        packages = conn.execute("SELECT id, status, priority, quantity FROM packages WHERE tracking_number = ?", (tracking,)).fetchall()
-        
-        if packages:
-            for pkg in packages:
-                pkg_id = pkg['id']
-                is_priority = bool(pkg['priority']) if pkg['priority'] else False
-                qty = pkg['quantity'] or 1
-                
-                # Update Package
-                current_status = pkg['status']
-                new_status = current_status
-                if current_status in ['expected', 'past_due', 'pending', 'on_time']:
-                     new_status = 'received'
-                
-                conn.execute("UPDATE packages SET date_scanned=CURRENT_TIMESTAMP, status=? WHERE id=?", (new_status, pkg_id))
-                
-                # Log History for EACH item
-                conn.execute("INSERT INTO history (package_id, user_id, action, details) VALUES (?, ?, ?, ?)", 
-                             (pkg_id, user_id, 'received', f"Qty: {qty}"))
-                
-                # Trigger Webhook if Priority (for each priority item)
-                if is_priority:
-                     conf = load_config()
-                     if conf.get('WEBHOOK_ENABLED') and conf.get('WEBHOOK_URL'):
-                         enc_url = conf.get('WEBHOOK_URL')
-                         key = conf.get('SECRET_KEY', 'dev_key_fallback')
-                         
-                         import threading
-                         # Use item_name passed or fetch? main.py passes "Unknown" usually if not found? 
-                         # But here we found it. We should fetch name if we want accurate alerts.
-                         # Since this loop updates IDs, let's fetch name?
-                         # Or just pass the generic 'item_name' from arg (which comes from main.py's fetchone).
-                         # Simplest: use arg.
-                         t = threading.Thread(target=send_priority_alert, args=(tracking, item_name, quantity, user, enc_url, key))
-                         t.start()
-
-        else:
-            # Create Package (Auto-Manifest)
-            # Check mapping for auto-manifest items too
-            sku = None
-            mapping = conn.execute("SELECT inventory_sku FROM product_mappings WHERE package_name = ?", (item_name,)).fetchone()
-            if mapping: sku = mapping['inventory_sku']
-
-            # date_expected is a calendar date: use the store's local date, not
-            # UTC (CURRENT_DATE), or evening scans land on tomorrow.
-            cur = conn.execute('''
-                INSERT INTO packages (tracking_number, item_name, quantity, status, source, date_expected, date_scanned, sku)
-                VALUES (?, ?, ?, 'received', 'scan', date('now', 'localtime'), CURRENT_TIMESTAMP, ?)
-            ''', (tracking, item_name, quantity, sku))
-            pkg_id = cur.lastrowid
-            
-            # Log History
-            conn.execute("INSERT INTO history (package_id, user_id, action, details) VALUES (?, ?, ?, ?)", 
-                         (pkg_id, user_id, 'received', f"Qty: {quantity}"))
-        
-        conn.commit()
-        # (Priority alerts are sent per package in the loop above. A second
-        # copy here fired the webhook twice, and raised NameError for newly
-        # created packages, where is_priority was never defined.)
-
+        receive_packages(conn, tracking, item_name, quantity, user, conf=load_config())
     except Exception as e:
         logger.error(f"Log receipt error: {e}")
     finally:
@@ -445,6 +382,7 @@ def get_scan_count(days: int = 1) -> int:
         conn.close()
 
 def check_history(tracking: str, conn=None) -> bool:
+    from app.services.receiving import has_history
     close_conn = False
     if conn is None:
         try:
@@ -458,8 +396,7 @@ def check_history(tracking: str, conn=None) -> bool:
             conn = get_db_connection()
             close_conn = True
     try:
-        res = conn.execute("SELECT count(*) as c FROM history h JOIN packages p ON h.package_id = p.id WHERE p.tracking_number = ?", (tracking,)).fetchone()
-        return res['c'] > 0
+        return has_history(conn, tracking)
     finally:
         if close_conn:
             conn.close()

@@ -10,6 +10,7 @@ from flask_login import current_user
 from app.routes.inventory import inventory_bp
 from app.routes.inventory.core import is_inventory_enabled
 from app.services.db import get_db_connection
+from app.services import inventory
 
 logger = logging.getLogger(__name__)
 
@@ -98,29 +99,17 @@ def api_add_quantity(item_id):
     data = request.get_json() or {}
     quantity = int(data.get('quantity', 1))
     tracking = data.get('tracking', '')
-    
+
     conn = get_db_connection()
     try:
-        conn.execute('''
-            UPDATE inventory_items 
-            SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        ''', (quantity, item_id))
-        
-        conn.execute('''
-            INSERT INTO inventory_transactions 
-            (inventory_item_id, quantity_change, reason, user_id, source_tracking)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (item_id, quantity, 'Received from Scan', current_user.username, tracking))
-        
-        conn.commit()
-        
-        item = conn.execute('SELECT quantity FROM inventory_items WHERE id = ?', (item_id,)).fetchone()
-        
+        change = inventory.adjust_stock(conn, item_id, quantity, inventory.REASON_RECEIVED_SCAN,
+                                        current_user.username, tracking, allow_negative=True)
         return jsonify({
             "success": True,
-            "new_quantity": item['quantity'] if item else 0
+            "new_quantity": change.new_quantity
         })
+    except inventory.ItemNotFound:
+        return jsonify({"error": "Item not found"}), 404
     except Exception as e:
         logger.error(f"Error adding quantity via API: {e}")
         return jsonify({"error": str(e)}), 500
@@ -176,54 +165,26 @@ def quick_adjust(item_id):
     data = request.get_json() or {}
     change = int(data.get('change', 0))
     action = data.get('action', '')  # 'oos' for mark out of stock
-    
+
     conn = get_db_connection()
     try:
-        # Relative, guarded update under the write lock: a POS sale committing
-        # in between can no longer be overwritten by a stale absolute value.
-        conn.isolation_level = None
-        conn.execute('BEGIN IMMEDIATE')
-        current = conn.execute('SELECT quantity, name, sku FROM inventory_items WHERE id = ?',
-                               (item_id,)).fetchone()
-        if not current:
-            conn.execute('ROLLBACK')
-            return jsonify({"error": "Item not found"}), 404
-
+        # The ledger has always recorded this flow by user id (as POS does).
+        user = str(current_user.id)
         if action == 'oos':
-            reason = "Marked OOS from Scan"
-            change = -current['quantity']
+            result = inventory.mark_out_of_stock(conn, item_id, user)
         else:
-            if current['quantity'] + change < 0:
-                conn.execute('ROLLBACK')
-                return jsonify({
-                    "error": f"Cannot reduce by {abs(change)} - only {current['quantity']} in stock"
-                }), 400
-            reason = "Sold/Consumed" if change < 0 else "Received from Scan"
-
-        conn.execute('''
-            UPDATE inventory_items
-            SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ?
-        ''', (change, item_id))
-        new_qty = current['quantity'] + change
-
-        if change != 0:
-            conn.execute('''
-                INSERT INTO inventory_transactions
-                (inventory_item_id, quantity_change, reason, user_id)
-                VALUES (?, ?, ?, ?)
-            ''', (item_id, change, reason, str(current_user.id)))
-
-        conn.execute('COMMIT')
-
+            reason = inventory.REASON_SOLD if change < 0 else inventory.REASON_RECEIVED_SCAN
+            result = inventory.adjust_stock(conn, item_id, change, reason, user)
         return jsonify({
             "success": True,
-            "new_quantity": new_qty,
-            "name": current['name']
+            "new_quantity": result.new_quantity,
+            "name": result.name
         })
+    except inventory.ItemNotFound:
+        return jsonify({"error": "Item not found"}), 404
+    except inventory.InsufficientStock as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
-        if conn.in_transaction:
-            conn.execute('ROLLBACK')
         logger.error(f"Quick adjust error: {e}")
         return jsonify({"error": str(e)}), 500
     finally:
