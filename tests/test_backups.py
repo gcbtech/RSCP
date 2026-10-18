@@ -500,3 +500,19 @@ def test_backup_units_match_layout():
     assert '--backup-paths)' in script
     # the off-box grant goes to the backup unit only, never the web service
     assert 'rscp-backup.service.d' in script and 'rscp.service.d' not in script
+
+
+def test_uploads_archives_capped_separately(tmp_path):
+    """Database copies follow daily/weekly retention; image archives keep only the newest N."""
+    from app import backup as bk
+    root = tmp_path / 'nightly'
+    root.mkdir()
+    for day in range(1, 8):
+        stamp = f'202610{day:02d}-023000'
+        (root / f'rscp-{stamp}.db').write_bytes(b'x')
+        (root / f'uploads-{stamp}.tar.gz').write_bytes(b'y')
+    bk.prune(str(root), keep_daily=14, keep_weekly=0, keep_uploads=2)
+    names = sorted(p.name for p in root.iterdir())
+    assert len([n for n in names if n.endswith('.db')]) == 7
+    assert [n for n in names if n.endswith('.tar.gz')] == ['uploads-20261006-023000.tar.gz',
+                                                           'uploads-20261007-023000.tar.gz']

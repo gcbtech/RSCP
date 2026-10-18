@@ -1622,6 +1622,11 @@
                                             <input type="number" name="BACKUP_KEEP_WEEKLY" class="form-control form-control-sm"
                                                 min="0" max="520" value="{{ bset.BACKUP_KEEP_WEEKLY }}">
                                         </div>
+                                        <div class="col-4">
+                                            <label class="form-label small fw-bold" title="Image archives are large; database copies follow daily/weekly">Keep images</label>
+                                            <input type="number" name="BACKUP_KEEP_UPLOADS" class="form-control form-control-sm"
+                                                min="1" max="60" value="{{ bset.BACKUP_KEEP_UPLOADS }}">
+                                        </div>
                                     </div>
                                     <label class="form-label small fw-bold">Off-box folder (mounted NAS share)</label>
                                     <input type="text" name="BACKUP_OFFSITE_DIR" class="form-control form-control-sm mb-1"

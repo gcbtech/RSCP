@@ -68,6 +68,7 @@ DEFAULTS = {
     'BACKUP_TIME': '02:30',
     'BACKUP_KEEP_DAILY': 14,
     'BACKUP_KEEP_WEEKLY': 8,
+    'BACKUP_KEEP_UPLOADS': 3,
     'BACKUP_OFFSITE_DIR': '',
 }
 SETTING_KEYS = tuple(DEFAULTS)
@@ -185,13 +186,31 @@ def list_backups(root):
     return found
 
 
-def prune(root, keep_daily, keep_weekly):
-    """Delete backup files in `root` outside the retention. Returns deleted names."""
+def prune(root, keep_daily, keep_weekly, keep_uploads=None):
+    """Delete backup files in `root` outside the retention. Returns deleted names.
+
+    Uploads archives are large (every image, every night) and change slowly,
+    so beyond the daily/weekly rule only the newest `keep_uploads` of them
+    are kept; database copies follow the full daily/weekly retention.
+    """
     found = list_backups(root)
     keep = select_keep(found.keys(), keep_daily, keep_weekly)
+    if keep_uploads is None:
+        keep_uploads = DEFAULTS['BACKUP_KEEP_UPLOADS']
+    upload_stamps = sorted((ts for ts, names in found.items()
+                            if ts in keep and any(UPLOADS_RE.match(n) for n in names)), reverse=True)
+    drop_uploads = set(upload_stamps[max(1, int(keep_uploads)):])
     deleted = []
     for ts, names in found.items():
         if ts in keep:
+            if ts in drop_uploads:
+                for name in names:
+                    if UPLOADS_RE.match(name):
+                        try:
+                            os.remove(os.path.join(root, name))
+                            deleted.append(name)
+                        except OSError as e:
+                            logger.warning(f"[Backup] Could not delete old backup {name}: {e}")
             continue
         for name in names:
             try:
@@ -307,7 +326,7 @@ def _clean_temp_files(root):
         pass
 
 
-def copy_offsite(files, offsite_dir, keep_daily, keep_weekly, local_root=None):
+def copy_offsite(files, offsite_dir, keep_daily, keep_weekly, local_root=None, keep_uploads=None):
     """Copy `files` (paths) into `offsite_dir`, then prune it. Raises on failure."""
     if not os.path.isdir(offsite_dir):
         raise OSError(errno.ENOENT, f'{offsite_dir} does not exist or is not a directory '
@@ -331,7 +350,7 @@ def copy_offsite(files, offsite_dir, keep_daily, keep_weekly, local_root=None):
                     os.remove(tmp)
                 except OSError:
                     pass
-    return prune(offsite_dir, keep_daily, keep_weekly)
+    return prune(offsite_dir, keep_daily, keep_weekly, keep_uploads)
 
 
 def _offsite_error_text(e):
@@ -462,7 +481,8 @@ def run_backup(db_path=None, uploads_dir=None, root=None, config_file=None,
             status.update(db_file=db_name, db_size=db_size)
             up_size = archive_uploads(uploads_dir, os.path.join(root, up_name), config_file)
             status.update(uploads_file=up_name, uploads_size=up_size)
-            status['pruned'] = len(prune(root, conf['BACKUP_KEEP_DAILY'], conf['BACKUP_KEEP_WEEKLY']))
+            status['pruned'] = len(prune(root, conf['BACKUP_KEEP_DAILY'], conf['BACKUP_KEEP_WEEKLY'],
+                                         conf['BACKUP_KEEP_UPLOADS']))
             status['ok'] = True
             status['last_success'] = _iso(now)
             logger.info(f"[Backup] Wrote {db_name} ({db_size} bytes) and {up_name} ({up_size} bytes)")
@@ -495,7 +515,8 @@ def _offsite_step(status, root, offsite, conf, now):
     off.update(dir=offsite, last_attempt=_iso(now), pending=False)
     files = [os.path.join(root, status['db_file']), os.path.join(root, status['uploads_file'])]
     try:
-        copy_offsite(files, offsite, conf['BACKUP_KEEP_DAILY'], conf['BACKUP_KEEP_WEEKLY'], local_root=root)
+        copy_offsite(files, offsite, conf['BACKUP_KEEP_DAILY'], conf['BACKUP_KEEP_WEEKLY'], local_root=root,
+                     keep_uploads=conf['BACKUP_KEEP_UPLOADS'])
         off.update(ok=True, error=None, file=status['db_file'], last_success=_iso(now))
         logger.info(f"[Backup] Copied {status['db_file']} to {offsite}")
     except Exception as e:

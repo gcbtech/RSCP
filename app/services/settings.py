@@ -450,6 +450,7 @@ SETTINGS = {
     'BACKUP_TIME': S(str, '02:30', 'backups', 'Backup time', validator=_validate_backup_time),
     'BACKUP_KEEP_DAILY': S(int, 14, 'backups', 'Daily backups to keep', min=1, max=366),
     'BACKUP_KEEP_WEEKLY': S(int, 8, 'backups', 'Weekly backups to keep', min=0, max=520),
+    'BACKUP_KEEP_UPLOADS': S(int, 3, 'backups', 'Uploads archives to keep', min=1, max=60),
     'BACKUP_OFFSITE_DIR': S(str, '', 'backups', 'Off-box backup folder', validator=_validate_backup_dir),
 }
 del S
