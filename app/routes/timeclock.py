@@ -2,6 +2,7 @@ from flask import Blueprint, render_template, request, redirect, url_for, flash,
 from flask_login import login_required, current_user
 from app.utils.permissions import has_permission, require_permission, protect_blueprint
 import datetime
+import math
 from app.services.timeclock_hours import summarize as summarize_hours
 from app.services import timeclock_hours as tc
 from app.services.db import get_db_connection
@@ -52,6 +53,59 @@ def _workweek_anchor():
 
 def _paid_breaks():
     return bool(load_config().get('TIMECLOCK_PAID_BREAKS', True))
+
+
+# --- Form input -------------------------------------------------------------
+# Blank or junk form input is answered with a flash + redirect, never a 500.
+# These return None for anything unusable.
+
+# Dates outside these years are junk for a timeclock, and near year 1 / 9999
+# the UTC conversion overflows.
+_MIN_YEAR, _MAX_YEAR = 1900, 2999
+PAY_PERIOD_TYPES = ('weekly', 'biweekly', 'monthly')
+RULE_FREQUENCIES = ('weekly', 'biweekly')
+MAX_GENERATE_DAYS = 366
+
+
+def _form_date(value):
+    """'YYYY-MM-DD' -> date."""
+    try:
+        d = datetime.datetime.strptime(str(value or '').strip(), '%Y-%m-%d').date()
+    except ValueError:
+        return None
+    return d if _MIN_YEAR <= d.year <= _MAX_YEAR else None
+
+
+def _form_time(value):
+    """'HH:MM' (or 'HH:MM:SS') -> datetime.time."""
+    value = str(value or '').strip()
+    for fmt in ('%H:%M', '%H:%M:%S'):
+        try:
+            return datetime.datetime.strptime(value, fmt).time()
+        except ValueError:
+            pass
+    return None
+
+
+def _form_local_datetime(value):
+    """Business-local 'YYYY-MM-DD[T ]HH:MM[:SS]' -> stored UTC string."""
+    try:
+        utc = tc.local_to_utc(value)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
+    if not _MIN_YEAR <= utc.year <= _MAX_YEAR:
+        return None
+    return utc.strftime(tc.FMT)
+
+
+def _existing_user_id(conn, value):
+    """Form user id -> int id of an existing user."""
+    try:
+        user_id = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    row = conn.execute('SELECT 1 FROM users WHERE id = ?', (user_id,)).fetchone()
+    return user_id if row else None
 
 
 def get_current_pay_period():
@@ -313,16 +367,21 @@ def shifts():
             start_time = request.form.get('start_time')
             end_time = request.form.get('end_time')
             
+            user_id = _existing_user_id(conn, user_id)
+            if user_id is None:
+                flash("Please choose an employee.")
+                return redirect(url_for('timeclock.shifts'))
+
             # datetime-local inputs are business-local; store UTC
-            try:
-                start_clean = tc.local_to_utc_str(start_time)
-                end_clean = tc.local_to_utc_str(end_time)
-            except ValueError:
-                start_clean = end_clean = None
+            start_clean = _form_local_datetime(start_time)
+            end_clean = _form_local_datetime(end_time)
             if not start_clean or not end_clean:
                 flash("Please enter a valid start and end time.")
                 return redirect(url_for('timeclock.shifts', selected_user=user_id))
-            
+            if end_clean <= start_clean:  # same fixed-width UTC format: text order is time order
+                flash("The shift must end after it starts.")
+                return redirect(url_for('timeclock.shifts', selected_user=user_id))
+
             conn.execute('INSERT INTO scheduled_shifts (user_id, start_time, end_time) VALUES (?, ?, ?)', 
                         (user_id, start_clean, end_clean))
             conn.commit()
@@ -372,7 +431,8 @@ def shifts():
         days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
         for r in rule_rows:
             rule = dict(r)
-            rule['day_name'] = days[rule['day_of_week']]
+            dow = rule['day_of_week']
+            rule['day_name'] = days[dow] if isinstance(dow, int) and 0 <= dow < 7 else '?'
             rules.append(rule)
             
         active_tab = request.args.get('tab', 'shifts')
@@ -487,18 +547,42 @@ def break_end():
 @timeclock_bp.route('/manager/recurring/add', methods=['POST'])
 @require_permission('timeclock.manage')
 def add_recurring_rule():
+    back = redirect(url_for('timeclock.shifts', tab='recurring'))
     conn = get_db_connection()
     try:
-        user_id = request.form.get('user_id')
-        day = request.form.get('day_of_week')
-        start = request.form.get('start_time')
-        end = request.form.get('end_time')
+        user_id = _existing_user_id(conn, request.form.get('user_id'))
+        try:
+            day = int(request.form.get('day_of_week', ''))
+        except ValueError:
+            day = None
+        start_t = _form_time(request.form.get('start_time'))
+        end_t = _form_time(request.form.get('end_time'))
         freq = request.form.get('frequency', 'weekly')
-        ref_date = request.form.get('reference_date') # Only for biweekly
-        
+        ref_date = (request.form.get('reference_date') or '').strip() # Only for biweekly
+
+        if user_id is None:
+            flash("Please choose an employee.")
+            return back
+        if day not in range(7):
+            flash("Please choose a day of the week.")
+            return back
+        if not start_t or not end_t:
+            flash("Please enter a valid start and end time.")
+            return back
+        if end_t <= start_t:
+            flash("The shift must end after it starts.")
+            return back
+        if freq not in RULE_FREQUENCIES:
+            flash("Please choose weekly or bi-weekly.")
+            return back
+        if ref_date and not _form_date(ref_date):
+            flash("Please enter a valid reference date.")
+            return back
+        start, end = start_t.strftime('%H:%M'), end_t.strftime('%H:%M')
+
         if not ref_date:
             ref_date = tc.local_today().strftime('%Y-%m-%d')
-            
+
         conn.execute('''
             INSERT INTO recurring_shift_rules (user_id, day_of_week, start_time, end_time, frequency, reference_date)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -524,14 +608,23 @@ def delete_recurring_rule(rule_id):
 @timeclock_bp.route('/manager/generate_schedule', methods=['POST'])
 @require_permission('timeclock.manage')
 def generate_schedule():
-    start_date_str = request.form.get('start_date')
-    end_date_str = request.form.get('end_date')
-    
+    start_day = _form_date(request.form.get('start_date'))
+    end_day = _form_date(request.form.get('end_date'))
+    if not start_day or not end_day:
+        flash("Please choose a valid start and end date.")
+        return redirect(url_for('timeclock.shifts'))
+    if end_day < start_day:
+        flash("The end date must be on or after the start date.")
+        return redirect(url_for('timeclock.shifts'))
+    if (end_day - start_day).days >= MAX_GENERATE_DAYS:
+        flash(f"Generate at most {MAX_GENERATE_DAYS} days at a time.")
+        return redirect(url_for('timeclock.shifts'))
+
     conn = get_db_connection()
     try:
-        start_date = datetime.datetime.strptime(start_date_str, '%Y-%m-%d')
-        end_date = datetime.datetime.strptime(end_date_str, '%Y-%m-%d')
-        
+        start_date = datetime.datetime.combine(start_day, datetime.time())
+        end_date = datetime.datetime.combine(end_day, datetime.time())
+
         rules = conn.execute('SELECT * FROM recurring_shift_rules').fetchall()
         
         generated_count = 0
@@ -690,13 +783,13 @@ def force_clock_out(user_id):
     conn = get_db_connection()
     try:
         now = tc.utc_now_str()
-        conn.execute('''
+        cur = conn.execute('''
             UPDATE time_entries 
             SET clock_out = ?, notes = 'Force clock out by Admin'
             WHERE user_id = ? AND clock_out IS NULL
         ''', (now, user_id))
         conn.commit()
-        flash("User force clocked out.")
+        flash("User force clocked out." if cur.rowcount else "User is not clocked in.")
     except Exception as e:
         logger.error(f"Force Clock Out Error: {e}")
         flash("Error performing force clock out.")
@@ -709,6 +802,9 @@ def force_clock_out(user_id):
 def force_clock_in(user_id):
     conn = get_db_connection()
     try:
+        if _existing_user_id(conn, user_id) is None:
+            flash("User not found.")
+            return redirect(url_for('timeclock.manager_dashboard'))
         # Check if user is already clocked in
         existing = conn.execute('SELECT id FROM time_entries WHERE user_id = ? AND clock_out IS NULL', 
                               (user_id,)).fetchone()
@@ -825,17 +921,26 @@ def timesheets():
         '''
         params = []
         
-        try:
-            if date_from:
-                query += " AND t.clock_in >= ?"
-                params.append(tc.local_dates_to_utc_range(date_from)[0])
-            if date_to:
-                query += " AND t.clock_in <= ?"
-                params.append(tc.local_dates_to_utc_range(date_to)[1])
-        except ValueError:
+        day_from = _form_date(date_from[:10]) if date_from else None
+        day_to = _form_date(date_to[:10]) if date_to else None
+        if (date_from and not day_from) or (date_to and not day_to):
             flash("Invalid date filter.")
             return redirect(url_for('timeclock.timesheets'))
+        if day_from and day_to and day_to < day_from:
+            flash("The end date must be on or after the start date.")
+            return redirect(url_for('timeclock.timesheets'))
+        if day_from:
+            query += " AND t.clock_in >= ?"
+            params.append(tc.local_dates_to_utc_range(day_from)[0])
+        if day_to:
+            query += " AND t.clock_in <= ?"
+            params.append(tc.local_dates_to_utc_range(day_to)[1])
         if user_filter:
+            try:
+                user_filter = int(user_filter)
+            except ValueError:
+                flash("Invalid employee filter.")
+                return redirect(url_for('timeclock.timesheets'))
             query += " AND t.user_id = ?"
             params.append(user_filter)
             
@@ -896,6 +1001,10 @@ def update_settings():
         value = (request.form.get(field) or '').strip()
         if value:
             updates[key] = value
+    period_type = updates.get('TIMECLOCK_PAY_PERIOD_TYPE')
+    if period_type is not None and period_type not in PAY_PERIOD_TYPES:
+        flash(f"Not saved: Pay period type must be one of: {', '.join(PAY_PERIOD_TYPES)}")
+        return redirect(url_for('timeclock.manager_dashboard'))
     try:
         if updates:
             settings_store.set_many(updates, user=current_user.username)
@@ -938,36 +1047,54 @@ def request_pto():
         
         # Get Balance
         row = conn.execute("SELECT balance_hours FROM user_pto_balances WHERE user_id = ?", (current_user.id,)).fetchone()
-        balance = row['balance_hours'] if row else 0.0
-        
+        balance = row['balance_hours'] if row and row['balance_hours'] is not None else 0.0
+
         if request.method == 'POST':
             req_type = request.form.get('request_type') # 'full', 'partial'
             date_str = request.form.get('date')
             start_time = request.form.get('start_time')
             end_time = request.form.get('end_time')
             notes = request.form.get('notes')
-            
+
+            if req_type not in ('full', 'partial'):
+                flash("Please choose a full or partial shift.")
+                return redirect(url_for('timeclock.request_pto'))
+            day = _form_date(date_str)
+            if not day:
+                flash("Please choose a valid date.")
+                return redirect(url_for('timeclock.request_pto'))
+            date_str = day.isoformat()
+
             hours_requested = 0.0
-            
+
             if req_type == 'full':
                 # Get Shift Duration for that day
                 # Find Shift
-                shift = _shift_on_local_date(conn, current_user.id, date_str)
-                
+                shift = _shift_on_local_date(conn, current_user.id, day)
+
                 if not shift:
                     flash("No scheduled shift found on that date to request off.")
                     return redirect(url_for('timeclock.request_pto'))
-                    
+
                 diff = (tc.as_utc(shift['end_time']) - tc.as_utc(shift['start_time'])).total_seconds() / 3600
                 hours_requested = round(diff, 2)
-                
+
             elif req_type == 'partial':
                 # Calc requested hours
-                s_t = tc.local_to_utc(f"{date_str} {start_time}")
-                e_t = tc.local_to_utc(f"{date_str} {end_time}")
-                
+                s_time, e_time = _form_time(start_time), _form_time(end_time)
+                s_utc = s_time and _form_local_datetime(f"{date_str} {s_time.strftime('%H:%M')}")
+                e_utc = e_time and _form_local_datetime(f"{date_str} {e_time.strftime('%H:%M')}")
+                if not s_utc or not e_utc:
+                    flash("Please enter a valid start and end time.")
+                    return redirect(url_for('timeclock.request_pto'))
+                start_time, end_time = s_time.strftime('%H:%M'), e_time.strftime('%H:%M')
+                s_t, e_t = tc.as_utc(s_utc), tc.as_utc(e_utc)
+
                 hours_requested = round((e_t - s_t).total_seconds() / 3600, 2)
-                
+                if hours_requested <= 0:
+                    flash("The end time must be after the start time.")
+                    return redirect(url_for('timeclock.request_pto'))
+
                 # Check Minimum Shift Rule
                 # Find original shift
                 shift = _shift_on_local_date(conn, current_user.id, date_str)
@@ -1064,9 +1191,18 @@ def manager_pto():
 def update_pto_balance():
     conn = get_db_connection()
     try:
-        user_id = request.form.get('user_id')
-        amount = float(request.form.get('amount'))
-        
+        user_id = _existing_user_id(conn, request.form.get('user_id'))
+        if user_id is None:
+            flash("Employee not found.")
+            return redirect(url_for('timeclock.manager_pto'))
+        try:
+            amount = float(request.form.get('amount', ''))
+        except ValueError:
+            amount = None
+        if amount is None or not math.isfinite(amount):
+            flash("Please enter the balance as a number of hours.")
+            return redirect(url_for('timeclock.manager_pto'))
+
         # Upsert
         exists = conn.execute('SELECT 1 FROM user_pto_balances WHERE user_id = ?', (user_id,)).fetchone()
         if exists:
@@ -1083,68 +1219,80 @@ def update_pto_balance():
 @require_permission('timeclock.manage')
 def pto_action(req_id):
     action = request.form.get('action') # 'approve', 'deny'
+    if action not in ('approve', 'deny'):
+        flash("Unknown action.")
+        return redirect(url_for('timeclock.manager_pto'))
     conn = get_db_connection()
     try:
         req = conn.execute('SELECT * FROM pto_requests WHERE id = ?', (req_id,)).fetchone()
         if not req:
             flash("Request not found")
             return redirect(url_for('timeclock.manager_pto'))
-            
+        if req['status'] != 'pending':
+            # Approving twice would deduct the balance twice
+            flash(f"That request was already {req['status']}.")
+            return redirect(url_for('timeclock.manager_pto'))
+
         if action == 'deny':
             conn.execute("UPDATE pto_requests SET status='denied' WHERE id=?", (req_id,))
             conn.commit()
             flash("Request Denied.")
-            
+
         elif action == 'approve':
             # 1. Deduct Balance
             hrs = req['hours_requested']
             user_id = req['user_id']
-            
+
             # Check balance again
             bal_row = conn.execute("SELECT balance_hours FROM user_pto_balances WHERE user_id = ?", (user_id,)).fetchone()
-            curr_bal = bal_row['balance_hours'] if bal_row else 0.0
-            
+            curr_bal = bal_row['balance_hours'] if bal_row and bal_row['balance_hours'] is not None else 0.0
+
             if curr_bal < hrs:
                 flash(f"Cannot approve: User has {curr_bal} hours, needs {hrs}.")
                 return redirect(url_for('timeclock.manager_pto'))
-                
-            new_bal = curr_bal - hrs
-            conn.execute('UPDATE user_pto_balances SET balance_hours = ? WHERE user_id = ?', (new_bal, user_id))
-            
-            # 2. Log Time Entry? 
+
+            # 2. Log Time Entry?
             # Design decision: Log a 'pto' type entry so it shows on export?
             # Or just update schedule?
             # User requirement: "Export... included pto?" (Implied)
             # Let's create a 'pto' time_entry for visualization.
-            
-            # Format times
+
+            # Format times (checked before anything is written)
             # If partial, use start/end. If full, use shift start/end.
+            day = _form_date(req['date'])
+            if not day:
+                flash("Cannot approve: the request has no valid date. Deny it and ask for a new one.")
+                return redirect(url_for('timeclock.manager_pto'))
+            entry = None
             if req['request_type'] == 'full':
                 # Fetch shift again
-                shift = _shift_on_local_date(conn, user_id, req['date'])
+                shift = _shift_on_local_date(conn, user_id, day)
                 if shift:
-                    s_dt = shift['start_time']  # already UTC
-                    e_dt = shift['end_time']
-                    # Insert Time Entry
-                    conn.execute('''
-                        INSERT INTO time_entries (user_id, type, clock_in, clock_out, notes)
-                        VALUES (?, 'pto', ?, ?, 'PTO Approved')
-                    ''', (user_id, s_dt, e_dt))
+                    # already UTC
+                    entry = (shift['start_time'], shift['end_time'], 'PTO Approved')
             else:
                 # Partial
                 # pto_requests keeps the local date and wall-clock times; time_entries is UTC
-                s_dt = tc.local_to_utc_str(f"{req['date']} {req['start_time']}")
-                e_dt = tc.local_to_utc_str(f"{req['date']} {req['end_time']}")
-                 # Insert Time Entry
+                s_dt = _form_local_datetime(f"{day} {req['start_time']}")
+                e_dt = _form_local_datetime(f"{day} {req['end_time']}")
+                if not s_dt or not e_dt or e_dt <= s_dt:
+                    flash("Cannot approve: the request has no valid times. Deny it and ask for a new one.")
+                    return redirect(url_for('timeclock.manager_pto'))
+                entry = (s_dt, e_dt, 'Partial PTO Approved')
+
+            new_bal = curr_bal - hrs
+            conn.execute('UPDATE user_pto_balances SET balance_hours = ? WHERE user_id = ?', (new_bal, user_id))
+            if entry:
+                # Insert Time Entry
                 conn.execute('''
                     INSERT INTO time_entries (user_id, type, clock_in, clock_out, notes)
-                    VALUES (?, 'pto', ?, ?, 'Partial PTO Approved')
-                ''', (user_id, s_dt, e_dt))
-            
+                    VALUES (?, 'pto', ?, ?, ?)
+                ''', (user_id, *entry))
+
             conn.execute("UPDATE pto_requests SET status='approved' WHERE id=?", (req_id,))
             conn.commit()
             flash("PTO Approved & Logged.")
-            
+
     finally:
         conn.close()
     return redirect(url_for('timeclock.manager_pto'))
@@ -1160,35 +1308,33 @@ def edit_entry(entry_id):
             clock_in = request.form.get('clock_in') # Expected: YYYY-MM-DDTHH:MM
             clock_out = request.form.get('clock_out') # Expected: YYYY-MM-DDTHH:MM
             notes = request.form.get('notes')
-            
+
+            old = conn.execute('SELECT * FROM time_entries WHERE id = ?', (entry_id,)).fetchone()
+            if not old:
+                flash("Entry not found")
+                return redirect(url_for('timeclock.timesheets'))
+
             # datetime-local inputs return business-local "2023-11-01T14:30";
             # store UTC 'YYYY-MM-DD HH:MM:SS' (DST offset of that date).
-            try:
-                if not clock_in:
-                    raise ValueError('clock-in required')
-                c_in_clean = tc.local_to_utc_str(clock_in)
-                c_out_clean = tc.local_to_utc_str(clock_out) if clock_out else None
-                start = tc.as_utc(c_in_clean)
-                end = tc.as_utc(c_out_clean) if c_out_clean else None
-            except ValueError:
+            c_in_clean = _form_local_datetime(clock_in)
+            c_out_clean = _form_local_datetime(clock_out) if (clock_out or '').strip() else None
+            if not c_in_clean or ((clock_out or '').strip() and not c_out_clean):
                 flash("Please enter a valid clock-in (and clock-out) time.")
                 return redirect(url_for('timeclock.edit_entry', entry_id=entry_id))
-            if end and end <= start:
+            if c_out_clean and c_out_clean <= c_in_clean:  # fixed-width UTC text: text order is time order
                 flash("Clock-out must be after clock-in.")
                 return redirect(url_for('timeclock.edit_entry', entry_id=entry_id))
 
             # Keep a record of what the entry said before the edit
-            old = conn.execute('SELECT * FROM time_entries WHERE id = ?', (entry_id,)).fetchone()
-            if old:
-                import json
-                conn.execute('''
-                    INSERT INTO pos_audit_log (action, user_id, user_name, target_type, target_id, details, ip_address)
-                    VALUES ('timeclock_edit', ?, ?, 'time_entry', ?, ?, ?)
-                ''', (current_user.id, current_user.username, str(entry_id), json.dumps({
-                    'employee_id': old['user_id'],
-                    'before': {'clock_in': old['clock_in'], 'clock_out': old['clock_out'], 'notes': old['notes']},
-                    'after': {'clock_in': c_in_clean, 'clock_out': c_out_clean, 'notes': notes},
-                }), request.remote_addr))
+            import json
+            conn.execute('''
+                INSERT INTO pos_audit_log (action, user_id, user_name, target_type, target_id, details, ip_address)
+                VALUES ('timeclock_edit', ?, ?, 'time_entry', ?, ?, ?)
+            ''', (current_user.id, current_user.username, str(entry_id), json.dumps({
+                'employee_id': old['user_id'],
+                'before': {'clock_in': old['clock_in'], 'clock_out': old['clock_out'], 'notes': old['notes']},
+                'after': {'clock_in': c_in_clean, 'clock_out': c_out_clean, 'notes': notes},
+            }), request.remote_addr))
 
             conn.execute('''
                 UPDATE time_entries 
@@ -1270,25 +1416,41 @@ def export_report():
     selected_users = request.form.getlist('user_ids')
     period_str = request.form.get('period') # "YYYY-MM-DD|YYYY-MM-DD" or "custom"
     
-    start_date = None
-    end_date = None
-    
     if period_str == 'custom':
-        start_date = request.form.get('custom_start')
-        end_date = request.form.get('custom_end')
+        start_date = _form_date(request.form.get('custom_start'))
+        end_date = _form_date(request.form.get('custom_end'))
+    else:
+        parts = (period_str or '').split('|')
+        start_date, end_date = (_form_date(parts[0]), _form_date(parts[1])) if len(parts) == 2 else (None, None)
+    if not start_date or not end_date:
+        flash("Please choose a valid date range.")
+        return redirect(url_for('timeclock.export_custom_form'))
+    if end_date < start_date:
+        flash("The end date must be on or after the start date.")
+        return redirect(url_for('timeclock.export_custom_form'))
+
+    if period_str == 'custom':
         date_label = f"{start_date} to {end_date}"
     else:
-        parts = period_str.split('|')
-        start_date = parts[0]
-        end_date = parts[1]
-        
         # Format label
-        s = datetime.datetime.strptime(start_date, '%Y-%m-%d')
-        e = datetime.datetime.strptime(end_date, '%Y-%m-%d')
-        date_label = f"{s.strftime('%b %d, %Y')} - {e.strftime('%b %d, %Y')}"
-        
+        date_label = f"{start_date.strftime('%b %d, %Y')} - {end_date.strftime('%b %d, %Y')}"
+
     conn = get_db_connection()
     try:
+        # Only ids of existing users (also bounds the IN list below)
+        known_ids = {r['id'] for r in conn.execute('SELECT id FROM users').fetchall()}
+        user_ids = []
+        for raw in selected_users:
+            try:
+                uid = int(raw)
+            except ValueError:
+                continue
+            if uid in known_ids and uid not in user_ids:
+                user_ids.append(uid)
+        if selected_users and not user_ids:
+            flash("Please choose valid employees.")
+            return redirect(url_for('timeclock.export_custom_form'))
+
         # Build Query
         query = '''
             SELECT t.*, u.username, u.id as u_id
@@ -1296,16 +1458,12 @@ def export_report():
             JOIN users u ON t.user_id = u.id
             WHERE t.clock_in >= ? AND t.clock_in <= ?
         '''
-        try:
-            params = list(tc.local_dates_to_utc_range(start_date, end_date))
-        except (TypeError, ValueError):
-            flash("Please choose a valid date range.")
-            return redirect(url_for('timeclock.export_custom_form'))
-        
-        if selected_users:
-            placeholders = ','.join(['?'] * len(selected_users))
+        params = list(tc.local_dates_to_utc_range(start_date, end_date))
+
+        if user_ids:
+            placeholders = ','.join(['?'] * len(user_ids))
             query += f" AND t.user_id IN ({placeholders})"
-            params.extend(selected_users)
+            params.extend(user_ids)
             
         query += " ORDER BY u.username, t.clock_in ASC"
         
