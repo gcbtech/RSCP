@@ -3,7 +3,7 @@ POS Reports Service
 
 One sales engine (build_sales_report) produces every money figure for the
 daily report page, its thermal print view, the manual and automatic EOD
-emails and the custom report. Pages add presentation extras (hourly or
+emails, the custom report and the management dashboard. Pages add presentation extras (hourly or
 per-period activity, top items) but never recompute the money.
 """
 import re
@@ -179,6 +179,39 @@ def build_sales_report(start_date, end_date, conn=None):
         'summary': {'total_orders': orders['n'], 'gross_sales': sales_total,
                     'total_tax': tax_collected, 'total_discounts': discounts['total']},
     }
+
+
+def daily_sales_series(start_date, end_date, conn=None):
+    """Orders and sales total (incl. tax, before refunds) for every local date
+    in the range, zero-filled: [{'day': 'YYYY-MM-DD', 'orders', 'revenue'}].
+
+    Same orders as build_sales_report, so the days add up to its order_count
+    and sales_total for the range.
+    """
+    own = conn is None
+    if own:
+        conn = get_db_connection()
+    try:
+        start_dt, end_dt = _utc_bounds(start_date, end_date)
+        rows = conn.execute('''
+            SELECT date(created_at, 'localtime') AS day, COUNT(*) AS orders,
+                   COALESCE(SUM(total), 0) AS revenue
+            FROM pos_orders
+            WHERE created_at BETWEEN ? AND ? AND status != 'held'
+            GROUP BY day
+        ''', (start_dt, end_dt)).fetchall()
+    finally:
+        if own:
+            conn.close()
+
+    by_day = {r['day']: r for r in rows}
+    series = []
+    for i in range((end_date - start_date).days + 1):
+        day = (start_date + timedelta(days=i)).strftime('%Y-%m-%d')
+        r = by_day.get(day)
+        series.append({'day': day, 'orders': r['orders'] if r else 0,
+                       'revenue': _m(r['revenue']) if r else 0.0})
+    return series
 
 
 def _top_items(start_date, end_date, limit=10):

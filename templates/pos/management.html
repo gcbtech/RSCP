@@ -99,35 +99,42 @@
 
     <div class="container-fluid p-4">
         <div class="row">
-            <!-- Stats Row -->
+            {# Every money figure here comes from pos_reports (build_sales_report and,
+               for est. profit, the Top Sellers report), the same as the reports pages. #}
             <div class="col">
                 <div class="stat-card">
-                    <div class="stat-value text-primary">${{ "%.2f"|format(stats.total_revenue or 0) }}</div>
-                    <div class="stat-label">Total Revenue</div>
+                    <div class="stat-value text-primary">${{ "%.2f"|format(report.sales_total) }}</div>
+                    <div class="stat-label">Sales Total <small>(incl. tax)</small></div>
                 </div>
             </div>
             <div class="col">
                 <div class="stat-card">
-                    <div class="stat-value text-success">${{ "%.2f"|format(profit_stats.estimated_profit or 0) }}</div>
-                    <div class="stat-label">Est. Profit</div>
+                    <div class="stat-value text-primary">${{ "%.2f"|format(report.net_revenue) }}</div>
+                    <div class="stat-label">Net Revenue <small>(after refunds)</small></div>
                 </div>
             </div>
             <div class="col">
                 <div class="stat-card">
-                    <div class="stat-value">{{ stats.total_orders or 0 }}</div>
+                    <div class="stat-value text-success">${{ "%.2f"|format(profit.profit) }}</div>
+                    <div class="stat-label">Est. Profit{% if profit.uncosted_items %} <small>({{ profit.uncosted_items }} item{{ 's' if profit.uncosted_items != 1 }} without cost excluded)</small>{% endif %}</div>
+                </div>
+            </div>
+            <div class="col">
+                <div class="stat-card">
+                    <div class="stat-value">{{ report.order_count }}</div>
                     <div class="stat-label">Orders</div>
                 </div>
             </div>
             <div class="col">
                 <div class="stat-card">
-                    <div class="stat-value">${{ "%.2f"|format(stats.avg_order or 0) }}</div>
+                    <div class="stat-value">${{ "%.2f"|format(avg_order) }}</div>
                     <div class="stat-label">Avg Order</div>
                 </div>
             </div>
             <div class="col">
                 <div class="stat-card">
-                    <div class="stat-value text-danger">${{ "%.2f"|format(refund_stats.refund_total or 0) }}</div>
-                    <div class="stat-label">Refunds ({{ refund_stats.refund_count or 0 }})</div>
+                    <div class="stat-value text-danger">${{ "%.2f"|format(report.refunds.total) }}</div>
+                    <div class="stat-label">Refunds ({{ report.refunds.count }})</div>
                 </div>
             </div>
         </div>
@@ -193,6 +200,29 @@
                 <div class="chart-card">
                     <h5 class="mb-3">💳 Payment Methods</h5>
                     <canvas id="paymentChart" height="150"></canvas>
+                    {% if report.tenders %}
+                    <table class="table table-sm mt-3 mb-0">
+                        <thead>
+                            <tr>
+                                <th>Method</th>
+                                <th class="text-end">Collected</th>
+                                <th class="text-end">Refunded</th>
+                                <th class="text-end">Net</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for t in report.tenders %}
+                            <tr>
+                                <td>{{ t.label }}</td>
+                                <td class="text-end">${{ "%.2f"|format(t.collected) }}</td>
+                                <td class="text-end text-danger">&minus;${{ "%.2f"|format(t.refunded) }}</td>
+                                <td class="text-end fw-bold">${{ "%.2f"|format(t.net) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                    <small class="text-muted">Split sales are counted under each tender for the part it paid.</small>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -228,8 +258,8 @@
     <script type="application/json" id="page-data">{{ {
         'salesData': daily_sales|map(attribute='revenue')|list,
         'salesLabels': daily_sales|map(attribute='day')|list,
-        'paymentLabels': payment_breakdown|map(attribute='payment_method')|list,
-        'paymentData': payment_breakdown|map(attribute='amount')|list,
+        'paymentLabels': payment_breakdown|map(attribute='method')|list,
+        'paymentData': payment_breakdown|map(attribute='collected')|list,
     }|tojson }}</script>
 {% endblock %}
 {% block scripts %}
