@@ -271,15 +271,16 @@ def test_cli_status_and_scheduled_skip(bk, monkeypatch, capsys):
     assert capsys.readouterr().out.strip().endswith('null')
 
 
-def test_app_scheduler_fallback_only_without_timer(monkeypatch, tmp_path):
+def test_timer_installed_only_in_the_data_dir_layout(monkeypatch, tmp_path):
     from app import backup, paths
-    monkeypatch.setattr(paths, 'USES_DATA_DIR', False)
-    assert backup.app_scheduler_should_run()
-    monkeypatch.setattr(paths, 'USES_DATA_DIR', True)
     monkeypatch.setattr(backup, 'SYSTEMD_TIMER', str(tmp_path / 'rscp-backup.timer'))
-    assert backup.app_scheduler_should_run()          # timer not installed yet
     (tmp_path / 'rscp-backup.timer').write_text('[Timer]')
-    assert not backup.app_scheduler_should_run()
+    monkeypatch.setattr(paths, 'USES_DATA_DIR', False)
+    assert not backup.timer_installed()               # 2.x layout: nothing schedules backups
+    monkeypatch.setattr(paths, 'USES_DATA_DIR', True)
+    assert backup.timer_installed()
+    (tmp_path / 'rscp-backup.timer').unlink()
+    assert not backup.timer_installed()               # timer missing
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,8 @@
 """
 Scheduled jobs (app/jobs.py): the `python -m app.jobs` entry point, per-job
-locks, the idempotent end-of-day email, where the jobs run (systemd timers in
-the data-dir layout, the in-app scheduler otherwise), the status table and
-its admin panel, and the systemd units.
+locks, the idempotent end-of-day email, where the jobs run (systemd timers
+only; a warning when they are missing), the status table and its admin panel,
+and the systemd units.
 """
 import datetime
 import importlib
@@ -317,7 +317,7 @@ def test_eod_claim_alone_prevents_a_double_send(eod, jobs):
 
 
 # ---------------------------------------------------------------------------
-# Who runs the jobs: systemd (data dir + units) or the in-app scheduler
+# Who runs the jobs: systemd timers only (warning when they are missing)
 # ---------------------------------------------------------------------------
 
 def _install_units(tmp_path, monkeypatch, with_backup_timer=True):
@@ -333,89 +333,88 @@ def _install_units(tmp_path, monkeypatch, with_backup_timer=True):
     return unit_dir
 
 
-def test_use_systemd_timers(tmp_path, monkeypatch):
+def test_use_systemd_timers_and_the_warning(tmp_path, monkeypatch):
     from app import jobs, paths
     monkeypatch.setattr(jobs, 'SYSTEMD_UNIT_DIR', str(tmp_path / 'none'))
     monkeypatch.setattr(paths, 'USES_DATA_DIR', True)
-    assert not jobs.use_systemd_timers()                 # updater hasn't installed the units yet
+    assert not jobs.use_systemd_timers()                 # units not installed
+    warning = jobs.scheduling_warning()
+    assert 'NOT running' in warning and 'rscp-job@.service' in warning
+    assert '--install-units' in warning
+
     unit_dir = _install_units(tmp_path, monkeypatch)
     assert jobs.use_systemd_timers()
-    monkeypatch.setattr(paths, 'USES_DATA_DIR', False)
-    assert not jobs.use_systemd_timers()                 # legacy layout: always in-app
-    monkeypatch.setattr(paths, 'USES_DATA_DIR', True)
+    assert jobs.scheduling_warning() is None and jobs.missing_units() == []
+
     (unit_dir / 'rscp-eod-email.timer').unlink()
     assert not jobs.use_systemd_timers()                 # all or nothing
-    (unit_dir / 'rscp-eod-email.timer').write_text('[Timer]\n')
+    assert jobs.missing_units() == ['rscp-eod-email.timer']
+    (unit_dir / 'rscp-eod-email.timer').write_text('[Timer]')
     (unit_dir / 'rscp-backup.timer').unlink()
     assert not jobs.use_systemd_timers()                 # backups would otherwise stop
+    assert jobs.missing_units() == ['rscp-backup.timer']
+    (unit_dir / 'rscp-backup.timer').write_text('[Timer]')
+
+    monkeypatch.setattr(paths, 'USES_DATA_DIR', False)   # 2.x layout, even with units
+    assert not jobs.use_systemd_timers()
+    warning = jobs.scheduling_warning()
+    assert '2.x folder layout' in warning and '--migrate-from' in warning
 
 
 def _import_wsgi(monkeypatch):
-    """Import wsgi.py fresh with the scheduler and job runner stubbed;
-    returns what it started."""
+    """Import wsgi.py fresh; returns (jobs it ran, warnings it logged)."""
+    import logging
     from app import jobs
-    from app.services import background_tasks as bt
-    calls = []
-    monkeypatch.setattr(bt, 'start_background_tasks', lambda: calls.append('scheduler'))
+    calls, records = [], []
     monkeypatch.setattr(jobs, 'run_job', lambda name, **kw: calls.append((name, kw.get('trigger'))))
+
+    class Collect(logging.Handler):
+        def emit(self, record):
+            if record.levelno >= logging.WARNING:
+                records.append(record.getMessage())
+    handler = Collect()
+    log = logging.getLogger('wsgi')
+    log.addHandler(handler)
     sys.modules.pop('wsgi', None)
     try:
-        mod = importlib.import_module('wsgi')
-        # Release the real background-task flock (Linux): this process keeps
-        # importing wsgi in later tests, and a still-open lock from an earlier
-        # import would make the next one lose (no fcntl on Windows, so it
-        # never showed there).
-        lock = getattr(mod, '_lock_fd', None)
-        if hasattr(lock, 'close'):
-            lock.close()
+        importlib.import_module('wsgi')
     finally:
         sys.modules.pop('wsgi', None)
-    return calls
+        log.removeHandler(handler)
+    return calls, records
 
 
-def test_wsgi_in_data_dir_mode_with_timers_starts_no_scheduler(tmp_path, monkeypatch):
+def test_wsgi_with_timers_runs_nothing_and_warns_nothing(tmp_path, monkeypatch):
     from app import paths
     monkeypatch.setattr(paths, 'USES_DATA_DIR', True)
     _install_units(tmp_path, monkeypatch)
-    assert _import_wsgi(monkeypatch) == []
+    assert _import_wsgi(monkeypatch) == ([], [])
 
 
-def test_wsgi_in_data_dir_mode_without_timers_keeps_the_scheduler(tmp_path, monkeypatch):
+def test_wsgi_without_timers_warns_instead_of_scheduling(tmp_path, monkeypatch):
     from app import jobs, paths
     monkeypatch.setattr(paths, 'USES_DATA_DIR', True)
     monkeypatch.setattr(jobs, 'SYSTEMD_UNIT_DIR', str(tmp_path / 'none'))
-    assert _import_wsgi(monkeypatch) == ['scheduler', ('system-migrations', 'app-startup')]
+    calls, warnings = _import_wsgi(monkeypatch)
+    assert calls == []                                   # no in-app scheduler, no migrations
+    assert len(warnings) == 1 and 'Scheduled jobs are NOT running' in warnings[0]
 
 
-def test_wsgi_in_legacy_mode_keeps_the_scheduler(tmp_path, monkeypatch):
+def test_wsgi_in_legacy_layout_warns_instead_of_scheduling(tmp_path, monkeypatch):
     from app import paths
     monkeypatch.setattr(paths, 'USES_DATA_DIR', False)
     _install_units(tmp_path, monkeypatch)                # even if unit files exist
-    assert _import_wsgi(monkeypatch) == ['scheduler', ('system-migrations', 'app-startup')]
+    calls, warnings = _import_wsgi(monkeypatch)
+    assert calls == []
+    assert len(warnings) == 1 and '2.x folder layout' in warnings[0]
 
 
-def test_in_app_scheduler_jobs_use_the_shared_runner(jobs, db, monkeypatch):
-    """Legacy mode: APScheduler's job functions go through run_job, so they
-    are locked, recorded and (EOD) idempotent too."""
-    from app.services import background_tasks as bt
-    from app.services import db as db_mod
-    from app.services import package_imports
-    monkeypatch.setattr(db_mod, 'DB_PATH', db)
-    monkeypatch.setattr(package_imports, 'run_package_maintenance', lambda: (0, 0))
-    before = bt.SYNC_STATUS['maintenance_count']
-    bt.package_maintenance_job()
-    assert bt.SYNC_STATUS['maintenance_count'] == before + 1
-    assert _status(db, 'package-maintenance')['last_trigger'] == 'app-scheduler'
-    bt.eod_email_job()
-    assert _status(db, 'eod-email')['last_result'] == 'ok'
-
-    def boom():
-        raise RuntimeError('nope')
-    monkeypatch.setattr(package_imports, 'run_package_maintenance', boom)
-    failures = bt.SYNC_STATUS['maintenance_failures']
-    bt.package_maintenance_job()
-    assert bt.SYNC_STATUS['maintenance_failures'] == failures + 1
-    bt.SYNC_STATUS['maintenance_failures'] = 0
+def test_the_in_app_scheduler_is_gone():
+    import importlib.util
+    assert importlib.util.find_spec('app.services.background_tasks') is None
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, 'requirements.txt'), encoding='utf-8') as f:
+        assert 'apscheduler' not in f.read().lower()
 
 
 # ---------------------------------------------------------------------------
@@ -438,6 +437,21 @@ def test_admin_logs_page_shows_scheduled_jobs(jobs, db, fresh_client, monkeypatc
     assert 'RuntimeError: database is locked' in html
     assert 'automatic end-of-day email is off' in html
     assert 'Nightly backup' in html
+
+
+def test_scheduled_jobs_panel_shows_the_missing_timer_warning(fresh_client, tmp_path, monkeypatch):
+    from app import jobs, paths
+    monkeypatch.setattr(paths, 'USES_DATA_DIR', True)
+    monkeypatch.setattr(jobs, 'SYSTEMD_UNIT_DIR', str(tmp_path / 'none'))
+    login(fresh_client, 1)
+    html = fresh_client.get('/admin/logs').get_data(as_text=True)
+    assert 'id="scheduled-jobs-warning"' in html
+    assert 'Scheduled jobs are NOT running' in html and 'rscp-job@.service' in html
+
+    _install_units(tmp_path, monkeypatch)
+    html = fresh_client.get('/admin/logs').get_data(as_text=True)
+    assert 'Scheduled jobs' in html and 'id="scheduled-jobs-warning"' not in html
+    assert 'systemd timers' in html
 
 
 def test_scheduled_jobs_panel_is_admin_only(fresh_client):

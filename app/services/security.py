@@ -16,8 +16,8 @@ _last_secret_key = None
 
 def _get_secret_key():
     """SECRET_KEY from the app context when available, else from config.json.
-    Background jobs (APScheduler threads) run outside any app context, but
-    must derive the same Fernet key create_app() uses."""
+    Code outside an app context (scripts, background threads) must still
+    derive the same Fernet key create_app() uses."""
     try:
         return current_app.config.get('SECRET_KEY', 'default-insecure-key')
     except RuntimeError:

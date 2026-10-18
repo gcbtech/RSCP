@@ -31,9 +31,8 @@ leaves the copy to the next timer run, which also retries a failed copy
 
 Scheduling: rscp-backup.timer runs `--scheduled` every 15 minutes; a backup
 is due when none has succeeded since the most recent BACKUP_TIME, so the
-time set in the admin page applies without touching systemd. Installs
-without that timer (legacy layout, or a data-dir install whose updater
-predates it) run the same check from the app's background scheduler.
+time set in the admin page applies without touching systemd. Without that
+timer no scheduled backups run (Admin > Logs > Scheduled jobs warns).
 
 One run at a time: a thread lock plus an flock on nightly/.lock (where
 available) covers both the web process ("Run backup now") and the timer.
@@ -600,22 +599,10 @@ def run_if_due(now=None, root=None, trigger='scheduled', **kwargs):
         return None
 
 
-def app_scheduler_should_run():
-    """Whether the app's background scheduler must run backups itself: legacy
-    installs, and data-dir installs whose systemd timer isn't installed yet
-    (the first in-app update to this version runs the previous updater,
-    which doesn't know about the timer)."""
-    return not paths.USES_DATA_DIR or not os.path.exists(SYSTEMD_TIMER)
-
-
-def scheduler_job():
-    """APScheduler job (every 15 minutes) for installs without the timer."""
-    if not app_scheduler_should_run():
-        return
-    try:
-        run_if_due(trigger='app-scheduler')
-    except Exception as e:
-        logger.error(f"[Backup] Scheduled backup error: {e}")
+def timer_installed():
+    """Whether rscp-backup.timer runs the scheduled backups (data-dir installs
+    set up by install.sh). Without it nothing does: app.jobs warns about it."""
+    return paths.USES_DATA_DIR and os.path.exists(SYSTEMD_TIMER)
 
 
 # --- admin warning -----------------------------------------------------------

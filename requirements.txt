@@ -1,9 +1,8 @@
 # RSCP runtime dependencies (direct imports only), Python 3.11+.
 #
-# Installs use requirements.lock (exact pins of the full resolved set);
-# this file states the supported ranges and is what the lock is built from:
-#   python -m venv /tmp/lockenv && /tmp/lockenv/bin/pip install -r requirements.txt
-#   /tmp/lockenv/bin/pip freeze --exclude pip > requirements.lock
+# Installs use requirements.lock (exact pins of the full resolved set for
+# Linux); this file states the supported ranges and is what the lock is built
+# from (the command is in requirements.lock's header).
 # Test tooling lives in requirements-dev.txt.
 
 Flask>=3.1,<4
@@ -11,10 +10,11 @@ Werkzeug>=3.1,<4
 itsdangerous>=2.2,<3
 Flask-Login>=0.6.3,<0.7
 Flask-Limiter>=3.5,<5
+# Google/OIDC sign-in (SSO) and Cloudflare Access JWT checks.
 Authlib>=1.3,<2
-# APScheduler 4 is a different API; stay on 3.x.
-APScheduler>=3.10,<4
 gunicorn>=22.0
+# GitHub update checks, product lookups, CF Access keys; Authlib's Flask
+# OAuth client also needs it (an import Authlib does not declare).
 requests>=2.31,<3
 openpyxl>=3.1,<4
 Pillow>=10.0

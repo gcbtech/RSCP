@@ -6,6 +6,11 @@
         {% if jobs_runner %}<small class="text-muted">Run by {{ jobs_runner }}</small>{% endif %}
     </div>
     <div class="card-body p-0">
+        {% if jobs_warning %}
+        <div class="alert alert-danger rounded-0 mb-0 small" id="scheduled-jobs-warning">
+            <i class="bi bi-exclamation-triangle me-1"></i>{{ jobs_warning }}
+        </div>
+        {% endif %}
         <div class="table-responsive">
             <table class="table table-sm mb-0 align-middle">
                 <thead class="table-light">

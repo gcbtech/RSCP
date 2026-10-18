@@ -1,6 +1,5 @@
 # Package status upkeep (on_time -> expected -> past_due, AUTO_TRIM) every
-# 15 minutes, as the in-app scheduler did. Persistent= runs a missed check
-# right after downtime.
+# 15 minutes. Persistent= runs a missed check right after downtime.
 
 [Unit]
 Description=RSCP package status upkeep (every 15 minutes)

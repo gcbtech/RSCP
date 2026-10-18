@@ -137,9 +137,11 @@ sudo /opt/rscp/bin/rscp-update --rollback
 ### Migrating a 2.x install (one time)
 
 2.x installs keep code and data together (e.g. `/opt/ebay_receiver`, often a
-symlink into `/opt/ebay_receiver_data/releases/...`) and run as root. 3.0 still
-boots in that layout, so the old in-app updater can install it. Moving to the
-new layout takes one run of the installer as root, on the server's console:
+symlink into `/opt/ebay_receiver_data/releases/...`) and run as root. If a 2.x
+in-app update pulls 3.x into that layout, the app still boots, but no scheduled
+jobs or nightly backups run and 3.x's own in-app updater refuses to run there,
+so migrate right away. Moving to the new layout takes one run of the installer
+as root, on the server's console:
 
 ```bash
 # 0. Safety net: snapshot the container first (on the Proxmox host),
@@ -219,10 +221,12 @@ sudo systemctl start rscp-job@package-maintenance # run one now
 sudo -u rscp RSCP_DATA_DIR=/var/lib/rscp /opt/rscp/current/venv/bin/python -m app.jobs --list
 ```
 
-Installs without these units (the 2.x layout, or a 3.0 install whose in-app
-update ran an older updater) run the same jobs from the app's background
-scheduler in one web worker, as before; the next install or update adds the
-timers.
+Nothing inside the web service schedules these jobs. If the units are missing
+(an install still in the 2.x layout, or an update run by an older updater that
+did not install them), no scheduled job or nightly backup runs: the service
+logs a warning at startup and **Admin > Logs > Scheduled jobs** shows it. Put
+the units back with `sudo /opt/rscp/bin/rscp-update --install-units /opt/rscp/current`
+(or move a 2.x install, see below).
 
 ### Backups
 
@@ -260,9 +264,7 @@ sudo -u rscp RSCP_DATA_DIR=/var/lib/rscp /opt/rscp/current/venv/bin/python -m ap
 sudo -u rscp RSCP_DATA_DIR=/var/lib/rscp /opt/rscp/current/venv/bin/python -m app.backup --status
 ```
 
-Installs without the timer (the 2.x layout, or a 3.0 install whose first
-in-app update ran an older updater) get the same nightly backup from the
-app's background scheduler. The next install or update adds the timer.
+Without the timer no scheduled backups run; see [Scheduled jobs](#scheduled-jobs).
 
 **Off-box copy (recommended).** Local backups don't survive a dead disk. Mount
 a NAS share on the server, give the `rscp` user write access to a folder on
@@ -438,7 +440,7 @@ On first run, the setup wizard creates:
 rscp/
 ├── app/
 │   ├── routes/         # Flask blueprints (main, admin, inventory, auth)
-│   ├── services/       # Business logic (db, auth, data_manager, background_tasks)
+│   ├── services/       # Business logic (db, auth, data_manager, throttle, ...)
 │   └── utils/          # Helper functions
 ├── templates/          # Jinja2 templates
 ├── static/             # CSS, JS, images

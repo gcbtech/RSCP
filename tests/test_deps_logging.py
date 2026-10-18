@@ -231,12 +231,6 @@ def test_wsgi_app_imports_in_legacy_mode(tmp_path):
     tree = tmp_path / 'rscp'
     shutil.copytree(APP_ROOT, tree, ignore=_ignore)
     script = (
-        "import app.services.background_tasks as bt\n"
-        "import app.services.system_migrations as sm\n"
-        "noop = lambda *a, **k: None\n"
-        "for mod, name in ((bt, 'start_background_tasks'), (bt, 'start_scheduler'),\n"
-        "                  (sm, 'run_system_migrations')):\n"
-        "    if hasattr(mod, name): setattr(mod, name, noop)\n"
         "from app import paths\n"
         "assert not paths.USES_DATA_DIR, paths.DATA_DIR\n"
         "from wsgi import app\n"

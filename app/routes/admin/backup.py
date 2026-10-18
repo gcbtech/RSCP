@@ -304,7 +304,7 @@ def run_backup_now():
                   root=root, settings=backups.load_settings(), trigger='manual',
                   # Under systemd only rscp-backup.service may write off-box;
                   # its next timer run (within 15 min) makes the copy.
-                  defer_offsite=not backups.app_scheduler_should_run())
+                  defer_offsite=backups.timer_installed())
 
     def work():
         try:

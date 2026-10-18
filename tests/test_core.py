@@ -292,20 +292,6 @@ class TestHelperFunctions:
         assert format_date_filter("Pending") == "Pending"
 
 
-class TestBackgroundTasks:
-    """Test background task infrastructure."""
-    
-    def test_sync_status_structure(self):
-        """get_sync_status should return expected structure."""
-        from app.services.background_tasks import get_sync_status
-        
-        status = get_sync_status()
-        
-        assert isinstance(status, dict)
-        assert 'last_maintenance' in status
-        assert 'last_email_check' not in status   # email ingest was removed
-        assert 'maintenance_count' in status
-        assert 'errors' in status
 class TestVersionComparison:
     """Test version comparison for update checks."""
     
