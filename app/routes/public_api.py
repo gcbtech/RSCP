@@ -10,13 +10,16 @@ Security:
 - Rate limited to 30 requests per minute per IP
 - Out-of-stock and legacy items are excluded
 """
+import hmac
 import logging
 from datetime import datetime
 from flask import Blueprint, request, jsonify, current_app
 from functools import wraps
 
+from app.services import throttle
 from app.services.db import get_db_connection
 from app.services.data_manager import load_config
+from app.utils.proxy import get_client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +27,11 @@ public_api_bp = Blueprint('public_api', __name__, url_prefix='/api/public')
 
 # ── Hardcoded allowlist — customers can ONLY see these aisles ──
 ALLOWED_AISLES = ('Laptops', 'Desktops', 'Servers', 'Switches', 'Glass Case', 'Glass Counter', 'Island Shelves')
+
+# Wrong API keys per client IP (shared across workers, services/throttle).
+# The storefront always sends the right key, so only guessing or a
+# misconfigured client ever fails.
+API_KEY_FAILURES = throttle.FailureLimit('public_api_key', ip_limit=10, ip_window=300)
 
 
 def require_api_key(f):
@@ -37,10 +45,15 @@ def require_api_key(f):
             logger.warning("Public API called but PUBLIC_API_KEY is not configured.")
             return jsonify({'error': 'API not configured'}), 503
         
+        client_ip = get_client_ip()
+        if API_KEY_FAILURES.refused(client_ip):
+            return jsonify({'error': 'Too many failed attempts'}), 429
+
         provided_key = request.headers.get('X-API-Key', '')
         
-        if not provided_key or provided_key != expected_key:
-            logger.warning(f"Public API: invalid API key from {request.remote_addr}")
+        if not provided_key or not hmac.compare_digest(provided_key.encode(), expected_key.encode()):
+            API_KEY_FAILURES.failed(client_ip)
+            logger.warning(f"Public API: invalid API key from {client_ip}")
             return jsonify({'error': 'Unauthorized'}), 401
         
         return f(*args, **kwargs)

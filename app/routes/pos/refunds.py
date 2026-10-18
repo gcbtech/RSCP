@@ -85,16 +85,17 @@ def refund_auth():
     if request.method == 'POST':
         from werkzeug.security import check_password_hash
         from app.services.auth import User
-        from app.utils.permissions import has_permission, manager_auth_throttled, record_manager_auth_failure
+        from app.utils.permissions import (has_permission, manager_auth_throttled,
+                                           record_manager_auth_failure, record_manager_auth_success)
 
-        if manager_auth_throttled():
-            flash('Too many failed attempts. Wait 5 minutes and try again.')
-            return render_template('pos/refund_auth.html'), 429
-        
         username = request.form.get('username', '')
         password = request.form.get('password', '')
         pin = request.form.get('pin', '')
         badge_id = request.form.get('badge_id', '')
+
+        if manager_auth_throttled(username):
+            flash('Too many failed attempts. Wait 5 minutes and try again.')
+            return render_template('pos/refund_auth.html'), 429
         
         # If badge_id provided, find user by badge
         user_obj = None
@@ -123,6 +124,7 @@ def refund_auth():
                     authenticated = True
             
             if authenticated:
+                record_manager_auth_success(username or user_obj.username)
                 session['pos_refund_manager_auth'] = {
                     'username': user_obj.username,
                     'timestamp': datetime.now().timestamp()
@@ -130,7 +132,7 @@ def refund_auth():
                 flash(f'Manager {user_obj.username} authenticated.')
                 return redirect(url_for('pos.refunds'))
         
-        record_manager_auth_failure()
+        record_manager_auth_failure(username)
         flash('Invalid manager credentials.')
 
     return render_template('pos/refund_auth.html')
@@ -147,7 +149,8 @@ def verify_manager():
     from app.utils.permissions import has_permission
     from flask import jsonify
     
-    from app.utils.permissions import manager_auth_throttled, record_manager_auth_failure
+    from app.utils.permissions import (manager_auth_throttled, record_manager_auth_failure,
+                                       record_manager_auth_success)
 
     data = request.get_json() or {}
     pin = data.get('pin', '')
@@ -181,6 +184,7 @@ def verify_manager():
             authenticated = True
         
         if authenticated:
+            record_manager_auth_success(r['username'])
             # Store manager approval in session for this discount
             session['pos_discount_manager_auth'] = {
                 'username': r['username'],

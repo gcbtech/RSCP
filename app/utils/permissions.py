@@ -20,6 +20,9 @@ from flask_login import current_user
 import json
 import logging
 
+from app.services import throttle
+from app.utils.proxy import get_client_ip
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -284,20 +287,41 @@ def require_permission(permission, json=None):
     return decorator
 
 
-# Failed manager PIN/password checks allowed per cashier account before a
-# cooldown. A 4-digit PIN has only 10,000 values, so unthrottled checks could
-# be brute-forced in minutes; each check also costs N password hashes.
+# Manager authorization (void/discount approval, refund sign-off) checks a
+# manager's PIN, password or badge on top of the cashier's session. A 4-digit
+# PIN has only 10,000 values, so unthrottled checks could be brute-forced in
+# minutes; each check also costs N password hashes. All counts are shared
+# across gunicorn workers (services/throttle):
+#   * per cashier account: 5 failures / 5 min (the account asking for the
+#     override is the one that would be guessing);
+#   * per register IP: 10 failures / 5 min, so switching accounts on one
+#     machine doesn't buy more guesses, while two cashiers sharing a register
+#     still get their own five each;
+#   * per target manager username, where the form names one: 5 failures /
+#     5 min from any IP (with FailureLimit's exception for IPs that have no
+#     failures of their own, so a manager is never locked out by guessing
+#     somewhere else).
+# A successful authorization clears the account's and the manager's counts.
 MANAGER_AUTH_FAIL_LIMIT = 5
 MANAGER_AUTH_FAIL_WINDOW = 300  # seconds
+MANAGER_PIN = throttle.FailureLimit('manager_pin', ip_limit=10, ip_window=300,
+                                    user_limit=5, user_window=300)
 
 
-def manager_auth_throttled():
-    from app.services import throttle
-    return throttle.is_limited('manager_auth', f'user:{current_user.id}',
-                               MANAGER_AUTH_FAIL_LIMIT, MANAGER_AUTH_FAIL_WINDOW)
+def manager_auth_throttled(manager_username=None):
+    if throttle.is_limited('manager_auth', f'user:{current_user.id}',
+                           MANAGER_AUTH_FAIL_LIMIT, MANAGER_AUTH_FAIL_WINDOW):
+        return True
+    return MANAGER_PIN.refused(get_client_ip(), manager_username)
 
 
-def record_manager_auth_failure():
-    from app.services import throttle
+def record_manager_auth_failure(manager_username=None):
     throttle.hit('manager_auth', f'user:{current_user.id}')
-    logger.warning(f"Failed manager authentication attempt by {current_user.username}")
+    MANAGER_PIN.failed(get_client_ip(), manager_username)
+    logger.warning(f"Failed manager authentication attempt by {current_user.username} "
+                   f"from {get_client_ip()}")
+
+
+def record_manager_auth_success(manager_username=None):
+    throttle.clear('manager_auth', f'user:{current_user.id}')
+    MANAGER_PIN.succeeded(manager_username)

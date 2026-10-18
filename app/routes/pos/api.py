@@ -64,21 +64,22 @@ def api_validate_manager():
     from app.services.auth import User
     from app.utils.permissions import has_permission
     
-    from app.utils.permissions import manager_auth_throttled, record_manager_auth_failure
+    from app.utils.permissions import (manager_auth_throttled, record_manager_auth_failure,
+                                       record_manager_auth_success)
 
     data = request.get_json() or {}
     username = data.get('username', '')
     password = data.get('password', '')
     pin = data.get('pin', '')
 
-    if manager_auth_throttled():
+    if manager_auth_throttled(username):
         return jsonify({'valid': False, 'error': 'Too many failed attempts. Wait 5 minutes.'}), 429
 
     # One generic error for every failure, so the endpoint does not reveal
     # which usernames are managers.
     user_obj = User.get_by_username(username)
     if not user_obj or not has_permission(user_obj, 'pos.manage'):
-        record_manager_auth_failure()
+        record_manager_auth_failure(username)
         return jsonify({'valid': False, 'error': 'Invalid credentials'})
     
     # Check credentials
@@ -94,6 +95,7 @@ def api_validate_manager():
             authenticated = True
     
     if authenticated:
+        record_manager_auth_success(username)
         # Set temporary manager auth for void operations
         from datetime import datetime
         session['pos_manager_auth'] = {
@@ -103,7 +105,7 @@ def api_validate_manager():
         session.modified = True
         return jsonify({'valid': True})
 
-    record_manager_auth_failure()
+    record_manager_auth_failure(username)
     return jsonify({'valid': False, 'error': 'Invalid credentials'})
 
 

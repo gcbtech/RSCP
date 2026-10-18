@@ -97,8 +97,9 @@ def create_app(test_config=None):
     # Static file caching (1 week for images, CSS, JS)
     app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 604800  # 7 days in seconds
     
-    # Login throttling lives in app/routes/auth.py (shared across workers via
-    # SQLite); Flask-Limiter's memory:// store is per-process.
+    # Login, POS PIN/badge, manager-override and pairing-code throttling use
+    # app/services/throttle.py (shared across workers via SQLite);
+    # Flask-Limiter's memory:// store is per-process.
 
     # Database connection cleanup (for request-scoped connections)
     from app.services.db import init_app as init_db_app
@@ -152,19 +153,8 @@ def create_app(test_config=None):
     from app.routes.notifications import notifications_bp
     app.register_blueprint(notifications_bp)
     
-    # Rate-limit the public POS pairing endpoints (6-digit code guessing).
-    # Applied here, after blueprint registration, so the view functions exist.
-    try:
-        for endpoint, limit in (
-            ('pos.pairing_request_code', '20 per minute'),
-            ('pos.register_claim_code', '15 per minute'),
-        ):
-            view = app.view_functions.get(endpoint)
-            if view:
-                app.view_functions[endpoint] = limiter.limit(limit)(view)
-    except Exception as e:
-        logging.warning(f"Could not apply pairing rate limits: {e}")
-
+    # POS pairing endpoints are rate-limited in app/routes/pos/pairing.py
+    # (shared across workers via services/throttle).
 
     # Global Error Handler
     from app.utils.errors import RscpError
