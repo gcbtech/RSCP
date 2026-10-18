@@ -48,17 +48,29 @@ def _acquire_singleton_lock():
         return None
 
 
-# Start background tasks (package status upkeep, POS EOD email)
-# and run pending system migrations, in exactly ONE worker process.
-_lock_fd = _acquire_singleton_lock()
-if _lock_fd is not None:
-    logger.info(f"[Background Tasks] Worker {os.getpid()} owns background tasks")
-    start_background_tasks()
-    # Post-update system steps (unit rewrites, backfills) — versioned and
-    # idempotent, so in-app updates need no manual follow-up commands.
-    from app.services.system_migrations import run_system_migrations
-    run_system_migrations()
+# Periodic jobs (package status upkeep, POS EOD email, backup fallback) and
+# post-update system migrations (app/jobs.py).
+#
+# Data-dir install with the job units installed: systemd runs them
+# (rscp-*.timer -> rscp-job@<name>.service; system migrations as
+# rscp.service's ExecStartPre, once per start), so no worker starts a scheduler.
+# Otherwise (legacy layout, or an updater that has not installed the units yet):
+# exactly ONE worker runs them, as in 2.x.
+from app import jobs as _jobs
+
+_lock_fd = None
+if _jobs.use_systemd_timers():
+    logger.info(f"[Background Tasks] Worker {os.getpid()}: scheduled jobs run from systemd timers "
+                f"(systemctl list-timers 'rscp-*'); not starting the in-app scheduler")
 else:
-    logger.info(f"[Background Tasks] Worker {os.getpid()} skipping (another worker owns them)")
+    _lock_fd = _acquire_singleton_lock()
+    if _lock_fd is not None:
+        logger.info(f"[Background Tasks] Worker {os.getpid()} owns background tasks")
+        start_background_tasks()
+        # Post-update system steps (unit rewrites, backfills) — versioned and
+        # idempotent, so in-app updates need no manual follow-up commands.
+        _jobs.run_job('system-migrations', trigger='app-startup')
+    else:
+        logger.info(f"[Background Tasks] Worker {os.getpid()} skipping (another worker owns them)")
 
 # Gunicorn will import 'app' from this module

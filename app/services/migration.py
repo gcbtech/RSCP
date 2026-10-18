@@ -1274,6 +1274,40 @@ def _m12_drop_email_ingest_settings(conn):
         conn.execute("UPDATE settings_meta SET token = lower(hex(randomblob(16))) WHERE id = 1")
 
 
+# Also used by app/jobs.py (CREATE ... IF NOT EXISTS), so a job started by a
+# timer before the web service has migrated still has somewhere to write.
+JOB_TABLES_SQL = (
+    '''CREATE TABLE IF NOT EXISTS job_status (
+        name TEXT PRIMARY KEY,
+        last_started TEXT,
+        last_finished TEXT,
+        last_result TEXT,             -- ok | failed | running
+        last_detail TEXT,
+        last_trigger TEXT,
+        duration_s REAL,
+        last_success TEXT,
+        last_failure TEXT,
+        last_error TEXT,
+        run_count INTEGER NOT NULL DEFAULT 0,
+        failure_count INTEGER NOT NULL DEFAULT 0,
+        consecutive_failures INTEGER NOT NULL DEFAULT 0
+    )''',
+    '''CREATE TABLE IF NOT EXISTS job_markers (
+        name TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at TEXT
+    )''',
+)
+
+
+def _m14_job_status(conn):
+    """Scheduled-job bookkeeping (app/jobs.py): last run/result per job for
+    the admin "Scheduled jobs" panel, and markers that make jobs idempotent
+    (the end-of-day email's "sent today" claim)."""
+    for sql in JOB_TABLES_SQL:
+        conn.execute(sql)
+
+
 # (version, description, function). Version 1 is the ensure_db_ready() baseline.
 SCHEMA_MIGRATIONS = [
     (2, 'PTO tables', _m2_pto_tables),
@@ -1287,6 +1321,7 @@ SCHEMA_MIGRATIONS = [
     (10, 'packages: database is the only source (manifest.csv retired)', _m10_packages_db_only),
     (11, 're-import encoded legacy settings (webhook URLs)', _m11_reimport_encoded_settings),
     (12, 'drop email-ingest settings (feature removed)', _m12_drop_email_ingest_settings),
+    (14, 'job_status and job_markers tables (scheduled jobs)', _m14_job_status),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 assert len({v for v, _, _ in SCHEMA_MIGRATIONS}) == len(SCHEMA_MIGRATIONS), "duplicate schema version"

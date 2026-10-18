@@ -329,7 +329,7 @@ def test_eod_email_print_view_and_page_use_the_same_numbers(fresh_app, fresh_cli
     sent = []
 
     class FakeSMTP:
-        def __init__(self, host, port):
+        def __init__(self, host, port, timeout=None):
             pass
 
         def __enter__(self):
