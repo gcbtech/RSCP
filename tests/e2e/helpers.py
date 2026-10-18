@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 USERS = {
     'admin': {'id': 1, 'password': 'E2e-Admin-Pass-1', 'roles': '["super_admin"]', 'is_admin': 1},
     'cashier': {'id': 2, 'password': 'E2e-Cashier-Pass-1', 'roles': '["operator"]', 'is_admin': 0},
+    'manager': {'id': 3, 'password': 'E2e-Manager-Pass-1', 'roles': '["pos_admin"]', 'is_admin': 0},
 }
 
 # Settings written to the e2e config.json before the server starts (the
@@ -72,6 +73,41 @@ def seed_item(server, name, quantity=0, sku=None, area='Retail', **fields):
              'quantity': quantity, 'location_area': area}
         f.update(fields)
         return inventory.create_item(conn, f, user='admin')
+
+
+def seed_settings(server, **values):
+    """Store settings in the e2e database through the settings service (the
+    server process picks the change up on its next request)."""
+    from app.services import db as db_module
+    from app.services import settings
+    old_path = db_module.DB_PATH
+    db_module.DB_PATH = server.db_path   # settings resolve the database from here outside Flask
+    try:
+        settings.set_many(values, user='admin')
+    finally:
+        db_module.DB_PATH = old_path
+        settings.invalidate()
+
+
+def seed_pos_item(server, name, price, quantity=10, sku=None):
+    """A sellable inventory item (sell price set). Returns (id, sku)."""
+    sku = sku or 'E2E-' + ''.join(ch for ch in name.upper() if ch.isalnum())[:20]
+    item_id = seed_item(server, name, quantity=quantity, sku=sku, sell_price=price)
+    return item_id, sku
+
+
+def item_quantity(server, item_id):
+    with db(server) as conn:
+        return conn.execute('SELECT quantity FROM inventory_items WHERE id = ?', (item_id,)).fetchone()[0]
+
+
+def order(server, order_number):
+    """(order row, [payment rows]) of a recorded sale."""
+    with db(server) as conn:
+        row = conn.execute('SELECT * FROM pos_orders WHERE order_number = ?', (order_number,)).fetchone()
+        payments = conn.execute('SELECT method, amount, tendered, change_given FROM pos_payments '
+                                'WHERE order_id = ? ORDER BY id', (row['id'],)).fetchall() if row else []
+        return row, [tuple(p) for p in payments]
 
 
 def package_status(server, tracking):
