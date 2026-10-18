@@ -204,6 +204,18 @@ def start_scheduler():
             id='eod_email',
             name='POS EOD Email'
         )
+
+        # Nightly backups for installs without rscp-backup.timer (legacy
+        # layout, or before the updater installed the timer); a no-op otherwise.
+        from app import backup as nightly_backup
+        if nightly_backup.app_scheduler_should_run():
+            scheduler.add_job(
+                nightly_backup.scheduler_job,
+                'interval',
+                minutes=15,
+                id='nightly_backup',
+                name='Nightly Backup'
+            )
         
         # Start scheduler
         scheduler.start()

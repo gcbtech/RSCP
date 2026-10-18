@@ -1,0 +1,49 @@
+# Nightly backup of the RSCP database, uploads and config.json
+# (app/backup.py). Started every 15 minutes by rscp-backup.timer; it backs up
+# only when one is due (Admin > Settings > Automatic Backups: enabled + time),
+# so the time set in the web UI applies without editing this unit.
+#
+#   files   /var/lib/rscp/backups/nightly/   (+ the off-box folder, if set)
+#   status  /var/lib/rscp/backups/nightly/status.json
+#   logs    journalctl -u rscp-backup
+#   by hand sudo systemctl start rscp-backup     (or, for an immediate backup:
+#           sudo -u rscp env RSCP_DATA_DIR=/var/lib/rscp /opt/rscp/current/venv/bin/python -m app.backup)
+#
+# Installed by install.sh; do not edit in place. The off-box folder is made
+# writable (for this unit only) by a drop-in that install.sh writes from the BACKUP_OFFSITE_DIR
+# setting: rscp-backup.service.d/offsite.conf (refresh it with
+# `sudo /opt/rscp/bin/rscp-update --backup-paths`).
+
+[Unit]
+Description=RSCP backup (runs when one is due)
+After=local-fs.target remote-fs.target
+
+[Service]
+Type=oneshot
+User=rscp
+Group=rscp
+UMask=0027
+Nice=10
+IOSchedulingClass=idle
+
+Environment=RSCP_DATA_DIR=/var/lib/rscp
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/default/rscp
+
+WorkingDirectory=/opt/rscp/current
+ExecStart=/opt/rscp/current/venv/bin/python -m app.backup --scheduled
+TimeoutStartSec=3600
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rscp-backup
+
+# Same hardening as rscp.service: writes only to the data directory (and the
+# off-box folder via the drop-in).
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rscp
+ProtectHome=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+LockPersonality=true

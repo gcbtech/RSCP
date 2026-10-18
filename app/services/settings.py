@@ -274,6 +274,38 @@ def _check_tax_rate(v):
     return round(v, 6)
 
 
+def _validate_backup_time(v):
+    v = _validate_hhmm(v)
+    if not v:
+        raise ValueError("use HH:MM (24-hour)")
+    return v
+
+
+def _validate_backup_dir(v):
+    # install.sh writes this path into a systemd drop-in (ReadWritePaths),
+    # so only plain absolute paths are accepted.
+    v = (v or '').strip()
+    if not v:
+        return ''
+    if not os.path.isabs(v):
+        raise ValueError("must be an absolute path, e.g. /mnt/nas/rscp-backups")
+    bad = set(' "\'$%;`') | ({'\\'} if os.sep == '/' else set())
+    if any(c in bad for c in v) or any(ord(c) < 32 or c.isspace() for c in v):
+        raise ValueError("may not contain spaces, quotes or special characters")
+    v = v.rstrip('/')
+    if os.sep == '/':
+        parts = v.split('/')
+        if len(parts) < 3 or '..' in parts or parts[1] in _SYSTEM_TOP_DIRS:
+            raise ValueError("pick a folder on the mounted share, e.g. /mnt/nas/rscp-backups")
+    return v
+
+
+# Top-level directories an off-box backup folder may not live in (the backup
+# service gets write access to that folder).
+_SYSTEM_TOP_DIRS = frozenset({'', 'bin', 'boot', 'dev', 'etc', 'home', 'lib', 'lib32', 'lib64', 'opt',
+                              'proc', 'root', 'run', 'sbin', 'sys', 'usr', 'var', 'tmp'})
+
+
 # --- the registry ------------------------------------------------------------
 # group -> (title, admin panel tab to return to)
 GROUPS = {
@@ -288,6 +320,7 @@ GROUPS = {
     'network': ('Reverse proxy', 'settings'),
     'timeclock': ('Timeclock', None),
     'api': ('Public API', 'settings'),
+    'backups': ('Backups', 'settings'),
 }
 
 S = Setting
@@ -411,6 +444,13 @@ SETTINGS = {
 
     # Public API
     'PUBLIC_API_KEY': S(str, '', 'api', 'Public API key', secret=True),
+
+    # Backups (app/backup.py; run by rscp-backup.timer)
+    'BACKUP_ENABLED': S(bool, True, 'backups', 'Automatic backups'),
+    'BACKUP_TIME': S(str, '02:30', 'backups', 'Backup time', validator=_validate_backup_time),
+    'BACKUP_KEEP_DAILY': S(int, 14, 'backups', 'Daily backups to keep', min=1, max=366),
+    'BACKUP_KEEP_WEEKLY': S(int, 8, 'backups', 'Weekly backups to keep', min=0, max=520),
+    'BACKUP_OFFSITE_DIR': S(str, '', 'backups', 'Off-box backup folder', validator=_validate_backup_dir),
 }
 del S
 for _k, _s in SETTINGS.items():

@@ -16,6 +16,7 @@
 #   /etc/default/rscp               optional environment (RSCP_BIND=host:port)
 #   rscp.service                    gunicorn as user rscp; logs in journald
 #   rscp-update.path/.service       applies update/rollback requests from the web UI
+#   rscp-backup.timer/.service      nightly backups to /var/lib/rscp/backups/nightly
 #
 # Options:
 #   --channel stable|beta   stable = newest GitHub release tag (default), beta = beta branch
@@ -29,6 +30,8 @@
 #   --migrate-from DIR      one-time move of a 2.x install (e.g. /opt/ebay_receiver)
 #   --legacy-unit NAME      systemd unit of that 2.x install (default: rscp)
 #   --from-request FILE     read action/channel from a web UI request (rscp-update.service)
+#   --backup-paths          only let rscp-backup.service write to the off-box backup
+#                           folder set in the web UI (run after changing that folder)
 #   -h, --help
 #
 # Re-running is safe: an existing install is upgraded (DB backed up first,
@@ -77,6 +80,7 @@ main() {
     BUILD_DIR=""
     STAGING_DIR=""
     STATUS_ENABLED=0
+    BACKUP_PATHS_ONLY=0
 
     setup_colors
     parse_args "$@"
@@ -86,6 +90,12 @@ main() {
     take_lock
     trap cleanup EXIT
     STATUS_ENABLED=1
+
+    if [ "$BACKUP_PATHS_ONLY" -eq 1 ]; then
+        write_backup_dropin
+        systemctl daemon-reload
+        exit 0
+    fi
 
     if [ -n "$REQUEST_FILE" ]; then
         read_request "$REQUEST_FILE" || exit 0
@@ -175,6 +185,7 @@ parse_args() {
             --from-request)   need_arg "$@"; REQUEST_FILE="$2"; shift 2 ;;
             --upgrade)        UPGRADE=1; NONINTERACTIVE=1; shift ;;
             --rollback)       ROLLBACK=1; NONINTERACTIVE=1; shift ;;
+            --backup-paths)   BACKUP_PATHS_ONLY=1; NONINTERACTIVE=1; shift ;;
             --noninteractive|--non-interactive|-y) NONINTERACTIVE=1; shift ;;
             -h|--help)        usage; exit 0 ;;
             *)                die "Unknown option: $1 (see --help)" ;;
@@ -649,7 +660,7 @@ health_url() {
 
 install_units() {  # install_units RELEASE_DIR
     local rel="$1" f changed=0
-    for f in rscp.service rscp-update.service rscp-update.path; do
+    for f in rscp.service rscp-update.service rscp-update.path rscp-backup.service rscp-backup.timer; do
         if [ -f "$rel/deploy/$f" ]; then
             if ! cmp -s "$rel/deploy/$f" "$UNIT_DIR/$f"; then
                 install -m 644 "$rel/deploy/$f" "$UNIT_DIR/$f"
@@ -661,6 +672,7 @@ install_units() {  # install_units RELEASE_DIR
         install -m 755 "$rel/install.sh" "$BIN_DIR/.rscp-update.new"
         mv -f "$BIN_DIR/.rscp-update.new" "$BIN_DIR/rscp-update"
     fi
+    write_backup_dropin
     systemctl daemon-reload
     [ "$changed" -eq 1 ] && info "Installed systemd units from $(basename "$rel")"
     return 0
@@ -669,6 +681,64 @@ install_units() {  # install_units RELEASE_DIR
 enable_units() {
     systemctl enable --quiet "$UNIT.service" rscp-update.path
     systemctl start rscp-update.path
+    if [ -f "$UNIT_DIR/rscp-backup.timer" ]; then
+        systemctl enable --now --quiet rscp-backup.timer
+    fi
+}
+
+# The off-box backup folder (BACKUP_OFFSITE_DIR, set in the web UI) must be
+# writable by rscp-backup.service, which otherwise sees a read-only system
+# (ProtectSystem=strict). Read the setting from the database and keep a
+# drop-in with ReadWritePaths= for that unit only (the web service never gets
+# it). Called on every install/upgrade, and alone via --backup-paths.
+write_backup_dropin() {
+    local dir="" top want="" dropin_dir="$UNIT_DIR/rscp-backup.service.d"
+    local dropin="$dropin_dir/offsite.conf"
+    if [ -f "$DATA_DIR/rscp.db" ] && id -u "$SERVICE_USER" >/dev/null 2>&1; then
+        # Exit 3 = could not read the setting: keep whatever grant exists.
+        if ! dir=$(as_rscp python3 -I - "$DATA_DIR/rscp.db" 2>/dev/null <<'PY'
+import json, sqlite3, sys
+try:
+    conn = sqlite3.connect(sys.argv[1], timeout=10)
+    row = conn.execute("SELECT value FROM settings WHERE key = 'BACKUP_OFFSITE_DIR'").fetchone()
+    value = json.loads(row[0]) if row else ""
+except Exception:
+    sys.exit(3)
+print(value if isinstance(value, str) else "")
+PY
+        ); then
+            warn "Could not read the off-box backup folder setting; leaving its systemd grant as it is."
+            return 0
+        fi
+    fi
+    dir="${dir%/}"
+    if [ -n "$dir" ]; then
+        top="${dir#/}"
+        top="${top%%/*}"
+        if ! [[ "$dir" =~ ^/[A-Za-z0-9._@+-]+/[A-Za-z0-9._@+/-]+$ ]] || [[ "$dir" == *..* ]]; then
+            warn "Off-box backup folder '$dir' is not a plain absolute path; not granting access."
+        else
+            case "$top" in
+                bin|boot|dev|etc|home|lib|lib32|lib64|opt|proc|root|run|sbin|sys|usr|var|tmp)
+                    warn "Off-box backup folder '$dir' is a system location; not granting access." ;;
+                *)
+                    want=$(printf '# Written by install.sh from the BACKUP_OFFSITE_DIR setting.\n# Regenerate after changing it: sudo /opt/rscp/bin/rscp-update --backup-paths\n[Service]\nReadWritePaths=-%s' "$dir") ;;
+            esac
+        fi
+    fi
+    if [ -n "$want" ]; then
+        if [ "$(cat "$dropin" 2>/dev/null)" != "$want" ]; then
+            install -d -m 755 "$dropin_dir"
+            printf '%s\n' "$want" >"$dropin"
+            chmod 644 "$dropin"
+            info "rscp-backup.service may now write to $dir"
+        fi
+    elif [ -f "$dropin" ]; then
+        rm -f "$dropin"
+        rmdir "$dropin_dir" 2>/dev/null || true
+        info "Removed the off-box backup folder grant"
+    fi
+    return 0
 }
 
 backup_db() {

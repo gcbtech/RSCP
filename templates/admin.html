@@ -1528,7 +1528,7 @@
                                         <form action="/admin/import_backup" method="POST" enctype="multipart/form-data">
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                             <input type="file" name="backup_file"
-                                                class="form-control form-control-sm mb-2" accept=".zip" required>
+                                                class="form-control form-control-sm mb-2" accept=".zip,.db" required>
                                             <button class="btn btn-outline-danger w-100 btn-sm"
                                                 type="submit">Restore</button>
                                             <div class="form-check mt-2">
@@ -1541,6 +1541,121 @@
                                         </form>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+
+                        <!-- Automatic Backups (app/backup.py) -->
+                        {% set bp = backup_panel or {} %}
+                        {% set bs = bp.status or {} %}
+                        {% set bset = bp.settings or {} %}
+                        {% set boff = bs.offsite or {} %}
+                        <div class="admin-card" id="backups-card">
+                            <div class="card-header">
+                                <div class="icon icon-backup">🗄️</div>
+                                <span>Automatic Backups</span>
+                            </div>
+                            <div class="card-body">
+                                {% if bp.warning %}
+                                <div class="alert alert-warning small py-2">{{ bp.warning }}</div>
+                                {% endif %}
+                                <div class="small mb-2">
+                                    {% if bp.running %}
+                                    <div class="text-primary fw-bold mb-1">A backup is running now…</div>
+                                    {% endif %}
+                                    <div><strong>Last run:</strong>
+                                        {% if bs.last_run %}
+                                        {{ bs.last_run|replace('T', ' ') }}
+                                        {% if bs.ok %}<span class="badge bg-success">OK</span>
+                                        {% else %}<span class="badge bg-danger">Failed</span>{% endif %}
+                                        {% else %}never{% endif %}
+                                    </div>
+                                    {% if bs.error %}<div class="text-danger">{{ bs.error }}</div>{% endif %}
+                                    <div><strong>Last success:</strong> {{ (bs.last_success or 'never')|replace('T', ' ') }}</div>
+                                    {% if bs.ok %}
+                                    <div><strong>Size:</strong> database {{ (bs.db_size or 0)|filesizeformat }},
+                                        uploads {{ (bs.uploads_size or 0)|filesizeformat }}</div>
+                                    {% endif %}
+                                    <div><strong>Location:</strong> <code>{{ bp.location }}</code></div>
+                                    <div><strong>Off-box copy:</strong>
+                                        {% if not bset.BACKUP_OFFSITE_DIR %}
+                                        <span class="text-warning">off: backups stay on this server's disk</span>
+                                        {% elif boff.ok %}
+                                        <span class="badge bg-success">OK</span> {{ (boff.last_success or '')|replace('T', ' ') }}
+                                        {% elif boff.pending %}
+                                        <span class="text-muted">pending (copied by the next scheduled check, within 15 minutes)</span>
+                                        {% elif boff.ok is sameas false %}
+                                        <span class="badge bg-danger">Failed</span>
+                                        <div class="text-danger">{{ boff.error }}</div>
+                                        {% else %}
+                                        <span class="text-muted">not run yet</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                <form action="/admin/backups/run" method="POST" class="mb-3">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button class="btn btn-outline-primary btn-sm w-100" type="submit"
+                                        {% if bp.running %}disabled{% endif %}>Run backup now</button>
+                                </form>
+                                <hr>
+                                <form action="{{ url_for('settings.save') }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="backups">
+                                    <div class="form-check form-switch mb-2">
+                                        <input type="hidden" name="BACKUP_ENABLED" value="false">
+                                        <input class="form-check-input" type="checkbox" name="BACKUP_ENABLED" value="true"
+                                            id="backupEnabled" {% if bset.BACKUP_ENABLED %}checked{% endif %}>
+                                        <label class="form-check-label small fw-bold" for="backupEnabled">Nightly backups</label>
+                                    </div>
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-4">
+                                            <label class="form-label small fw-bold">Time</label>
+                                            <input type="time" name="BACKUP_TIME" class="form-control form-control-sm"
+                                                value="{{ bset.BACKUP_TIME or '02:30' }}" required>
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="form-label small fw-bold">Keep daily</label>
+                                            <input type="number" name="BACKUP_KEEP_DAILY" class="form-control form-control-sm"
+                                                min="1" max="366" value="{{ bset.BACKUP_KEEP_DAILY }}">
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="form-label small fw-bold">Keep weekly</label>
+                                            <input type="number" name="BACKUP_KEEP_WEEKLY" class="form-control form-control-sm"
+                                                min="0" max="520" value="{{ bset.BACKUP_KEEP_WEEKLY }}">
+                                        </div>
+                                    </div>
+                                    <label class="form-label small fw-bold">Off-box folder (mounted NAS share)</label>
+                                    <input type="text" name="BACKUP_OFFSITE_DIR" class="form-control form-control-sm mb-1"
+                                        value="{{ bset.BACKUP_OFFSITE_DIR }}" placeholder="/mnt/nas/rscp-backups (empty = off)">
+                                    <div class="form-text small mb-2">
+                                        Each backup is also copied here. Mount the share first; after setting or
+                                        changing this folder run <code>sudo /opt/rscp/bin/rscp-update --backup-paths</code>
+                                        once so RSCP may write there.
+                                    </div>
+                                    <button class="btn btn-outline-primary btn-sm w-100" type="submit">Save</button>
+                                </form>
+                                {% if bp.backups %}
+                                <hr>
+                                <details>
+                                    <summary class="small fw-bold text-danger">Restore a nightly backup ({{ bp.backups|length }})</summary>
+                                    <table class="table table-sm small mt-2 mb-0">
+                                        {% for b in bp.backups %}
+                                        <tr>
+                                            <td>{{ b.when.strftime('%Y-%m-%d %H:%M') }}</td>
+                                            <td class="text-muted">{{ b.size|filesizeformat }}</td>
+                                            <td class="text-end">
+                                                <form action="/admin/backups/restore" method="POST" class="d-inline"
+                                                    data-msg="Replace ALL current data with the backup from {{ b.when.strftime('%Y-%m-%d %H:%M') }}? Everything entered since then is lost (a safety copy of the current database is kept). Everyone will be logged out."
+                                                    onsubmit="return confirm(this.dataset.msg)">
+                                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                                    <input type="hidden" name="name" value="{{ b.name }}">
+                                                    <button class="btn btn-outline-danger btn-sm py-0" type="submit">Restore</button>
+                                                </form>
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                    </table>
+                                </details>
+                                {% endif %}
                             </div>
                         </div>
 

@@ -1,0 +1,15 @@
+# Checks every 15 minutes whether a backup is due; rscp-backup.service backs
+# up once a day at the time set in Admin > Settings > Automatic Backups
+# (BACKUP_TIME, default 02:30). Persistent= catches up after downtime.
+
+[Unit]
+Description=RSCP backup check (every 15 minutes)
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=60
+Unit=rscp-backup.service
+
+[Install]
+WantedBy=timers.target
