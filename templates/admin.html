@@ -1339,6 +1339,76 @@
 
                                     <button class="btn btn-success w-100" type="submit">Save In-App Settings</button>
                                 </form>
+
+                                {% if alerts_panel %}
+                                {% set al = alerts_panel.settings %}
+                                <hr class="my-3">
+
+                                <!-- Email alerts (app/services/monitor.py, the "monitor" job) -->
+                                <form action="{{ url_for('settings.save') }}" method="POST" id="emailAlertsForm">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="notifications">
+
+                                    <div class="section-title">✉️ Email Alerts</div>
+                                    {% if alerts_panel.email_ready %}
+                                    <p class="small text-muted mb-2">
+                                        Sent to <strong>{{ alerts_panel.recipients }}</strong> through the POS email
+                                        (SMTP) settings. Each problem is mailed once, plus a mail when it is fixed.
+                                    </p>
+                                    {% else %}
+                                    <div class="alert alert-warning small py-2 mb-2">
+                                        Email is not set up, so no alerts are sent. Fill in the SMTP host and report
+                                        recipients under POS &gt; Email Automation (on this page) or in POS settings.
+                                    </div>
+                                    {% endif %}
+
+                                    <div class="form-check form-switch mb-2">
+                                        <input type="hidden" name="ALERT_JOB_FAILURES" value="false">
+                                        <input class="form-check-input" type="checkbox" name="ALERT_JOB_FAILURES" value="true"
+                                            id="alertJobFailures" {% if al.ALERT_JOB_FAILURES %}checked{% endif %}>
+                                        <label class="form-check-label" for="alertJobFailures">Scheduled job or backup failed
+                                            (or has not run for far too long)</label>
+                                    </div>
+
+                                    <div class="form-check form-switch mb-1">
+                                        <input type="hidden" name="ALERT_DISPLAY_OFFLINE" value="false">
+                                        <input class="form-check-input" type="checkbox" name="ALERT_DISPLAY_OFFLINE" value="true"
+                                            id="alertDisplayOffline" {% if al.ALERT_DISPLAY_OFFLINE %}checked{% endif %}>
+                                        <label class="form-check-label" for="alertDisplayOffline">Customer display stopped
+                                            checking in</label>
+                                    </div>
+                                    <div class="input-group input-group-sm mb-1">
+                                        <span class="input-group-text">after</span>
+                                        <input type="number" name="ALERT_DISPLAY_OFFLINE_MINUTES" class="form-control"
+                                            min="2" max="240" value="{{ al.ALERT_DISPLAY_OFFLINE_MINUTES }}">
+                                        <span class="input-group-text">minutes</span>
+                                    </div>
+                                    <div class="form-text small mb-2">Only while the store is open: {{ alerts_panel.store_hours }}.</div>
+
+                                    <label class="form-label small fw-bold mb-1" for="alertRecipients">Alert recipients</label>
+                                    <input type="text" name="ALERT_EMAIL_RECIPIENTS" id="alertRecipients"
+                                        class="form-control form-control-sm mb-1" value="{{ al.ALERT_EMAIL_RECIPIENTS }}"
+                                        placeholder="blank = the POS report recipients">
+                                    <div class="form-text small mb-2">Comma-separated email addresses.</div>
+
+                                    {% if alerts_panel.open %}
+                                    <div class="small mb-2">
+                                        <strong>Open alerts:</strong>
+                                        <ul class="mb-0 ps-3">
+                                            {% for a in alerts_panel.open %}
+                                            <li class="text-danger">{{ a.title }}
+                                                {%- if a.kind == 'display_offline' %} offline
+                                                {%- elif a.kind == 'job_stale' %} not running
+                                                {%- else %} failing{% endif %}
+                                                {%- if a.since %} <span class="text-muted">since {{ a.since }}</span>{% endif %}</li>
+                                            {% endfor %}
+                                        </ul>
+                                    </div>
+                                    {% endif %}
+
+                                    <button class="btn btn-primary w-100" type="submit">Save Email Alerts</button>
+                                </form>
+                                {% endif %}
                             </div>
                         </div>
 

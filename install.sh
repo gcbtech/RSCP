@@ -17,7 +17,7 @@
 #   rscp.service                    gunicorn as user rscp; logs in journald
 #   rscp-update.path/.service       applies update/rollback requests from the web UI
 #   rscp-backup.timer/.service      nightly backups to /var/lib/rscp/backups/nightly
-#   rscp-*.timer, rscp-job@.service package upkeep and EOD email jobs (python -m app.jobs)
+#   rscp-*.timer, rscp-job@.service package upkeep, EOD email, email alerts (python -m app.jobs)
 #
 # Options:
 #   --channel stable|beta   stable = newest GitHub release tag (default), beta = beta branch
@@ -674,10 +674,11 @@ health_url() {
 
 # Scheduled jobs (app/jobs.py): one templated service, one timer per job.
 JOB_UNITS="rscp-job@.service"
-JOB_TIMERS="rscp-package-maintenance.timer rscp-eod-email.timer"
+JOB_TIMERS="rscp-package-maintenance.timer rscp-eod-email.timer rscp-monitor.timer"
 
 install_units() {  # install_units RELEASE_DIR
     local rel="$1" f changed=0 self
+    drop_unshipped_timers "$rel"
     # An upgrade runs the OLD release's copy of this script, whose list of
     # units may predate units the new release ships. Let the new release's
     # installer do this step when it can (it knows its own units).
@@ -704,6 +705,25 @@ install_units() {  # install_units RELEASE_DIR
     systemctl daemon-reload
     sync_job_timers "$rel"
     [ "$changed" -eq 1 ] && info "Installed systemd units from $(basename "$rel")"
+    return 0
+}
+
+# Job timers this script knows but RELEASE_DIR does not ship (a rollback to
+# a release from before that job existed): stop and remove them up front,
+# since install_units may hand over to that release's installer, which does
+# not know them (left behind, they would start a job the code lacks).
+drop_unshipped_timers() {  # drop_unshipped_timers RELEASE_DIR
+    local rel="$1" f removed=0
+    # Without the job service at all, sync_job_timers removes every timer.
+    [ -f "$rel/deploy/rscp-job@.service" ] || return 0
+    for f in $JOB_TIMERS; do
+        if [ ! -f "$rel/deploy/$f" ] && [ -f "$UNIT_DIR/$f" ]; then
+            systemctl disable --now --quiet "$f" 2>/dev/null || true
+            rm -f "$UNIT_DIR/$f"
+            removed=1
+        fi
+    done
+    [ "$removed" -eq 1 ] && systemctl daemon-reload
     return 0
 }
 

@@ -38,6 +38,11 @@ PAIRING_CODE_TTL_MINUTES = 10
 # without the status badge flapping.
 CONNECTED_WINDOW_SECONDS = 15
 
+# last_seen is written at most this often per peripheral; polls in between
+# are pure reads (they don't even open a write transaction). Must stay well
+# under CONNECTED_WINDOW_SECONDS minus the slowest poll interval (5s).
+LAST_SEEN_WRITE_SECONDS = 4
+
 EMPTY_CART = {'items': [], 'discount_amount': 0, 'discount_type': None, 'discount_reason': ''}
 
 VALID_ROLES = ('display', 'scanner')
@@ -399,40 +404,58 @@ def ack_token_delivery(conn, peripheral_id, token):
 def resolve_peripheral(conn, token, touch=True):
     """Look up a peripheral by its bearer token. Returns the row or None.
 
-    When touch=True, refreshes last_seen (throttled to one write per few
-    seconds so 1.2s polling doesn't hammer the WAL).
+    When touch=True, refreshes last_seen, at most once per
+    LAST_SEEN_WRITE_SECONDS: the lookup itself says whether the stored value
+    is due, so the other ~2 of every 3 polls (1.2s polling) issue no UPDATE
+    and take no write lock at all.
     """
     if not token:
         return None
 
+    window = f'-{LAST_SEEN_WRITE_SECONDS} seconds'
     row = conn.execute(
         '''SELECT p.peripheral_id, p.register_id, p.role, p.friendly_name,
-                  r.friendly_name AS register_name
+                  r.friendly_name AS register_name,
+                  (p.last_seen IS NULL OR datetime(p.last_seen) < datetime('now', ?)) AS seen_due
            FROM pos_peripherals p
            LEFT JOIN pos_registers r ON r.register_id = p.register_id
            WHERE p.token_hash = ?''',
-        (hash_token(token),)
+        (window, hash_token(token))
     ).fetchone()
 
-    if row and touch:
+    if row and touch and row['seen_due']:
+        # The guard repeats the check: concurrent polls from other workers
+        # may have refreshed it meanwhile.
         conn.execute(
             '''UPDATE pos_peripherals SET last_seen = CURRENT_TIMESTAMP
                WHERE peripheral_id = ?
-                 AND (last_seen IS NULL OR datetime(last_seen) < datetime('now', '-4 seconds'))''',
-            (row['peripheral_id'],)
+                 AND (last_seen IS NULL OR datetime(last_seen) < datetime('now', ?))''',
+            (row['peripheral_id'], window)
         )
         conn.commit()
 
     return row
 
 
+def _utc_iso(value):
+    """SQLite CURRENT_TIMESTAMP text ('YYYY-MM-DD HH:MM:SS', UTC) -> ISO 8601
+    with a Z, so a browser parses it as UTC."""
+    if not value:
+        return None
+    return str(value).replace(' ', 'T')[:19] + 'Z'
+
+
 def list_peripherals(conn, register_id):
-    """All peripherals paired to a register, with live connection status."""
+    """All peripherals paired to a register, with live connection status.
+
+    seen_ago_s is computed here, from the server's clock, so the "last seen"
+    text is right even when the register's own clock is off."""
     rows = conn.execute(
         '''SELECT peripheral_id, role, friendly_name, paired_at, last_seen,
                   CASE WHEN last_seen IS NOT NULL
                         AND datetime(last_seen) >= datetime('now', ?)
-                       THEN 1 ELSE 0 END AS connected
+                       THEN 1 ELSE 0 END AS connected,
+                  CAST(strftime('%s', 'now') - strftime('%s', last_seen) AS INTEGER) AS seen_ago_s
            FROM pos_peripherals
            WHERE register_id = ?
            ORDER BY role, paired_at''',
@@ -446,6 +469,8 @@ def list_peripherals(conn, register_id):
             'friendly_name': r['friendly_name'] or ('Customer Display' if r['role'] == 'display' else 'Staff Scanner'),
             'connected': bool(r['connected']),
             'paired_at': r['paired_at'],
+            'last_seen': _utc_iso(r['last_seen']),
+            'seen_ago_s': None if r['seen_ago_s'] is None else max(0, r['seen_ago_s']),
         }
         for r in rows
     ]

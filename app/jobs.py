@@ -5,6 +5,7 @@ RSCP's periodic and one-shot maintenance jobs, runnable on their own.
     python -m app.jobs package-maintenance     # run one job now
     python -m app.jobs eod-email
     python -m app.jobs system-migrations
+    python -m app.jobs monitor                 # email alerts (app/services/monitor.py)
 
 Exit code 0 when the job succeeded or had nothing to do (including "another
 run of this job is still going"), 1 when it failed, 2 for a usage error.
@@ -214,6 +215,16 @@ def system_migrations(trigger):
     return '; '.join(parts) or 'nothing to do'
 
 
+def monitor(trigger):
+    """Email alerts (app/services/monitor.py): failed or stale jobs and
+    backups, customer displays gone quiet during store hours."""
+    from app.services import monitor as mon
+    try:
+        return mon.run_checks()
+    except mon.AlertSendError as e:
+        raise JobError(str(e))
+
+
 JOBS = {j.name: j for j in (
     Job('package-maintenance', 'Package status upkeep', package_maintenance,
         'every 15 minutes', timer='rscp-package-maintenance.timer'),
@@ -222,6 +233,9 @@ JOBS = {j.name: j for j in (
         timer='rscp-eod-email.timer'),
     Job('system-migrations', 'System migrations', system_migrations,
         'once per service start'),
+    Job('monitor', 'Email alerts', monitor,
+        'every 2 minutes (failed jobs/backups, quiet customer displays)',
+        timer='rscp-monitor.timer'),
 )}
 
 

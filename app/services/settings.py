@@ -301,6 +301,14 @@ def _validate_backup_dir(v):
     return v
 
 
+def _validate_email_list(v):
+    addrs = [a.strip() for a in (v or '').replace(';', ',').split(',') if a.strip()]
+    for a in addrs:
+        if not re.fullmatch(r'[^@\s,]+@[^@\s,]+', a):
+            raise ValueError(f'"{a}" is not an email address')
+    return ', '.join(addrs)
+
+
 def _validate_cf_team_domain(v):
     from app.services.cf_access import normalize_team_domain
     return normalize_team_domain(v)
@@ -427,6 +435,13 @@ SETTINGS = {
     'NOTIFY_OOS': S(bool, False, 'notifications', 'Out of stock alerts'),
     'NOTIFY_PRIORITY_PACKAGES': S(bool, False, 'notifications', 'Priority package arrivals'),
     'NOTIFY_NORMAL_PACKAGES': S(bool, False, 'notifications', 'Normal package arrivals'),
+    # Email alerts (app/services/monitor.py, the `monitor` job). They use the
+    # POS SMTP settings and do nothing until those are filled in.
+    'ALERT_EMAIL_RECIPIENTS': S(str, '', 'notifications', 'Alert recipients', validator=_validate_email_list),
+    'ALERT_JOB_FAILURES': S(bool, True, 'notifications', 'Email when a scheduled job or backup fails'),
+    'ALERT_DISPLAY_OFFLINE': S(bool, True, 'notifications', 'Email when a customer display goes quiet'),
+    'ALERT_DISPLAY_OFFLINE_MINUTES': S(int, 10, 'notifications', 'Customer display quiet for (minutes)',
+                                       min=2, max=240),
 
     # SSO
     'SSO_ENABLED': S(bool, False, 'sso', 'SSO'),

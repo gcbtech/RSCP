@@ -90,7 +90,7 @@ it again is safe: an existing install is upgraded.
 | `rscp.service` | gunicorn as the unprivileged `rscp` user with `RSCP_DATA_DIR=/var/lib/rscp`; runs `python -m app.migrate` (schema migrations) before starting |
 | `rscp-update.path` / `rscp-update.service` | applies update and rollback requests from the web UI |
 | `rscp-backup.timer` / `rscp-backup.service` | nightly backups to `/var/lib/rscp/backups/nightly` (see [Backups](#backups)) |
-| `rscp-package-maintenance.timer`, `rscp-eod-email.timer`, `rscp-job@.service` | package status upkeep and the end-of-day email (see [Scheduled jobs](#scheduled-jobs)) |
+| `rscp-package-maintenance.timer`, `rscp-eod-email.timer`, `rscp-monitor.timer`, `rscp-job@.service` | package status upkeep, the end-of-day email and email alerts (see [Scheduled jobs](#scheduled-jobs)) |
 | `/opt/rscp/bin/rscp-update` | installed copy of `install.sh`, used by the updater |
 
 The newest 5 releases are kept. Logs go to the journal only:
@@ -199,6 +199,7 @@ worker restart never stops it and each run's result is visible. Every job is
 |-------|-----|------|
 | `rscp-package-maintenance.timer` | `rscp-job@package-maintenance` | every 15 minutes: package statuses follow the calendar (on time, expected, past due), `AUTO_TRIM` |
 | `rscp-eod-email.timer` | `rscp-job@eod-email` | checks every 5 minutes; sends the POS end-of-day email once a day, at the first check at or after the time set in POS settings |
+| `rscp-monitor.timer` | `rscp-job@monitor` | every 2 minutes: email alerts (below) |
 | `rscp-backup.timer` | `rscp-backup` | see [Backups](#backups) |
 | (none) | `system-migrations` | `rscp.service` runs it before starting, after `app.migrate`: post-update system steps, once per start |
 
@@ -210,6 +211,16 @@ so it never goes out twice for one day: a failed send is retried at the next
 check, and an attempt that was cut off mid-send is reported, not repeated.
 **Admin > Logs > Scheduled jobs** shows each job's last run, result and last
 error.
+
+**Email alerts** (the `monitor` job; Admin > Settings > Notifications) use the
+POS SMTP settings and stay silent until those are filled in. They mail once
+when a job or the nightly backup fails (a reminder at most every 6 hours while
+it keeps failing) and once when it works again; once when a job has not
+succeeded for far too long (backup: 36 hours); and once when a paired customer
+display has not checked in for 10 minutes (configurable) while the store is
+open (Tuesday-Saturday 10:00-18:00 Denver time), plus a "back online" mail.
+Recipients default to the POS report recipients. The register's
+**Pair Devices** menu shows when each display and scanner last checked in.
 
 ```bash
 systemctl list-timers 'rscp-*'                    # next and last runs

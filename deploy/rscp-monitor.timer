@@ -1,0 +1,17 @@
+# Email alerts (app/services/monitor.py) every 2 minutes: failed or stale
+# jobs and backups, and customer displays that stopped checking in during
+# store hours. Each problem is mailed once (plus a recovery mail); the check
+# does nothing until email is set up in POS settings. Persistent= checks
+# right after downtime.
+
+[Unit]
+Description=RSCP email alerts check (every 2 minutes)
+
+[Timer]
+OnCalendar=*:0/2
+Persistent=true
+AccuracySec=15s
+Unit=rscp-job@monitor.service
+
+[Install]
+WantedBy=timers.target

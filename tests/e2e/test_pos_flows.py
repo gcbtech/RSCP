@@ -247,6 +247,12 @@ def test_paired_scanner_rings_into_open_register(cashier_page, new_page, e2e_ser
     expect(cart(register).locator('.cart-item', has_text='E2E Scanner Cable')).to_be_visible(timeout=15000)
     expect(cart(register)).to_contain_text('Checkout ($8.56)')
 
+    # Its device list shows the handheld online, with when it last checked in
+    register.click('#persistentDisplayBadge')
+    expect(register.locator('#peripheralList')).to_contain_text(re.compile(r'Online · seen \d+ s ago'))
+    register.keyboard.press('Escape')
+    expect(register.locator('#pairingMenuModal')).to_be_hidden()
+
     # ...and can sell it
     go_to_checkout(register)
     order_number = complete_sale(register)

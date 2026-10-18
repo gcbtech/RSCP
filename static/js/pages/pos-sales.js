@@ -633,6 +633,21 @@
     }
 
     // --- PAIRED DEVICES: status badge + modal list ---
+    // seen_ago_s comes from the server's clock (this register's may be off).
+    function formatSeenAgo(seconds) {
+        if (seconds == null) return null;
+        if (seconds < 60) return `${seconds} s ago`;
+        if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+        if (seconds < 86400) return `${Math.floor(seconds / 3600)} h ago`;
+        return `${Math.floor(seconds / 86400)} d ago`;
+    }
+
+    function peripheralStatus(p) {
+        const ago = formatSeenAgo(p.seen_ago_s);
+        if (p.connected) return `🟢 Online · seen ${ago || 'just now'}`;
+        return ago ? `⚪ Offline · last seen ${ago}` : '⚪ Offline · never connected';
+    }
+
     function renderPeripherals(peripherals) {
         const list = document.getElementById('peripheralList');
         if (list) {
@@ -645,7 +660,8 @@
                             <span>${p.role === 'display' ? '📺' : '🤳'}</span>
                             <div>
                                 <div class="small fw-semibold">${escapeHtml(p.friendly_name)}</div>
-                                <div class="text-muted" style="font-size: 0.7rem;">${p.connected ? '🟢 Connected' : '⚪ Offline'}</div>
+                                <div class="text-muted peripheral-status" style="font-size: 0.7rem;"
+                                     title="${p.last_seen ? escapeHtml('Last seen ' + new Date(p.last_seen).toLocaleString()) : ''}">${escapeHtml(peripheralStatus(p))}</div>
                             </div>
                         </div>
                         <button type="button" class="btn btn-outline-danger btn-sm" data-peripheral-id="${escapeHtml(p.peripheral_id)}" data-action="unpairPeripheral">Unpair</button>
