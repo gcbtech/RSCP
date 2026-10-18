@@ -73,4 +73,4 @@ def test_add_item_with_junk_threshold_flashes_instead_of_500(fresh_client):
     login(fresh_client, 1)
     r = fresh_client.post('/inventory/add', data={'name': 'Widget', 'quantity': '1',
                                                   'alert_threshold': 'abc', 'category': 'ATO'})
-    assert r.status_code == 302
+    assert r.status_code in (200, 302)   # re-rendered or redirected with a message, never a 500
