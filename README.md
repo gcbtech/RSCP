@@ -313,6 +313,48 @@ If the server should only be reachable through the tunnel, set
 When all access is over HTTPS, you can also turn on "HTTPS-only cookies"
 (Admin > Settings > Reverse Proxy / Tunnel; restart afterwards).
 
+### Cloudflare Access sign-in (optional)
+
+If the tunnel's hostname is protected by a Cloudflare Access application,
+RSCP can sign staff in from their Access login, so they don't log in twice.
+It is off by default. Cloudflare adds a signed token (`Cf-Access-Jwt-Assertion`)
+to every request it proxies. RSCP checks its RS256 signature against your
+team's public keys, plus its audience, issuer and expiry, then signs in the
+RSCP account whose **email** matches the token's email. Anyone can fake the
+header on the LAN, but not the signature.
+
+1. **Team domain:** Zero Trust dashboard > Settings > *Team name and domain*,
+   e.g. `yourteam.cloudflareaccess.com`.
+2. **AUD tag:** Zero Trust > Access > Applications > your RSCP application >
+   Configure > *Basic information* > "Application Audience (AUD) Tag" (a
+   64-character string).
+3. In RSCP, open **Admin > Settings > Cloudflare Access Sign-in**, enter both,
+   tick the switch and save. *Allowed email domains* is optional (when blank,
+   the SSO allowed domains apply if set; otherwise your Access policy decides).
+4. **Set each staff member's Workspace email on their RSCP account** (Admin >
+   Settings > user list > Edit > *Sign-in email*; SSO matches on the same
+   field). Matching uses that email only, never the username, and no
+   accounts are created automatically. An admin can't set another admin's
+   email; each admin sets their own. If someone has no linked account, they
+   get the normal login page with an explanation.
+5. Open Admin through the tunnel and press **Test this browser's Access
+   token**. It shows whether the request carried a valid token and which RSCP
+   user it maps to (the Test button works before you turn the switch on).
+
+**Logout:** the Access token is sent with every request, so without a pause
+the next page load would sign the user straight back in. After **Log out**,
+RSCP sets a `rscp_cf_logged_out` cookie that turns off automatic sign-in for
+that browser until the user signs in again (password, SSO or the login page's
+**Sign in with Cloudflare Access** button) or 12 hours pass. Logging out of
+RSCP doesn't end the Cloudflare session. To end that too (e.g. on a shared
+PC), visit `https://<your RSCP hostname>/cdn-cgi/access/logout`.
+
+The keys are fetched from `https://<team domain>/cdn-cgi/access/certs` (5 s
+timeout) and cached for an hour. A token signed with a new key ID triggers a
+refetch, at most every 30 seconds. Failures are logged with a reason, never
+the token. If RSCP can't verify a token, the user just sees the normal login
+page.
+
 ### Running from source (development)
 
 **Prerequisites:** Python 3.11+

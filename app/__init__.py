@@ -17,6 +17,9 @@ from app.services.data_manager import load_config, BASE_DIR
 from app import paths
 from app.services.migration import run_migrations
 from app.services.logger import log_exception, configure_logging
+# Imported eagerly so authlib.jose is loaded before anything (e.g. a test that
+# stubs out `authlib`) can shadow it.
+from app.services import cf_access  # noqa: F401
 
 def _template_config(conf):
     """Settings minus credentials, for templates. Secrets are the registry's
@@ -282,7 +285,24 @@ def create_app(test_config=None):
                 '/pos/api/customer-display/',
             )
 
-            if request.path in public_exact or request.path.startswith(public_prefixes):
+            is_public = request.path in public_exact or request.path.startswith(public_prefixes)
+
+            # Cloudflare Access: a verified Access JWT signs the matching user
+            # in before they would be sent to the login page. Tried on page
+            # loads only (GET/HEAD), on protected paths plus '/' and '/login'
+            # (where a tunnelled user lands); failures fall through to the
+            # normal flow. See app/services/cf_access.py.
+            if (request.method in ('GET', 'HEAD')
+                    and (not is_public or request.path in ('/', '/login'))
+                    and request.headers.get(cf_access.HEADER)
+                    and not current_user.is_authenticated):
+                from app.routes.auth import cf_access_login
+                if cf_access_login() and request.path == '/login':
+                    from app.utils.helpers import is_safe_redirect
+                    next_page = request.args.get('next')
+                    return redirect(next_page if is_safe_redirect(next_page) else url_for('main.index'))
+
+            if is_public:
                 return None
 
             # Check if user is authenticated

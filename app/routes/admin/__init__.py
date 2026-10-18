@@ -41,6 +41,7 @@ protect_blueprint(
         'admin.check_update', 'admin.perform_update', 'admin.release_info',
         'admin.rollback_update', 'admin.update_status',
         'admin.set_package_quantity', 'admin.set_package_sku', 'admin.set_tracking',
+        'admin.cf_access_test',
     },
     on_forbidden=_admin_required_page,
 )
@@ -62,6 +63,7 @@ from app.routes.admin import uploads
 from app.routes.admin import backup
 from app.routes.admin import logs
 from app.routes.admin import updates
+from app.routes.admin import cf_access
 
 # Re-export functions for backward compatibility (used by tests)
 from app.routes.admin.users import validate_password

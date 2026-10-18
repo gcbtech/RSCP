@@ -23,7 +23,8 @@ def load_users():
                 # mirror kept for rollback to pre-3.0 code.
                 "is_admin": 'super_admin' in roles,
                 "roles": roles,
-                "badge_id": r['badge_id'] if 'badge_id' in r.keys() else ''
+                "badge_id": r['badge_id'] if 'badge_id' in r.keys() else '',
+                "email": r['email'] if 'email' in r.keys() else None,
             }
         return users
     except Exception as e:
