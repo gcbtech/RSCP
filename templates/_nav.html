@@ -345,6 +345,27 @@
 <!-- Toast Notification Container -->
 <div id="toastContainer" class="position-fixed bottom-0 end-0 p-3" style="z-index: 1100;"></div>
 
+{% if backup_warning %}
+<!-- Stale-backup warning for admins (app/backup.py); dismissed until the browser session ends -->
+<div id="backupWarning" class="alert alert-warning alert-dismissible m-2 small" role="alert"
+    data-key="{{ backup_warning }}" style="display: none;">
+    <strong>Backups:</strong> {{ backup_warning }}
+    <a href="{{ url_for('admin.admin_panel', tab='settings') }}#backups-card" class="alert-link">Check backups</a>
+    <button type="button" class="btn-close" aria-label="Dismiss"></button>
+</div>
+<script>
+    (function () {
+        var el = document.getElementById('backupWarning'), key = 'rscp_backup_warning_dismissed';
+        try { if (sessionStorage.getItem(key) === el.dataset.key) return; } catch (e) { }
+        el.style.display = '';
+        el.querySelector('.btn-close').addEventListener('click', function () {
+            el.remove();
+            try { sessionStorage.setItem(key, el.dataset.key); } catch (e) { }
+        });
+    })();
+</script>
+{% endif %}
+
 <script>
     // Dark Mode Persistence
     (function () {

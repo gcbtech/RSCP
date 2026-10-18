@@ -88,6 +88,7 @@ it again is safe: an existing install is upgraded.
 | `/etc/default/rscp` | optional environment, e.g. `RSCP_BIND=127.0.0.1:5000` |
 | `rscp.service` | gunicorn as the unprivileged `rscp` user with `RSCP_DATA_DIR=/var/lib/rscp`; runs `python -m app.migrate` (schema migrations) before starting |
 | `rscp-update.path` / `rscp-update.service` | applies update and rollback requests from the web UI |
+| `rscp-backup.timer` / `rscp-backup.service` | nightly backups to `/var/lib/rscp/backups/nightly` (see [Backups](#backups)) |
 | `/opt/rscp/bin/rscp-update` | installed copy of `install.sh`, used by the updater |
 
 The newest 5 releases are kept. Logs go to the journal only:
@@ -96,6 +97,7 @@ The newest 5 releases are kept. Logs go to the journal only:
 systemctl status rscp
 journalctl -u rscp -f            # the app
 journalctl -u rscp-update        # updates and rollbacks
+journalctl -u rscp-backup        # nightly backups
 ```
 
 The unit templates live in [`deploy/`](deploy/). Don't edit
@@ -182,6 +184,102 @@ you're happy, remove the old directories yourself. Old 2.x DB backups in
 `<old data>/shared/backups` are not copied.
 
 Downtime is only the data copy plus one restart.
+
+### Backups
+
+RSCP backs itself up once a day (**Admin > Settings > Automatic Backups**).
+Each backup is two files in `/var/lib/rscp/backups/nightly/`:
+
+| File | Contents |
+|------|----------|
+| `rscp-YYYYmmdd-HHMMSS.db` | the database, copied with SQLite's online backup API and integrity-checked |
+| `uploads-YYYYmmdd-HHMMSS.tar.gz` | `uploads/` (item and package photos) plus `config.json` |
+
+`config.json` holds `SECRET_KEY`, which encrypts the stored SMTP password and
+webhook URLs. Treat the tarballs (and the off-box folder) as secrets.
+
+Files are written under a temporary name and renamed when complete. After
+each successful backup, old ones are pruned: the newest backup of each of the
+last **14 days** and of each of the last **8 weeks** is kept (both numbers are
+settings). Other files in the folder are left alone, including the updater's
+`pre-update-*.db` copies.
+
+**Schedule.** `rscp-backup.timer` starts `rscp-backup.service` every 15
+minutes. The service runs `python -m app.backup --scheduled`, which backs up
+only when no backup has succeeded since the last **backup time** (setting,
+default 02:30). The timer checks often instead of firing at a fixed time, so a
+time changed in the web UI applies at once, with no root step to rewrite the
+unit. A backup missed while the server was off runs at the next check. A failed
+run is retried after an hour. The card shows the last run, its sizes and any
+error, and **Run backup now** starts one right away. Admins see a banner when
+backups are on and none has succeeded for 36 hours.
+
+```bash
+systemctl list-timers rscp-backup        # next check
+journalctl -u rscp-backup                # backup log
+sudo -u rscp RSCP_DATA_DIR=/var/lib/rscp /opt/rscp/current/venv/bin/python -m app.backup   # back up now
+sudo -u rscp RSCP_DATA_DIR=/var/lib/rscp /opt/rscp/current/venv/bin/python -m app.backup --status
+```
+
+Installs without the timer (the 2.x layout, or a 3.0 install whose first
+in-app update ran an older updater) get the same nightly backup from the
+app's background scheduler. The next install or update adds the timer.
+
+**Off-box copy (recommended).** Local backups don't survive a dead disk. Mount
+a NAS share on the server, give the `rscp` user write access to a folder on
+it, enter that folder under **Off-box folder**, then run the updater once so
+the backup service may write there:
+
+```bash
+# e.g. SMB, in /etc/fstab (credentials file mode 600):
+# //nas/backups  /mnt/nas  cifs  credentials=/etc/rscp-nas.cred,uid=rscp,gid=rscp,file_mode=0640,dir_mode=0750,_netdev,nofail  0 0
+sudo mkdir -p /mnt/nas && sudo mount /mnt/nas && sudo -u rscp mkdir -p /mnt/nas/rscp-backups
+# set Admin > Settings > Automatic Backups > Off-box folder = /mnt/nas/rscp-backups, then:
+sudo /opt/rscp/bin/rscp-update --backup-paths
+```
+
+Why the extra step: `rscp-backup.service` runs with `ProtectSystem=strict`, so
+it can only write to `/var/lib/rscp`. `--backup-paths` (also run on every
+install and update) reads the setting from the database and writes the drop-in
+`/etc/systemd/system/rscp-backup.service.d/offsite.conf` with
+`ReadWritePaths=-<folder>`. Only the backup service gets this; the web service
+never writes to the share. For the same reason, after **Run backup now** the
+copy is made by the next timer check (within 15 minutes). The path must be
+plain (letters, digits, `._-@+/`, no spaces) and not under a system directory.
+
+After every local backup the new files are copied there and pruned with the
+same retention. A failed copy (share not mounted, full, read-only) is shown on
+the card and retried hourly. It never fails or deletes local backups. RSCP
+refuses to copy when the folder is missing or sits on the same disk as the
+local backups, which is what an unmounted mount point looks like, so it can't
+quietly fill the local disk.
+
+**Restore.**
+
+- *Database, same server:* **Automatic Backups > Restore a nightly backup**,
+  then choose the backup and confirm. It uses the same safe path as the ZIP
+  restore: the file is checked first (integrity, RSCP tables, at least one
+  user), the current database is saved to
+  `backups/pre-restore-<time>.db`, the backup is copied into the live
+  database through SQLite (safe while workers are running), and migrations
+  bring an older backup up to the current schema. Everyone is logged out.
+- *From the NAS or another machine:* upload the `rscp-*.db` file under
+  **Backup & Restore > Restore** (it accepts the export `.zip` or a nightly
+  `.db`), or copy it into `/var/lib/rscp/backups/nightly/` (owner `rscp`)
+  and it appears in the list.
+- *Uploads and config.json* are restored by hand:
+
+  ```bash
+  sudo systemctl stop rscp
+  sudo -u rscp tar -xzf uploads-YYYYmmdd-HHMMSS.tar.gz -C /var/lib/rscp uploads   # photos
+  # config.json only when rebuilding a server (keeps encrypted settings readable):
+  sudo -u rscp tar -xzf uploads-YYYYmmdd-HHMMSS.tar.gz -C /var/lib/rscp config.json
+  sudo systemctl start rscp
+  ```
+- *New server after a disk failure:* install RSCP and finish the setup
+  wizard, then restore `config.json` and `uploads/` as above (stop, extract,
+  start). Log in again with the wizard's admin and restore the `.db` from the
+  web UI.
 
 ### Cloudflare Tunnel / reverse proxy
 

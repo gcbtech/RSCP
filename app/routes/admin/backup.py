@@ -73,9 +73,12 @@ def import_backup():
     """Import system backup from ZIP file."""
     file = request.files.get('backup_file')
     force_restore = request.form.get('force_restore') == 'true'
-    
+
+    if file and file.filename.lower().endswith('.db'):
+        return _restore_uploaded_db(file)
+
     if not file or not file.filename.endswith('.zip'):
-        flash("Please select a valid .zip backup file.")
+        flash("Please select a .zip backup file or a nightly .db backup.")
         return redirect(url_for('admin.admin_panel'))
     
     try:
@@ -245,3 +248,121 @@ def _atomic_replace(target, data):
         if os.path.exists(tmp):
             os.remove(tmp)
         raise
+
+
+# --- automatic backups (app/backup.py) ----------------------------------------
+
+_RUN_THREAD = None  # the last "Run backup now" thread (tests join it)
+
+
+def _restore_from_db_file(path, source_label):
+    """Validate `path` and restore it through the safe online-backup path."""
+    problem = _check_backup_db(path)
+    if problem:
+        flash(f"Restore refused: {problem}")
+        return redirect(url_for('admin.admin_panel', tab='settings'))
+    try:
+        safety_copy = _restore_database(path)
+    except Exception as e:
+        logger.exception("Restore failed")
+        flash(f"Restore failed: {e}")
+        return redirect(url_for('admin.admin_panel', tab='settings'))
+    logger.info(f"Database restored from {source_label}; previous copy saved to {safety_copy}")
+    flash(f"✅ Database restored from {source_label}. A copy of the previous database was kept "
+          "in the backups folder. Please log in again.")
+    session.clear()
+    return redirect(url_for('admin.admin_panel'))
+
+
+def _restore_uploaded_db(file):
+    """Restore an uploaded nightly .db backup (e.g. copied back from the NAS)."""
+    import tempfile
+    fd, tmp = tempfile.mkstemp(suffix='.db')
+    os.close(fd)
+    try:
+        file.save(tmp)
+        return _restore_from_db_file(tmp, f"uploaded file {os.path.basename(file.filename)}")
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+@admin_bp.route('/backups/run', methods=['POST'])
+def run_backup_now():
+    """Start a backup in a background thread (one at a time)."""
+    global _RUN_THREAD
+    import threading
+    from app import backup as backups
+    from app.services import db as _db
+
+    root = backups.nightly_dir()
+    if backups.is_running(root):
+        flash("A backup is already running.", "warning")
+        return redirect(url_for('admin.admin_panel', tab='settings'))
+
+    kwargs = dict(db_path=current_app.config.get('DATABASE') or _db.DB_PATH,
+                  root=root, settings=backups.load_settings(), trigger='manual',
+                  # Under systemd only rscp-backup.service may write off-box;
+                  # its next timer run (within 15 min) makes the copy.
+                  defer_offsite=not backups.app_scheduler_should_run())
+
+    def work():
+        try:
+            backups.run_backup(**kwargs)
+        except backups.BackupBusy:
+            logger.info("[Backup] Manual run skipped: another backup is running")
+        except Exception:
+            logger.exception("[Backup] Manual run failed")
+
+    _RUN_THREAD = threading.Thread(target=work, name='ManualBackup', daemon=True)
+    _RUN_THREAD.start()
+    logger.info("[Backup] Manual backup started")
+    flash("Backup started. Refresh this page in a minute to see the result.", "success")
+    return redirect(url_for('admin.admin_panel', tab='settings'))
+
+
+@admin_bp.route('/backups/restore', methods=['POST'])
+def restore_nightly_backup():
+    """Restore one of the local nightly database backups."""
+    from app import backup as backups
+    name = request.form.get('name', '')
+    path = backups.db_backup_path(name)
+    if not path:
+        flash("Restore refused: that backup does not exist.")
+        return redirect(url_for('admin.admin_panel', tab='settings'))
+    return _restore_from_db_file(path, f"nightly backup {name}")
+
+
+@admin_bp.app_context_processor
+def _backup_template_context():
+    """backup_warning for admins on every page (cheap: cached status read);
+    backup_panel only on the admin panel."""
+    from flask import has_request_context
+    if not has_request_context():
+        return {}
+    from flask_login import current_user
+    from app.utils.permissions import has_permission
+    try:
+        if not has_permission(current_user, 'admin.manage'):
+            return {}
+    except Exception:
+        return {}
+    from app import backup as backups
+    ctx = {}
+    try:
+        ctx['backup_warning'] = backups.cached_warning()
+    except Exception as e:
+        logger.debug(f"[Backup] warning check failed: {e}")
+    if request.endpoint == 'admin.admin_panel':
+        try:
+            ctx['backup_panel'] = {
+                'settings': backups.load_settings(),
+                'status': backups.read_status(),
+                'location': backups.nightly_dir(),
+                'backups': backups.list_db_backups()[:30],
+                'running': backups.is_running(),
+                'warning': ctx.get('backup_warning'),
+            }
+        except Exception as e:
+            logger.warning(f"[Backup] Could not load backup status: {e}")
+    return ctx
