@@ -168,24 +168,24 @@
                         data-line-discount="{{ item.discount_amount or 0 }}" data-line-discount-type="{{ item.discount_type or '' }}">
                         <input type="hidden" name="item_id" value="{{ item.id }}">
                         <div class="item-name-col">
-                            <input type="text" name="item_name" value="{{ item.name }}" oninput="recalculate()">
+                            <input type="text" name="item_name" value="{{ item.name }}" data-input="recalculate">
                             <div class="item-sku">{{ item.sku }}</div>
                             <input type="hidden" name="item_sku" value="{{ item.sku }}">
                         </div>
                         <div class="item-qty-col">
                             <input type="number" name="item_quantity" value="{{ item.quantity }}" min="1"
-                                oninput="recalculate()">
+                                data-input="recalculate">
                         </div>
                         <div class="item-price-col">
                             <input type="number" name="item_price" value="{{ '%.2f'|format(item.unit_price) }}"
-                                step="0.01" min="0" oninput="recalculate()">
+                                step="0.01" min="0" data-input="recalculate">
                         </div>
                         <div class="item-total-col" id="line-total-{{ item.id }}">
                             ${{ "%.2f"|format(item.line_total) }}
                         </div>
                         <div class="item-action-col">
                             <button type="button" class="btn btn-sm btn-outline-danger"
-                                onclick="removeItem({{ item.id }})" title="Remove Item">🗑️</button>
+                                data-action="removeItem" data-item-id="{{ item.id }}" title="Remove Item">🗑️</button>
                         </div>
                     </div>
                     {% endfor %}
@@ -244,7 +244,7 @@
             <div class="d-flex gap-2 mb-5">
                 <a href="{{ url_for('pos.sales_history') }}" class="btn btn-outline-secondary flex-grow-1">Cancel</a>
                 <button type="submit" class="btn btn-warning flex-grow-1 fw-bold"
-                    onclick="return confirm('Save changes to this sale? Inventory will be adjusted automatically.')">
+                    data-confirm="Save changes to this sale? Inventory will be adjusted automatically.">
                     💾 Save Changes
                 </button>
             </div>
@@ -252,78 +252,10 @@
     </div>
 {% endblock %}
 
+{% block page_data %}
+    <script type="application/json" id="page-data">{{ {'taxRatePercent': tax_rate|float, 'adjustments': adjustments}|tojson }}</script>
+{% endblock %}
+
 {% block scripts %}
-    <script>
-        const taxRatePercent = {{ tax_rate }};
-        const taxRate = taxRatePercent / 100;
-        // The sale's own adjustments (see _sale_adjustments in management.py)
-        const adj = {{ adjustments|tojson }};
-
-        function recalculate() {
-            let subtotal = 0;
-            const rows = document.querySelectorAll('.item-row:not(.deleted)');
-
-            rows.forEach(row => {
-                const qty = parseInt(row.querySelector('input[name="item_quantity"]').value) || 0;
-                const price = parseFloat(row.querySelector('input[name="item_price"]').value) || 0;
-                let lineTotal = qty * price;
-                const lineDisc = parseFloat(row.dataset.lineDiscount) || 0;
-                if (lineDisc > 0) {
-                    lineTotal -= row.dataset.lineDiscountType === 'percent' ? lineTotal * lineDisc / 100 : lineDisc;
-                }
-                lineTotal = Math.round(Math.max(0, lineTotal) * 100) / 100;
-                subtotal += lineTotal;
-
-                const id = row.dataset.itemId;
-                const lineTotalEl = document.getElementById('line-total-' + id);
-                if (lineTotalEl) {
-                    lineTotalEl.textContent = '$' + lineTotal.toFixed(2);
-                }
-            });
-
-            // Same re-pricing as the server (_reprice_sale)
-            subtotal = Math.round(subtotal * 100) / 100;
-            const discount = adj.discount_pct !== null
-                ? Math.round(subtotal * adj.discount_pct * 100) / 100
-                : Math.min(adj.discount_fixed, subtotal);
-            const afterDiscount = Math.max(0, subtotal - discount);
-            const afterCoupon = Math.max(0, afterDiscount - Math.min(adj.coupon, afterDiscount));
-            const tax = Math.round(afterCoupon * adj.tax_rate * 100) / 100;
-            const total = Math.round(Math.max(0, afterCoupon + tax - adj.cash_discount) * 100) / 100;
-
-            document.getElementById('editSubtotal').textContent = '$' + subtotal.toFixed(2);
-            document.getElementById('editTax').textContent = '$' + tax.toFixed(2);
-            document.getElementById('editTotal').textContent = '$' + total.toFixed(2);
-        }
-
-        function removeItem(itemId) {
-            const row = document.getElementById('item-row-' + itemId);
-            if (!row) return;
-
-            if (!confirm('Remove this item from the sale? Inventory will be restored.')) return;
-
-            row.classList.add('deleted');
-            // Remove the hidden item_id input so form doesn't submit this item
-            const hiddenId = row.querySelector('input[name="item_id"]');
-            if (hiddenId) hiddenId.remove();
-            const nameInput = row.querySelector('input[name="item_name"]');
-            if (nameInput) nameInput.remove();
-            const qtyInput = row.querySelector('input[name="item_quantity"]');
-            if (qtyInput) qtyInput.remove();
-            const priceInput = row.querySelector('input[name="item_price"]');
-            if (priceInput) priceInput.remove();
-            const skuInput = row.querySelector('input[name="item_sku"]');
-            if (skuInput) skuInput.remove();
-
-            // Add hidden input for deleted item
-            const container = document.getElementById('deletedItemsContainer');
-            const hidden = document.createElement('input');
-            hidden.type = 'hidden';
-            hidden.name = 'deleted_items';
-            hidden.value = itemId;
-            container.appendChild(hidden);
-
-            recalculate();
-        }
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/pos-edit-sale.js') }}"></script>
 {% endblock %}

@@ -342,7 +342,7 @@
                 {% endif %}
 
                 <div class="receipt-actions no-print">
-                    <button onclick="window.print()" class="btn btn-outline-primary">🖨️ Print</button>
+                    <button data-action="printPage" class="btn btn-outline-primary">🖨️ Print</button>
                     <a href="{{ url_for('pos.receipt_print', order_number=order.order_number) }}" target="_blank"
                         class="btn btn-outline-secondary">📄 Printable View</a>
                     <a href="{{ url_for('pos.sales') }}" class="btn btn-success">New Sale →</a>
@@ -354,7 +354,7 @@
                         <div class="dropdown-menu dropdown-menu-end p-3" style="min-width: 280px;">
                             <form action="{{ url_for('pos.delete_order', order_number=order.order_number) }}"
                                 method="POST"
-                                onsubmit="return confirm('⚠️ PERMANENTLY DELETE this order?\n\nThis action cannot be undone.');">
+                                data-confirm="⚠️ PERMANENTLY DELETE this order?&#10;&#10;This action cannot be undone.">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <div class="form-check mb-3">
                                     <input class="form-check-input" type="checkbox" name="restore_inventory"
@@ -376,66 +376,5 @@
 {% endblock %}
 
 {% block scripts %}
-    <script>
-        (function () {
-            const urlParams = new URLSearchParams(window.location.search);
-            const shouldAutoPrint = urlParams.get('auto_print') === '1';
-            const shouldOpenDrawer = urlParams.get('open_drawer') === '1';
-
-            // Clean up URL (remove query params) to prevent re-triggering on refresh
-            if (shouldAutoPrint || shouldOpenDrawer) {
-                const cleanUrl = window.location.pathname;
-                window.history.replaceState({}, document.title, cleanUrl);
-            }
-
-            // Open cash drawer if requested
-            if (shouldOpenDrawer) {
-                // ELECTRON DESKTOP APP MODE
-                if (window.rscp) {
-                    const savedPort = localStorage.getItem('pos_cash_drawer_port');
-                    // Default to HPCDPORT-1 if they haven't set it explicitly yet, as that's our target
-                    const port = savedPort || 'HPCDPORT-1';
-
-                    console.log(`Triggering Drawer (Electron) on port: ${port}`);
-                    // Fire and forget - no popup wanted
-                    window.rscp.openDrawer(port).catch(err => console.error('Electron Drawer Error:', err));
-                }
-                // WEB BROWSER MODE
-                else {
-                    fetch('/pos/hardware/open_drawer', {
-                        method: 'POST', headers: { 'X-CSRFToken': '{{ csrf_token() }}' },
-                        credentials: 'same-origin'
-                    })
-                        .then(response => response.json())
-                        .then(data => {
-                            if (!data.success) {
-                                console.warn('Cash drawer failed:', data.message);
-                            }
-                        })
-                        .catch(err => console.error('Drawer error:', err));
-                }
-            }
-
-            // Auto-print if requested
-            if (shouldAutoPrint) {
-                // Small delay to ensure page is fully rendered
-                setTimeout(function () {
-                    // Open printable view in new window
-                    const printUrl = window.location.pathname + '/print';
-                    const printWindow = window.open(printUrl, '_blank', 'width=400,height=600');
-
-                    if (printWindow) {
-                        // Wait for the print window to load, then print
-                        printWindow.onload = function () {
-                            printWindow.print();
-                            // Close after a brief delay to allow print dialog to appear
-                            setTimeout(function () {
-                                printWindow.close();
-                            }, 500);
-                        };
-                    }
-                }, 300);
-            }
-        })();
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/pos-receipt.js') }}"></script>
 {% endblock %}

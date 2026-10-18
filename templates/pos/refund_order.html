@@ -130,8 +130,7 @@
                                     Partial Refund (Selected Items)
                                 </button>
                                 <button type="submit" name="refund_type" value="full" class="btn btn-danger"
-                                    onclick="return confirm('Process FULL refund of ${{ " %.2f"|format(order.total)
-                                    }}?')">
+                                    data-confirm="Process FULL refund of ${{ ' %.2f'|format(order.total) }}?">
                                     Full Refund
                                 </button>
                             </div>

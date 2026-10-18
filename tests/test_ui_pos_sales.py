@@ -83,9 +83,9 @@ def test_sales_page(fresh_client):
     html = _page(login(fresh_client, 2), '/pos/')
     _assert_layout(html, 'id="posCartContainer"')
     assert 'id="flashMessagesContainer"' in html
-    # Scripts run after the nav (rscpPoll) and the Bootstrap bundle
-    assert html.index(NAV_MARKER) < html.index('rscpPoll(pollRegisterCart')
-    assert html.index(BOOTSTRAP_JS) < html.index('function getTerminalId')
+    # Page script (static/js/pages/pos-sales.js) runs after the nav (rscpPoll) and the Bootstrap bundle
+    assert html.index(NAV_MARKER) < html.index('js/pages/pos-sales.js')
+    assert html.index(BOOTSTRAP_JS) < html.index('js/pages/pos-sales.js')
 
 
 def test_checkout_page(fresh_app, fresh_client):
@@ -138,7 +138,8 @@ def test_receipt_page(fresh_client, order):
 
 def test_receipt_print_stays_standalone(fresh_client, order):
     html = _page(login(fresh_client, 2), f'/pos/receipt/{order[1]}/print')
-    _assert_layout(html, 'window.print()', bootstrap=False, nav=False, bootstrap_js=False)
+    # window.print() runs from static/js/pages/pos-receipt-print.js
+    _assert_layout(html, 'js/pages/pos-receipt-print.js', bootstrap=False, nav=False, bootstrap_js=False)
 
 
 def test_receipt_preview_stays_standalone(fresh_app, fresh_client):

@@ -172,18 +172,18 @@
             </div>
 
             <div class="pin-pad">
-                <button type="button" class="pin-btn" onclick="addDigit('1')">1</button>
-                <button type="button" class="pin-btn" onclick="addDigit('2')">2</button>
-                <button type="button" class="pin-btn" onclick="addDigit('3')">3</button>
-                <button type="button" class="pin-btn" onclick="addDigit('4')">4</button>
-                <button type="button" class="pin-btn" onclick="addDigit('5')">5</button>
-                <button type="button" class="pin-btn" onclick="addDigit('6')">6</button>
-                <button type="button" class="pin-btn" onclick="addDigit('7')">7</button>
-                <button type="button" class="pin-btn" onclick="addDigit('8')">8</button>
-                <button type="button" class="pin-btn" onclick="addDigit('9')">9</button>
-                <button type="button" class="pin-btn clear" onclick="clearPin()">C</button>
-                <button type="button" class="pin-btn" onclick="addDigit('0')">0</button>
-                <button type="button" class="pin-btn action" onclick="submitPin()">✓</button>
+                <button type="button" class="pin-btn" data-action="addDigit" data-digit="1">1</button>
+                <button type="button" class="pin-btn" data-action="addDigit" data-digit="2">2</button>
+                <button type="button" class="pin-btn" data-action="addDigit" data-digit="3">3</button>
+                <button type="button" class="pin-btn" data-action="addDigit" data-digit="4">4</button>
+                <button type="button" class="pin-btn" data-action="addDigit" data-digit="5">5</button>
+                <button type="button" class="pin-btn" data-action="addDigit" data-digit="6">6</button>
+                <button type="button" class="pin-btn" data-action="addDigit" data-digit="7">7</button>
+                <button type="button" class="pin-btn" data-action="addDigit" data-digit="8">8</button>
+                <button type="button" class="pin-btn" data-action="addDigit" data-digit="9">9</button>
+                <button type="button" class="pin-btn clear" data-action="clearPin">C</button>
+                <button type="button" class="pin-btn" data-action="addDigit" data-digit="0">0</button>
+                <button type="button" class="pin-btn action" data-action="submitPin">✓</button>
             </div>
 
             <div class="divider"><span>or scan badge</span></div>
@@ -197,42 +197,5 @@
 {% endblock %}
 
 {% block scripts %}
-    <script>
-        function addDigit(digit) {
-            const pinInput = document.getElementById('pinInput');
-            if (pinInput.value.length < 6) {
-                pinInput.value += digit;
-            }
-        }
-
-        function clearPin() {
-            document.getElementById('pinInput').value = '';
-        }
-
-        function submitPin() {
-            const pin = document.getElementById('pinInput').value;
-            if (pin.length >= 4) {
-                document.getElementById('unlockForm').submit();
-            }
-        }
-
-        // Auto-submit on badge scan (enter key)
-        document.getElementById('badgeInput').addEventListener('keypress', function (e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                document.getElementById('unlockForm').submit();
-            }
-        });
-
-        // Submit PIN on Enter key
-        document.getElementById('pinInput').addEventListener('keypress', function (e) {
-            if (e.key === 'Enter') {
-                e.preventDefault();
-                submitPin();
-            }
-        });
-
-        // Focus PIN input on load
-        document.getElementById('pinInput').focus();
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/pos-lock-screen.js') }}"></script>
 {% endblock %}

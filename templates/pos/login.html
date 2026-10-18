@@ -167,9 +167,9 @@
         {% endwith %}
 
         <div class="login-tabs">
-            <button class="login-tab active" onclick="showLogin('badge')">🪪 Badge</button>
-            <button class="login-tab" onclick="showLogin('pin')">🔢 PIN</button>
-            <button class="login-tab" onclick="showLogin('password')">🔑 Password</button>
+            <button class="login-tab active" data-action="showLogin" data-type="badge">🪪 Badge</button>
+            <button class="login-tab" data-action="showLogin" data-type="pin">🔢 PIN</button>
+            <button class="login-tab" data-action="showLogin" data-type="password">🔑 Password</button>
         </div>
 
         <!-- Badge Login -->
@@ -178,11 +178,11 @@
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <input type="hidden" name="login_type" value="badge">
 
-                <div class="badge-scan" onclick="document.getElementById('badgeInput').focus()">
+                <div class="badge-scan" data-action="focusBadgeInput">
                     <div class="icon">📷</div>
                     <p class="text-muted">Scan your employee badge</p>
                     <input type="text" name="badge_id" id="badgeInput" autofocus
-                        onkeydown="if(event.key==='Enter'){this.form.submit();}">
+                        data-keydown="submitOnEnter">
                 </div>
                 <p class="text-center text-muted small">Badge scanner should be focused on this page</p>
             </form>
@@ -206,18 +206,18 @@
                 </div>
 
                 <div class="numpad">
-                    <button type="button" class="numpad-btn" onclick="addDigit(1)">1</button>
-                    <button type="button" class="numpad-btn" onclick="addDigit(2)">2</button>
-                    <button type="button" class="numpad-btn" onclick="addDigit(3)">3</button>
-                    <button type="button" class="numpad-btn" onclick="addDigit(4)">4</button>
-                    <button type="button" class="numpad-btn" onclick="addDigit(5)">5</button>
-                    <button type="button" class="numpad-btn" onclick="addDigit(6)">6</button>
-                    <button type="button" class="numpad-btn" onclick="addDigit(7)">7</button>
-                    <button type="button" class="numpad-btn" onclick="addDigit(8)">8</button>
-                    <button type="button" class="numpad-btn" onclick="addDigit(9)">9</button>
-                    <button type="button" class="numpad-btn clear" onclick="clearPin()">C</button>
-                    <button type="button" class="numpad-btn" onclick="addDigit(0)">0</button>
-                    <button type="button" class="numpad-btn" onclick="backspace()">←</button>
+                    <button type="button" class="numpad-btn" data-action="addDigit" data-digit="1">1</button>
+                    <button type="button" class="numpad-btn" data-action="addDigit" data-digit="2">2</button>
+                    <button type="button" class="numpad-btn" data-action="addDigit" data-digit="3">3</button>
+                    <button type="button" class="numpad-btn" data-action="addDigit" data-digit="4">4</button>
+                    <button type="button" class="numpad-btn" data-action="addDigit" data-digit="5">5</button>
+                    <button type="button" class="numpad-btn" data-action="addDigit" data-digit="6">6</button>
+                    <button type="button" class="numpad-btn" data-action="addDigit" data-digit="7">7</button>
+                    <button type="button" class="numpad-btn" data-action="addDigit" data-digit="8">8</button>
+                    <button type="button" class="numpad-btn" data-action="addDigit" data-digit="9">9</button>
+                    <button type="button" class="numpad-btn clear" data-action="clearPin">C</button>
+                    <button type="button" class="numpad-btn" data-action="addDigit" data-digit="0">0</button>
+                    <button type="button" class="numpad-btn" data-action="backspace">←</button>
                 </div>
 
                 <button type="submit" class="login-btn">Login</button>
@@ -251,34 +251,5 @@
 {% endblock %}
 
 {% block scripts %}
-    <script>
-        function showLogin(type) {
-            document.querySelectorAll('.login-tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.login-content').forEach(c => c.classList.remove('active'));
-
-            event.target.classList.add('active');
-            document.getElementById(type + '-login').classList.add('active');
-
-            // Focus appropriate input
-            if (type === 'badge') {
-                document.getElementById('badgeInput').focus();
-            }
-        }
-
-        function addDigit(d) {
-            const pin = document.getElementById('pinInput');
-            if (pin.value.length < 6) {
-                pin.value += d;
-            }
-        }
-
-        function clearPin() {
-            document.getElementById('pinInput').value = '';
-        }
-
-        function backspace() {
-            const pin = document.getElementById('pinInput');
-            pin.value = pin.value.slice(0, -1);
-        }
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/pos-login.js') }}"></script>
 {% endblock %}
