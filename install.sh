@@ -144,6 +144,7 @@ print(json.dumps({"status": state, "progress": progress, "error": error or None,
                   "action": action, "updated_at": int(time.time())}))
 PY
     then
+        # shellcheck disable=SC2015  # rm is the cleanup for a failed chmod/mv; that is the intent
         chmod 644 "$tmp" && mv -f "$tmp" "$STATUS_FILE" || rm -f "$tmp"
     else
         rm -f "$tmp"
@@ -286,7 +287,9 @@ PY
 check_os() {
     [ -r /etc/os-release ] || die "Cannot detect the OS (/etc/os-release missing). Debian or Ubuntu required."
     local id like
+    # shellcheck source=/dev/null  # the target system's file, not part of this repo
     id=$(. /etc/os-release && echo "${ID:-}")
+    # shellcheck source=/dev/null
     like=$(. /etc/os-release && echo "${ID_LIKE:-}")
     case " $id $like " in
         *" debian "*|*" ubuntu "*) ;;
@@ -1062,6 +1065,7 @@ run_rollback() {
         target=$(readlink -f "$PREVIOUS")
     fi
     if [ -z "$target" ] || [ ! -d "$target" ] || [ "$target" = "$cur" ]; then
+        # shellcheck disable=SC2012  # need newest-first by mtime; release dir names are plain versions
         target=$(ls -1dt "$RELEASES"/*/ 2>/dev/null | sed 's:/$::' | grep -vxF "$cur" | head -n 1 || true)
     fi
     [ -n "$target" ] && [ -d "$target" ] || die "No previous release to roll back to."

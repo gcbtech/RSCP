@@ -1,2 +1,5 @@
 -r requirements.txt
 pytest>=8.0
+# IANA zone data for zoneinfo where the OS has none (Windows, slim containers);
+# the timeclock tests pin America/Denver and skip without it.
+tzdata
