@@ -318,7 +318,9 @@ def bulk_action():
     conn, close_conn = _conn()
     try:
         if action == 'mark_received':
-            receiving.bulk_receive(conn, trackings, current_user.username, conf=load_config())
+            failed = receiving.bulk_receive(conn, trackings, current_user.username, conf=load_config())
+            if failed:
+                flash(f"Could not receive: {', '.join(failed)}")
         elif action == 'mark_late':
             receiving.mark_late(conn, trackings)
         elif action == 'delete':

@@ -331,9 +331,19 @@ def mark_late(conn, trackings):
 
 def bulk_receive(conn, trackings, user, conf=None):
     """Receive several tracking numbers (unknown ones become 'Bulk Item'
-    packages, as a scan would create them)."""
+    packages, as a scan would create them).
+
+    One bad tracking number must not stop the rest (as in 2.x): failures are
+    logged and returned, and the others are still received.
+    """
+    failed = []
     for t in trackings:
-        receive_packages(conn, t, "Bulk Item", "1", user, conf)
+        try:
+            receive_packages(conn, t, "Bulk Item", "1", user, conf)
+        except Exception as e:
+            logger.error(f"Bulk receive failed for {t!r}: {e}")
+            failed.append(t)
+    return failed
 
 
 # ---------------------------------------------------------------------------
