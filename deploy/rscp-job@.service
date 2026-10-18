@@ -1,0 +1,49 @@
+# One RSCP maintenance job (app/jobs.py), run as a oneshot by its timer:
+#
+#   rscp-package-maintenance.timer  ->  rscp-job@package-maintenance.service
+#   rscp-eod-email.timer            ->  rscp-job@eod-email.service
+#
+# (System migrations are not a timer job: rscp.service runs
+# `python -m app.jobs system-migrations` as an ExecStartPre.)
+#
+#   timers   systemctl list-timers 'rscp-*'
+#   logs     journalctl -u rscp-job@eod-email      (or -u 'rscp-job@*')
+#   status   Admin > Logs > Scheduled jobs, or
+#            sudo -u rscp env RSCP_DATA_DIR=/var/lib/rscp /opt/rscp/current/venv/bin/python -m app.jobs --list
+#   by hand  sudo systemctl start rscp-job@package-maintenance
+#
+# Each job takes its own lock, so a run started while the previous one is
+# still going exits at once. Installed by install.sh; do not edit in place.
+
+[Unit]
+Description=RSCP job %i
+After=local-fs.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=rscp
+Group=rscp
+UMask=0027
+Nice=5
+
+Environment=RSCP_DATA_DIR=/var/lib/rscp
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/default/rscp
+
+WorkingDirectory=/opt/rscp/current
+ExecStart=/opt/rscp/current/venv/bin/python -m app.jobs %i
+TimeoutStartSec=600
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=rscp-job-%i
+
+# Same hardening as rscp.service: writes only to the data directory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rscp
+ProtectHome=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+LockPersonality=true

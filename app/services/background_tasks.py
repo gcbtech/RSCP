@@ -2,6 +2,11 @@
 Background Tasks Module
 Handles scheduled background jobs: package status upkeep and the POS EOD email.
 
+Only used where systemd does not run the jobs (app/jobs.py, use_systemd_timers()):
+the legacy/2.x layout, and data-dir installs whose updater has not installed
+the rscp-job units yet. The job bodies, their per-job locks, the EOD
+"sent today" marker and the status table are shared with `python -m app.jobs`.
+
 Uses APScheduler for reliable job scheduling with:
 - Retry logic with exponential backoff
 - Max failure tracking (jobs disable after N consecutive failures)
@@ -64,70 +69,23 @@ def _record_failure(job_id, counter, label, e):
 
 def package_maintenance_job():
     """Keep package statuses in step with the calendar (on_time -> expected ->
-    past_due) and apply AUTO_TRIM. Imports write straight to the database,
-    so there is no file to sync any more."""
-    try:
-        from app.services.package_imports import run_package_maintenance
-        changed, trimmed = run_package_maintenance()
-        if changed or trimmed:
-            logger.info(f"[Packages] {changed} statuses refreshed, {trimmed} old packages trimmed")
+    past_due) and apply AUTO_TRIM (app.jobs.package_maintenance)."""
+    from app import jobs
+    result = jobs.run_job('package-maintenance', trigger='app-scheduler')
+    if result.state == 'ok':
         SYNC_STATUS['last_maintenance'] = datetime.datetime.now().isoformat()
         SYNC_STATUS['maintenance_count'] += 1
         SYNC_STATUS['maintenance_failures'] = 0
-    except Exception as e:
-        _record_failure('package_maintenance', 'maintenance_failures', '[Packages]', e)
+    elif result.state == 'failed':
+        _record_failure('package_maintenance', 'maintenance_failures', '[Packages]', result.error)
 
 
 def eod_email_job():
-    """Background job to check and send automated POS EOD emails."""
+    """Check and send the automated POS EOD email (app.jobs.eod_email: once a
+    day at/after POS_AUTO_EMAIL_TIME, never twice for one day)."""
     try:
-        from app.routes.pos.core import get_pos_setting, set_pos_setting
-        from app.services.pos_email import send_eod_email
-        
-        # 1. Check if enabled
-        enabled = get_pos_setting('POS_AUTO_EMAIL_ENABLED', 'false') == 'true'
-        if not enabled:
-            return
-
-        # 2. Check time
-        target_time_str = get_pos_setting('POS_AUTO_EMAIL_TIME', '')
-        if not target_time_str:
-            return
-            
-        now = datetime.datetime.now()
-        current_time_str = now.strftime('%H:%M')
-        
-        # Compare time (simple string compare for HH:MM)
-        # We want to run if current time >= target time
-        # BUT we only want to run ONCE per day.
-        
-        # Check last run date
-        last_run_date = get_pos_setting('POS_LAST_AUTO_EMAIL_DATE', '')
-        today_str = now.strftime('%Y-%m-%d')
-        
-        if last_run_date == today_str:
-            # Already ran today
-            return
-        
-        # Parse target time to compare properly
-        try:
-            target_h, target_m = map(int, target_time_str.split(':'))
-            target_dt = now.replace(hour=target_h, minute=target_m, second=0, microsecond=0)
-            
-            if now >= target_dt:
-                # Time to send!
-                logger.info(f"[Auto-Email] Sending EOD report for {today_str}...")
-                success = send_eod_email(now.date())
-                
-                if success:
-                    set_pos_setting('POS_LAST_AUTO_EMAIL_DATE', today_str)
-                    logger.info("[Auto-Email] ✓ Sent successfully.")
-                else:
-                    logger.error("[Auto-Email] Failed to send.")
-                    
-        except ValueError:
-            logger.error(f"[Auto-Email] Invalid time format: {target_time_str}")
-            
+        from app import jobs
+        jobs.run_job('eod-email', trigger='app-scheduler')
     except Exception as e:
         logger.error(f"[Auto-Email] Job error: {e}")
 

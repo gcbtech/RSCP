@@ -12,9 +12,12 @@ How it works:
 - Applied ids are recorded in the `system_migrations` table, so each step
   runs exactly once per install (including prod boxes updated via the
   in-app updater — no manual SSH steps).
-- run_system_migrations() is called at startup by the ONE worker that owns
-  background tasks (wsgi.py's flock guard), so multi-worker deployments
-  don't race.
+- Where they run: in the data-dir layout with the systemd job units
+  installed, rscp.service's ExecStartPre (`python -m app.jobs
+  system-migrations`) runs them once per start, before any worker exists.
+  Otherwise (legacy layout, or before the updater installed those units)
+  the ONE worker that owns background tasks runs them at startup
+  (wsgi.py's flock guard), so multi-worker deployments don't race.
 - A migration that cannot apply on this host (wrong OS, not root, file
   missing) records itself as skipped-but-done where that is permanent, or
   leaves itself unrecorded to retry next boot where the condition is
@@ -165,17 +168,28 @@ systemctl restart rscp
 # 002 — backfill inventory list thumbnails for images uploaded before 2.6.6
 # ---------------------------------------------------------------------------
 
-def migrate_002_backfill_thumbnails():
-    """Generate missing list thumbnails in the background.
+# Inline (ExecStartPre) runs give the thumbnail backfill this many seconds, so
+# a huge image set can't push rscp.service past its start timeout; what is
+# left is picked up on the next start (generation skips fresh thumbnails).
+INLINE_THUMBNAIL_BUDGET_S = 120
+
+
+def migrate_002_backfill_thumbnails(inline=False):
+    """Generate missing list thumbnails.
 
     Thumbnails are created at upload time as of 2.6.6; this covers images
-    from before. Runs in a daemon thread (can take minutes on large image
-    sets) and records completion from the thread — if the box restarts
-    mid-run, it simply resumes next boot (generation skips fresh thumbs).
+    from before. In a web worker it runs in a daemon thread (can take minutes
+    on large image sets) and records completion from the thread — if the box
+    restarts mid-run, it simply resumes next boot (generation skips fresh
+    thumbs); it then returns (False, note) immediately.
 
-    Returns (False, note) immediately: the thread records the migration
-    itself on successful completion.
+    inline=True (the short-lived `python -m app.jobs system-migrations`
+    process, where a daemon thread would die with it): runs in the caller
+    for at most INLINE_THUMBNAIL_BUDGET_S seconds and returns (done, note).
     """
+    import time
+    result = {}
+
     def _go():
         try:
             import json
@@ -197,19 +211,34 @@ def migrate_002_backfill_thumbnails():
                         pass
 
             done = 0
-            for url in urls:
+            deadline = time.monotonic() + INLINE_THUMBNAIL_BUDGET_S if inline else None
+            for n, url in enumerate(urls):
+                if deadline is not None and time.monotonic() > deadline:
+                    conn.close()
+                    result['note'] = (f'time budget used after {n}/{len(urls)} references; '
+                                      f'continues next start')
+                    return
                 if generate_thumbnail(url):
                     done += 1
 
-            _record(conn, '002_backfill_thumbnails',
-                    f'{done} thumbnails ensured from {len(urls)} references')
+            note = f'{done} thumbnails ensured from {len(urls)} references'
+            if inline:
+                result['done'] = True   # the runner records it
+            else:
+                _record(conn, '002_backfill_thumbnails', note)
+            result['note'] = note
             conn.close()
             logger.info(f"[SysMigrate 002] Thumbnail backfill complete: "
                         f"{done}/{len(urls)}")
         except Exception as e:
+            if inline:
+                raise
             logger.error(f"[SysMigrate 002] Backfill failed (will retry next "
                          f"boot): {e}")
 
+    if inline:
+        _go()
+        return bool(result.get('done')), result.get('note', '')
     threading.Thread(target=_go, daemon=True, name="SysMigrateThumbs").start()
     return False, 'backfill running in background; records itself on completion'
 
@@ -265,9 +294,19 @@ MIGRATIONS = [
 ]
 
 
-def run_system_migrations():
-    """Run pending system migrations. Call from ONE process only
-    (wsgi.py invokes this in the worker holding the background-task lock)."""
+# Migrations whose function takes inline= (see migrate_002_backfill_thumbnails).
+_INLINE_CAPABLE = {'002_backfill_thumbnails'}
+
+
+def run_system_migrations(inline=False):
+    """Run pending system migrations. Call from ONE process only: rscp.service's
+    ExecStartPre (via app.jobs, inline=True) or the web worker holding the
+    background-task lock (wsgi.py).
+
+    Returns {'applied': [...], 'pending': [...], 'failed': [(id, error)]}
+    (a runner error is reported as failed ('runner', error)). Never raises.
+    """
+    summary = {'applied': [], 'pending': [], 'failed': []}
     try:
         conn = get_db_connection()
         _ensure_table(conn)
@@ -275,15 +314,23 @@ def run_system_migrations():
             if _is_applied(conn, mig_id):
                 continue
             try:
-                done, note = fn()
+                if inline and mig_id in _INLINE_CAPABLE:
+                    done, note = fn(inline=True)
+                else:
+                    done, note = fn()
             except Exception as e:
                 _log(f"[SysMigrate {mig_id}] FAILED: {e} (will retry next boot)")
+                summary['failed'].append((mig_id, str(e)))
                 continue
             if done:
                 _record(conn, mig_id, note)
                 _log(f"[SysMigrate {mig_id}] applied: {note}")
+                summary['applied'].append(mig_id)
             else:
                 _log(f"[SysMigrate {mig_id}] pending: {note}")
+                summary['pending'].append(mig_id)
         conn.close()
     except Exception as e:
         logger.error(f"[SysMigrate] runner error: {e}")
+        summary['failed'].append(('runner', str(e)))
+    return summary

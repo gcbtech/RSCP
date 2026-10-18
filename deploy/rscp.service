@@ -33,6 +33,10 @@ WorkingDirectory=/opt/rscp/current
 # Schema migrations run once, before any worker starts. A failure stops the
 # start (and makes the updater roll back) instead of serving a half-migrated DB.
 ExecStartPre=/opt/rscp/current/venv/bin/python -m app.migrate
+# Post-update system steps (app/services/system_migrations.py), also once per
+# start and before any worker. Versioned and idempotent; "-": a failing step is
+# logged (Admin > Logs > Scheduled jobs) and retried next start, never blocks it.
+ExecStartPre=-/opt/rscp/current/venv/bin/python -m app.jobs system-migrations
 # "python -m gunicorn" rather than venv/bin/gunicorn: console-script shebangs
 # hard-code the path the venv was built at.
 ExecStart=/opt/rscp/current/venv/bin/python -m gunicorn -c /opt/rscp/current/gunicorn.conf.py wsgi:app

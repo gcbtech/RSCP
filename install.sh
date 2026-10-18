@@ -17,6 +17,7 @@
 #   rscp.service                    gunicorn as user rscp; logs in journald
 #   rscp-update.path/.service       applies update/rollback requests from the web UI
 #   rscp-backup.timer/.service      nightly backups to /var/lib/rscp/backups/nightly
+#   rscp-*.timer, rscp-job@.service package upkeep and EOD email jobs (python -m app.jobs)
 #
 # Options:
 #   --channel stable|beta   stable = newest GitHub release tag (default), beta = beta branch
@@ -660,9 +661,14 @@ health_url() {
     echo "http://$host:$port/healthz"
 }
 
+# Scheduled jobs (app/jobs.py): one templated service, one timer per job.
+JOB_UNITS="rscp-job@.service"
+JOB_TIMERS="rscp-package-maintenance.timer rscp-eod-email.timer"
+
 install_units() {  # install_units RELEASE_DIR
     local rel="$1" f changed=0
-    for f in rscp.service rscp-update.service rscp-update.path rscp-backup.service rscp-backup.timer; do
+    for f in rscp.service rscp-update.service rscp-update.path rscp-backup.service rscp-backup.timer \
+        $JOB_UNITS $JOB_TIMERS; do
         if [ -f "$rel/deploy/$f" ]; then
             if ! cmp -s "$rel/deploy/$f" "$UNIT_DIR/$f"; then
                 install -m 644 "$rel/deploy/$f" "$UNIT_DIR/$f"
@@ -676,7 +682,33 @@ install_units() {  # install_units RELEASE_DIR
     fi
     write_backup_dropin
     systemctl daemon-reload
+    sync_job_timers "$rel"
     [ "$changed" -eq 1 ] && info "Installed systemd units from $(basename "$rel")"
+    return 0
+}
+
+# Enable the job timers when RELEASE_DIR ships them; otherwise (a rollback to
+# an older release, which runs these jobs inside the web service) stop and
+# remove them so nothing runs twice. Called from install_units, so it also
+# runs on rollback.
+sync_job_timers() {  # sync_job_timers RELEASE_DIR
+    local rel="$1" f
+    if [ -f "$rel/deploy/rscp-job@.service" ]; then
+        for f in $JOB_TIMERS; do
+            if [ -f "$UNIT_DIR/$f" ]; then
+                systemctl enable --now --quiet "$f" || warn "Could not enable $f"
+            fi
+        done
+    else
+        for f in $JOB_TIMERS; do
+            if [ -f "$UNIT_DIR/$f" ]; then
+                systemctl disable --now --quiet "$f" 2>/dev/null || true
+                rm -f "$UNIT_DIR/$f"
+            fi
+        done
+        rm -f "$UNIT_DIR/rscp-job@.service"
+        systemctl daemon-reload
+    fi
     return 0
 }
 

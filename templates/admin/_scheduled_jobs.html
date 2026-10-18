@@ -1,0 +1,55 @@
+{# Scheduled jobs panel (Admin > Logs). Rows come from app.jobs.overview(). #}
+{% if jobs_rows %}
+<div class="card shadow-sm mb-4" id="scheduled-jobs">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-bold">Scheduled jobs</span>
+        {% if jobs_runner %}<small class="text-muted">Run by {{ jobs_runner }}</small>{% endif %}
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Job</th>
+                        <th>Schedule</th>
+                        <th>Last run</th>
+                        <th>Result</th>
+                        <th>Last success</th>
+                        <th style="width: 35%;">Last error</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for job in jobs_rows %}
+                    <tr>
+                        <td>
+                            <div class="fw-bold">{{ job.title }}</div>
+                            <code class="small">{{ job.unit or job.name }}</code>
+                        </td>
+                        <td class="small">{{ job.schedule }}</td>
+                        <td class="small">
+                            {% if job.last_started %}{{ job.last_started|replace('T', ' ') }}{% else %}<span class="text-muted">never</span>{% endif %}
+                            {% if job.trigger %}<div class="text-muted">{{ job.trigger }}{% if job.duration_s is not none %}, {{ job.duration_s }}s{% endif %}</div>{% endif %}
+                        </td>
+                        <td>
+                            {% if job.result == 'ok' %}<span class="badge bg-success">OK</span>
+                            {% elif job.result == 'failed' %}<span class="badge bg-danger">Failed</span>
+                            {% if job.failures and job.failures > 1 %}<div class="small text-danger">{{ job.failures }} in a row</div>{% endif %}
+                            {% elif job.result == 'running' %}<span class="badge bg-info text-dark">Running</span>
+                            {% else %}<span class="badge bg-secondary">No runs</span>{% endif %}
+                            {% if job.detail %}<div class="small text-muted text-break">{{ job.detail }}</div>{% endif %}
+                        </td>
+                        <td class="small">{{ job.last_success|replace('T', ' ') if job.last_success else '-' }}</td>
+                        <td class="small text-break">
+                            {% if job.last_error %}
+                            <div class="{{ 'text-danger' if job.result == 'failed' else 'text-muted' }}">{{ job.last_error }}</div>
+                            {% if job.last_failure %}<div class="text-muted">{{ job.last_failure|replace('T', ' ') }}</div>{% endif %}
+                            {% else %}-{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}

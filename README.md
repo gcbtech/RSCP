@@ -90,6 +90,7 @@ it again is safe: an existing install is upgraded.
 | `rscp.service` | gunicorn as the unprivileged `rscp` user with `RSCP_DATA_DIR=/var/lib/rscp`; runs `python -m app.migrate` (schema migrations) before starting |
 | `rscp-update.path` / `rscp-update.service` | applies update and rollback requests from the web UI |
 | `rscp-backup.timer` / `rscp-backup.service` | nightly backups to `/var/lib/rscp/backups/nightly` (see [Backups](#backups)) |
+| `rscp-package-maintenance.timer`, `rscp-eod-email.timer`, `rscp-job@.service` | package status upkeep and the end-of-day email (see [Scheduled jobs](#scheduled-jobs)) |
 | `/opt/rscp/bin/rscp-update` | installed copy of `install.sh`, used by the updater |
 
 The newest 5 releases are kept. Logs go to the journal only:
@@ -99,6 +100,7 @@ systemctl status rscp
 journalctl -u rscp -f            # the app
 journalctl -u rscp-update        # updates and rollbacks
 journalctl -u rscp-backup        # nightly backups
+journalctl -u 'rscp-job@*'       # scheduled jobs (package upkeep, EOD email)
 ```
 
 The unit templates live in [`deploy/`](deploy/). Don't edit
@@ -185,6 +187,42 @@ you're happy, remove the old directories yourself. Old 2.x DB backups in
 `<old data>/shared/backups` are not copied.
 
 Downtime is only the data copy plus one restart.
+
+### Scheduled jobs
+
+Periodic work runs as short systemd jobs, not inside the web service, so a
+worker restart never stops it and each run's result is visible. Every job is
+`python -m app.jobs <name>` as the `rscp` user, with the same sandbox as
+`rscp.service`:
+
+| Timer | Job | When |
+|-------|-----|------|
+| `rscp-package-maintenance.timer` | `rscp-job@package-maintenance` | every 15 minutes: package statuses follow the calendar (on time, expected, past due), `AUTO_TRIM` |
+| `rscp-eod-email.timer` | `rscp-job@eod-email` | checks every 5 minutes; sends the POS end-of-day email once a day, at the first check at or after the time set in POS settings |
+| `rscp-backup.timer` | `rscp-backup` | see [Backups](#backups) |
+| (none) | `system-migrations` | `rscp.service` runs it before starting, after `app.migrate`: post-update system steps, once per start |
+
+The timers check often instead of firing at the configured time, so times
+changed in the web UI apply without a root step. A job that is still running
+when its timer fires again is skipped (each job has its own lock). The
+end-of-day email is marked as sent in the database before and after sending,
+so it never goes out twice for one day: a failed send is retried at the next
+check, and an attempt that was cut off mid-send is reported, not repeated.
+**Admin > Logs > Scheduled jobs** shows each job's last run, result and last
+error.
+
+```bash
+systemctl list-timers 'rscp-*'                    # next and last runs
+journalctl -u rscp-job@eod-email -n 50            # one job's log ('rscp-job@*' for all)
+systemctl status rscp-job@package-maintenance     # last run's exit status
+sudo systemctl start rscp-job@package-maintenance # run one now
+sudo -u rscp RSCP_DATA_DIR=/var/lib/rscp /opt/rscp/current/venv/bin/python -m app.jobs --list
+```
+
+Installs without these units (the 2.x layout, or a 3.0 install whose in-app
+update ran an older updater) run the same jobs from the app's background
+scheduler in one web worker, as before; the next install or update adds the
+timers.
 
 ### Backups
 

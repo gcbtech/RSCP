@@ -1,0 +1,16 @@
+# Checks every 5 minutes whether the POS end-of-day email is due; the job
+# sends it once a day at the first check at or after the time set in POS
+# settings (POS_AUTO_EMAIL_TIME), so a time changed in the web UI applies
+# without rewriting this timer. Persistent= checks right after downtime.
+
+[Unit]
+Description=RSCP end-of-day email check (every 5 minutes)
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+AccuracySec=15s
+Unit=rscp-job@eod-email.service
+
+[Install]
+WantedBy=timers.target

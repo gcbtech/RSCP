@@ -19,6 +19,9 @@ from app.services.security import decrypt
 
 logger = logging.getLogger(__name__)
 
+# A stalled SMTP server must not hang the request or the EOD job forever.
+SMTP_TIMEOUT_S = 60
+
 
 def _money(v):
     return f"${(v or 0):,.2f}"
@@ -146,7 +149,7 @@ def deliver_eod_email(report_date):
         msg.attach(MIMEText(html_content, "html"))
 
         context = ssl.create_default_context()
-        with smtplib.SMTP(host, port) as server:
+        with smtplib.SMTP(host, port, timeout=SMTP_TIMEOUT_S) as server:
             server.starttls(context=context)
             if user and password:
                 server.login(user, password)

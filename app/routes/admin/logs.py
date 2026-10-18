@@ -106,7 +106,17 @@ def admin_logs():
         if journal_lines:
             journal_text, journal_note = read_journal(journal_lines)
 
+        # Scheduled jobs panel (app/jobs.py records every run).
+        try:
+            from app import jobs
+            jobs_runner, jobs_rows = jobs.overview()
+        except Exception as e:
+            logger.warning(f"[Jobs] Could not load job status: {e}")
+            jobs_runner, jobs_rows = None, []
+
         return render_template('admin_logs.html',
+                               jobs_runner=jobs_runner,
+                               jobs_rows=jobs_rows,
                                journal_lines=journal_lines,
                                journal_text=journal_text,
                                journal_note=journal_note,
