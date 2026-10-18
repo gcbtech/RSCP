@@ -151,7 +151,7 @@
             </div>
             <div class="d-flex gap-2 no-print">
                 <a href="{{ csv_url }}" class="btn btn-success btn-sm">⬇️ Export CSV</a>
-                <button onclick="window.print()" class="btn btn-secondary btn-sm">🖨️ Print</button>
+                <button data-action="print" class="btn btn-secondary btn-sm">🖨️ Print</button>
                 <a href="{{ url_for('pos.management') }}" class="btn btn-outline-secondary btn-sm">Back to Dashboard</a>
             </div>
         </div>
@@ -544,67 +544,11 @@
         </p>
     </div>
 {% endblock %}
+{% block page_data %}
+    <script type="application/json" id="page-data">{{ {'firstSaleDate': first_sale_date, 'trend': trend or []}|tojson }}</script>
+{% endblock %}
 {% block scripts %}
     {{ vendor.chartjs() }}
-    <script>
-        // Quick date range buttons
-        (function () {
-            const form = document.getElementById('filterForm');
-            const firstSale = {{ first_sale_date | tojson }};
-            const fmt = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-
-            form.querySelectorAll('[data-range]').forEach(btn => btn.addEventListener('click', () => {
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
-                let start = new Date(today), end = new Date(today);
-                switch (btn.dataset.range) {
-                    case 'yesterday': start.setDate(today.getDate() - 1); end = new Date(start); break;
-                    case '7': start.setDate(today.getDate() - 6); break;
-                    case '30': start.setDate(today.getDate() - 29); break;
-                    case '90': start.setDate(today.getDate() - 89); break;
-                    case 'month': start = new Date(today.getFullYear(), today.getMonth(), 1); break;
-                    case 'last_month':
-                        start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-                        end = new Date(today.getFullYear(), today.getMonth(), 0);
-                        break;
-                    case 'ytd': start = new Date(today.getFullYear(), 0, 1); break;
-                    case 'all': if (firstSale) start = new Date(firstSale + 'T00:00:00'); break;
-                }
-                form.elements.start.value = fmt(start);
-                form.elements.end.value = fmt(end);
-                form.submit();
-            }));
-        })();
-
-        // Sales trend chart
-        {% if trend %}
-        (function () {
-            const trend = {{ trend | tojson }};
-            new Chart(document.getElementById('trendChart'), {
-                data: {
-                    labels: trend.map(t => t.label),
-                    datasets: [
-                        {
-                            type: 'bar', label: 'Net Revenue', data: trend.map(t => t.revenue),
-                            backgroundColor: 'rgba(99, 102, 241, 0.55)', yAxisID: 'y'
-                        },
-                        {
-                            type: 'line', label: 'Net Units', data: trend.map(t => t.units),
-                            borderColor: '#f59e0b', backgroundColor: '#f59e0b', tension: 0.3, yAxisID: 'y1'
-                        }
-                    ]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    interaction: { mode: 'index', intersect: false },
-                    scales: {
-                        y: { beginAtZero: true, position: 'left', ticks: { callback: v => '$' + v.toLocaleString() } },
-                        y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false }, ticks: { precision: 0 } }
-                    }
-                }
-            });
-        })();
-        {% endif %}
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/pos-mgmt-common.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/pages/pos-top-sellers.js') }}"></script>
 {% endblock %}

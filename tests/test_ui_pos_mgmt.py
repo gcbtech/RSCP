@@ -97,7 +97,7 @@ def test_stale_inventory_only_loads_scripts_from_jsdelivr(fresh_app, fresh_clien
     jq = html.index('npm/jquery@3.7.0')
     dt = html.index('npm/datatables.net@1.13.6/js/jquery.dataTables.min.js')
     dt_bs5 = html.index('npm/datatables.net-bs5@1.13.6/js/dataTables.bootstrap5.min.js')
-    init = html.index("$('#staleTable').DataTable(")
+    init = html.index('js/pages/pos-stale-inventory.js')
     assert html.index('id="staleTable"') < jq < dt < dt_bs5 < init
     assert 'datatables.net-bs5@1.13.6/css/dataTables.bootstrap5.min.css' in html
     # Numeric columns sort on plain numbers, not on the badge/"N days" markup.
@@ -106,16 +106,17 @@ def test_stale_inventory_only_loads_scripts_from_jsdelivr(fresh_app, fresh_clien
 
 def test_chart_pages_use_pinned_chartjs(fresh_app, fresh_client, seeded):
     login(fresh_client, 1)
-    for url in ('/pos/management', '/pos/management/top-sellers'):
+    for url, page_js in (('/pos/management', 'js/pages/pos-management.js'),
+                         ('/pos/management/top-sellers', 'js/pages/pos-top-sellers.js')):
         html = fresh_client.get(url).get_data(as_text=True)
         assert 'npm/chart.js"' not in html
-        if 'new Chart(' in html:
-            assert html.count('npm/chart.js@4.4.0/dist/chart.umd.min.js') == 1
-            assert html.index('chart.umd.min.js') < html.index('new Chart(')
+        # The page script (which calls new Chart) loads after the pinned Chart.js.
+        assert html.count('npm/chart.js@4.4.0/dist/chart.umd.min.js') == 1
+        assert html.index('chart.umd.min.js') < html.index(page_js)
 
 
 def test_coupon_form_uses_pinned_tom_select(fresh_app, fresh_client, seeded):
     login(fresh_client, 1)
     html = fresh_client.get('/pos/coupons/create').get_data(as_text=True)
     assert html.count('tom-select@2.2.2/dist/css/tom-select.bootstrap5.min.css') == 1
-    assert html.index('tom-select.complete.min.js') < html.index('new TomSelect(')
+    assert html.index('tom-select.complete.min.js') < html.index('js/pages/pos-coupon-form.js')

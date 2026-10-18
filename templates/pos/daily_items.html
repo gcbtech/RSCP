@@ -66,11 +66,11 @@
             <div class="d-flex gap-2">
                 <form class="d-flex gap-2" method="GET">
                     <input type="date" name="date" class="form-control" value="{{ report_date.strftime('%Y-%m-%d') }}"
-                        onchange="this.form.submit()">
+                        data-change="submitForm">
                     <a href="{{ url_for('pos.management') }}" class="btn btn-outline-light">Back to Management</a>
-                    <button type="button" onclick="window.print()" class="btn btn-light"
+                    <button type="button" data-action="print" class="btn btn-light"
                         title="Use Destination: Save as PDF"><i class="bi bi-file-earmark-pdf"></i> Save as PDF</button>
-                    <button type="button" onclick="window.print()" class="btn btn-light"><i class="bi bi-printer"></i>
+                    <button type="button" data-action="print" class="btn btn-light"><i class="bi bi-printer"></i>
                         Print</button>
                 </form>
             </div>
@@ -172,4 +172,7 @@
             </div>
         </div>
     </div>
+{% endblock %}
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/pages/pos-mgmt-common.js') }}"></script>
 {% endblock %}

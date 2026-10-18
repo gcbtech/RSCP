@@ -109,15 +109,5 @@
 {% block scripts %}
     {{ vendor.jquery() }}
     {{ vendor.datatables_js() }}
-    <script>
-        $(document).ready(function() {
-            $('#staleTable').DataTable({
-                "pageLength": 50,
-                "order": [[5, "desc"]], // Sort by Stale Score descending
-                "columnDefs": [
-                    { "type": "num", "targets": [1, 2, 4, 5] }
-                ]
-            });
-        });
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/pos-stale-inventory.js') }}"></script>
 {% endblock %}
