@@ -1099,6 +1099,15 @@
                                             placeholder="New Password" required>
                                         <button class="btn btn-warning" type="submit">Update</button>
                                     </form>
+                                    <!-- Sign-in email (matched by SSO and Cloudflare Access) -->
+                                    <form action="/admin/set_user_email/{{ name }}" method="POST"
+                                        class="input-group input-group-sm mt-2">
+                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                        <span class="input-group-text">✉️</span>
+                                        <input type="email" name="email" class="form-control" placeholder="Sign-in email (SSO / Cloudflare Access)"
+                                            value="{{ data.get('email') or '' }}">
+                                        <button class="btn btn-secondary" type="submit">Set</button>
+                                    </form>
                                     {% if pos_enabled %}
                                     <!-- PIN Setup -->
                                     <form action="/admin/set_user_pin/{{ name }}" method="POST"
@@ -1506,6 +1515,52 @@
                                         placeholder="{{ '(saved - leave blank to keep)' if config.PUBLIC_API_KEY_SET else 'Not set (API disabled)' }}">
                                     <button class="btn btn-outline-primary btn-sm w-100" type="submit">Save</button>
                                 </form>
+                            </div>
+                        </div>
+
+                        <!-- Cloudflare Access sign-in (app/services/cf_access.py) -->
+                        <div class="admin-card" id="cf-access-card">
+                            <div class="card-header">
+                                <div class="icon">☁️</div>
+                                <span>Cloudflare Access Sign-in</span>
+                            </div>
+                            <div class="card-body">
+                                <div class="form-text small mb-2">
+                                    Staff who already passed Cloudflare Access are signed in to RSCP automatically,
+                                    matched by the email on their RSCP account (set it under Users). RSCP checks the
+                                    Access token's signature, so a forged header gets nobody in.
+                                </div>
+                                <form action="{{ url_for('settings.save') }}" method="POST">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <input type="hidden" name="group" value="cf_access">
+                                    <div class="form-check form-switch mb-2">
+                                        <input type="hidden" name="CF_ACCESS_ENABLED" value="false">
+                                        <input class="form-check-input" type="checkbox" name="CF_ACCESS_ENABLED" value="true"
+                                            id="cfAccessSwitch" {% if config.CF_ACCESS_ENABLED %}checked{% endif %}>
+                                        <label class="form-check-label fw-bold" for="cfAccessSwitch">Sign in with Cloudflare Access</label>
+                                    </div>
+                                    <label class="form-label small fw-bold">Team domain</label>
+                                    <input type="text" name="CF_ACCESS_TEAM_DOMAIN" class="form-control form-control-sm mb-1"
+                                        value="{{ config.CF_ACCESS_TEAM_DOMAIN or '' }}" placeholder="yourteam.cloudflareaccess.com">
+                                    <div class="form-text small mb-2">Zero Trust dashboard &rarr; Settings &rarr; Team name and domain.</div>
+                                    <label class="form-label small fw-bold">Application Audience (AUD) tag</label>
+                                    <input type="text" name="CF_ACCESS_AUD" class="form-control form-control-sm mb-1"
+                                        value="{{ config.CF_ACCESS_AUD or '' }}" placeholder="64-character tag" autocomplete="off">
+                                    <div class="form-text small mb-2">Zero Trust &rarr; Access &rarr; Applications &rarr; your RSCP
+                                        application &rarr; Configure &rarr; Basic information: "Application Audience (AUD) Tag". Required.</div>
+                                    <label class="form-label small fw-bold">Allowed email domains (optional)</label>
+                                    <input type="text" name="CF_ACCESS_ALLOWED_DOMAINS" class="form-control form-control-sm mb-1"
+                                        value="{{ config.CF_ACCESS_ALLOWED_DOMAINS|join(', ') if config.CF_ACCESS_ALLOWED_DOMAINS else '' }}"
+                                        placeholder="@company.com">
+                                    <div class="form-text small mb-2">Blank: the SSO allowed domains apply, if set.</div>
+                                    <button class="btn btn-outline-primary btn-sm w-100" type="submit">Save</button>
+                                </form>
+                                <hr>
+                                <button type="button" class="btn btn-outline-secondary btn-sm w-100" data-action="cfAccessTest"
+                                    data-url="{{ url_for('admin.cf_access_test') }}">Test this browser's Access token</button>
+                                <div class="small mt-2" id="cfAccessTestResult" aria-live="polite"></div>
+                                <div class="form-text small">Open Admin through the tunnel to test; LAN requests carry no token.</div>
+                                <script src="{{ url_for('static', filename='js/pages/admin-cf-access.js') }}" defer></script>
                             </div>
                         </div>
 

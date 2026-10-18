@@ -90,5 +90,13 @@
 
             <button type="submit" class="btn btn-primary btn-login">Sign In</button>
         </form>
+
+        {% if config.CF_ACCESS_ENABLED %}
+        <div class="text-center mt-3 small" id="cf-access-login">
+            {% if g.cf_access_error %}<div class="alert alert-warning alert-custom text-start">{{ g.cf_access_error }}</div>{% endif %}
+            <a class="btn btn-outline-secondary w-100" href="{{ url_for('auth.login_cf_access', next=request.args.get('next')) }}">Sign in with Cloudflare Access</a>
+            <div class="text-muted mt-1">Came in through Cloudflare Access? Use that sign-in instead of a password.</div>
+        </div>
+        {% endif %}
     </div>
 {% endblock %}

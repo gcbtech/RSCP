@@ -8,8 +8,9 @@ auth_bp = Blueprint('auth', __name__)
 logger = logging.getLogger(__name__)
 
 
-def log_login_attempt(username: str, success: bool):
-    """Log a login attempt with device information."""
+def log_login_attempt(username: str, success: bool, method: str = None):
+    """Log a login attempt with device information. `method` marks sign-ins
+    that did not use the password form (e.g. 'cf-access')."""
     try:
         ip_address = request.remote_addr or 'unknown'
         user_agent = request.headers.get('User-Agent', 'unknown')
@@ -27,6 +28,8 @@ def log_login_attempt(username: str, success: bool):
             device_info = 'Mac'
         elif 'linux' in ua_lower:
             device_info = 'Linux'
+        if method:
+            device_info = f"{device_info} via {method}"
         
         conn = get_db_connection()
         try:
@@ -106,9 +109,72 @@ def login():
         next_page = request.args.get('next')
         if not is_safe_redirect(next_page):
             next_page = url_for('main.index')
-        return redirect(next_page)
+        return _end_cf_suppression(redirect(next_page))
 
     return render_template('login.html')
+
+
+# --- Cloudflare Access (app/services/cf_access.py) ---------------------------
+
+def _end_cf_suppression(response):
+    """An explicit sign-in ends the post-logout pause on Access auto sign-in."""
+    from app.services import cf_access
+    if request.cookies.get(cf_access.SUPPRESS_COOKIE):
+        response.delete_cookie(cf_access.SUPPRESS_COOKIE)
+    return response
+
+
+def cf_access_login(ignore_suppression=False):
+    """Sign the current request in from its Cloudflare Access JWT.
+
+    Returns the user, or None (feature off, no header, suppressed after a
+    logout, or the token/user was rejected). Never raises: it runs inside the
+    global login guard, where an exception would mean a redirect loop. A
+    rejection is logged with its reason (never the token) and left in
+    g.cf_access_error for the login page.
+    """
+    from flask import g
+    from app.services import cf_access
+    try:
+        if not request.headers.get(cf_access.HEADER) or not cf_access.is_enabled():
+            return None
+        if not ignore_suppression and request.cookies.get(cf_access.SUPPRESS_COOKIE):
+            return None
+        try:
+            user, email, _claims = cf_access.check_request(request)
+        except cf_access.CfAccessError as e:
+            logger.warning(f"[CF Access] Sign-in rejected from {request.remote_addr}: {e.reason}")
+            g.cf_access_error = e.public
+            return None
+        login_user(user, remember=False)
+        session['login_time'] = time.time()
+        g.user_id = user.username
+        log_login_attempt(user.username, success=True, method='cf-access')
+        logger.info(f"[CF Access] Signed in {user.username} ({email})")
+        return user
+    except Exception as e:
+        logger.error(f"[CF Access] Sign-in error: {type(e).__name__}: {e}")
+        return None
+
+
+@auth_bp.route('/login/cf-access')
+def login_cf_access():
+    """The login page's "Sign in with Cloudflare Access" button: an explicit
+    sign-in, so it works (and ends the pause) after a logout."""
+    from flask import g
+    next_page = request.args.get('next')
+    if not is_safe_redirect(next_page):
+        next_page = url_for('main.index')
+    if current_user.is_authenticated or cf_access_login(ignore_suppression=True):
+        return _end_cf_suppression(redirect(next_page))
+    from app.services import cf_access
+    if not request.headers.get(cf_access.HEADER):
+        message = 'This request did not come through Cloudflare Access. Sign in with your password.'
+    else:
+        message = (getattr(g, 'cf_access_error', None)
+                   or 'Cloudflare Access sign-in is not available. Sign in with your password.')
+    flash(message, 'error')
+    return redirect(url_for('auth.login', next=request.args.get('next') or None))
 
 
 def _sso_available():
@@ -197,7 +263,7 @@ def sso_callback():
             # Store login timestamp for session timeout
             session['login_time'] = time.time()
             logger.info(f"SSO Login Success: {user.username} ({email})")
-            return redirect(url_for('main.index'))
+            return _end_cf_suppression(redirect(url_for('main.index')))
             
     except Exception as e:
         logger.error(f"SSO Callback Error: {e}")
@@ -226,5 +292,14 @@ def logout():
     response = make_response(redirect(url_for('auth.login', force=1)))
     response.delete_cookie('remember_token')
     response.delete_cookie('session')
+
+    # Cloudflare Access would sign this browser straight back in on the next
+    # request (the Access JWT rides on every tunnelled request). Pause that
+    # until the next explicit sign-in, or LOGOUT_SUPPRESS_SECONDS.
+    from app.services import cf_access
+    if cf_access.is_enabled():
+        response.set_cookie(cf_access.SUPPRESS_COOKIE, '1', max_age=cf_access.LOGOUT_SUPPRESS_SECONDS,
+                            httponly=True, samesite='Lax',
+                            secure=bool(current_app.config.get('SESSION_COOKIE_SECURE')))
     
     return response

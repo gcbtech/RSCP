@@ -301,6 +301,16 @@ def _validate_backup_dir(v):
     return v
 
 
+def _validate_cf_team_domain(v):
+    from app.services.cf_access import normalize_team_domain
+    return normalize_team_domain(v)
+
+
+def _validate_cf_aud(v):
+    from app.services.cf_access import validate_aud
+    return validate_aud(v)
+
+
 # Top-level directories an off-box backup folder may not live in (the backup
 # service gets write access to that folder).
 _SYSTEM_TOP_DIRS = frozenset({'', 'bin', 'boot', 'dev', 'etc', 'home', 'lib', 'lib32', 'lib64', 'opt',
@@ -319,6 +329,7 @@ GROUPS = {
     'notifications': ('Notifications', 'settings'),
     'sso': ('SSO / OIDC', 'settings'),
     'network': ('Reverse proxy', 'settings'),
+    'cf_access': ('Cloudflare Access', 'settings'),
     'timeclock': ('Timeclock', None),
     'api': ('Public API', 'settings'),
     'backups': ('Backups', 'settings'),
@@ -429,6 +440,14 @@ SETTINGS = {
     # Network
     'TRUSTED_PROXIES': S(list, ['127.0.0.1', '::1'], 'network', 'Trusted proxies',
                          validator=_validate_proxies, restart=True),
+
+    # Cloudflare Access sign-in (app/services/cf_access.py)
+    'CF_ACCESS_ENABLED': S(bool, False, 'cf_access', 'Cloudflare Access sign-in'),
+    'CF_ACCESS_TEAM_DOMAIN': S(str, '', 'cf_access', 'Cloudflare Access team domain',
+                               validator=_validate_cf_team_domain),
+    'CF_ACCESS_AUD': S(str, '', 'cf_access', 'Cloudflare Access AUD tag', validator=_validate_cf_aud),
+    'CF_ACCESS_ALLOWED_DOMAINS': S(list, [], 'cf_access', 'Cloudflare Access allowed domains',
+                                   validator=_normalize_domains),
 
     # Timeclock
     'TIMECLOCK_PAY_PERIOD_START': S(str, '2024-01-01', 'timeclock', 'Pay period start',
@@ -679,6 +698,15 @@ def _cross_check(updates):
         # provider vouches for (e.g. any Google account).
         if enabled and not domains:
             raise SettingsError('SSO needs at least one allowed domain before it can be enabled.')
+    if any(k.startswith('CF_ACCESS_') for k in updates):
+        enabled = updates.get('CF_ACCESS_ENABLED', get('CF_ACCESS_ENABLED'))
+        team = updates.get('CF_ACCESS_TEAM_DOMAIN', get('CF_ACCESS_TEAM_DOMAIN'))
+        aud = updates.get('CF_ACCESS_AUD', get('CF_ACCESS_AUD'))
+        # Without the AUD tag any Access application of the team (or a token
+        # minted for another app) would be accepted.
+        if enabled and not (team and aud):
+            raise SettingsError('Cloudflare Access sign-in needs the team domain and the AUD tag '
+                                'before it can be enabled.')
 
 
 def set_many(values, user=None):

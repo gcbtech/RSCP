@@ -183,6 +183,48 @@ def set_badge_id(username):
     return redirect(url_for('admin.admin_panel', tab='settings'))
 
 
+@admin_bp.route('/set_user_email/<username>', methods=['POST'])
+def set_user_email(username):
+    """Set or clear the email that SSO and Cloudflare Access sign-in match on.
+
+    Whoever controls this address can sign in as the account, so the same
+    rule as password resets applies: not on another admin's account."""
+    import re
+    from app.services.auth import load_users
+    from app.services.db import get_db_connection
+    back = redirect(url_for('admin.admin_panel', tab='settings'))
+
+    users = load_users()
+    if username not in users:
+        flash("User not found.")
+        return back
+    if users[username].get('is_admin') and username != current_user.username:
+        flash("Cannot change another admin's sign-in email. They must set it themselves.")
+        return back
+
+    email = request.form.get('email', '').strip().lower()
+    if email and (len(email) > 254 or not re.fullmatch(r'[^@\s]+@[^@\s]+\.[^@\s]+', email)):
+        flash("Enter a valid email address.")
+        return back
+
+    conn = get_db_connection()
+    try:
+        if email:
+            other = conn.execute('SELECT username FROM users WHERE LOWER(email) = ? AND username != ?',
+                                 (email, username)).fetchone()
+            if other:
+                flash(f"That email is already used by {other['username']}.")
+                return back
+        conn.execute('UPDATE users SET email = ? WHERE username = ?', (email or None, username))
+        conn.commit()
+    finally:
+        conn.close()
+    logger.info(f"Admin: {current_user.username} set the sign-in email of {username} "
+                f"to {email or '(none)'}")
+    flash(f"Sign-in email {'set' if email else 'cleared'} for {username}.")
+    return back
+
+
 @admin_bp.route('/set_user_roles/<username>', methods=['POST'])
 def set_user_roles(username):
     """Set a user's RBAC roles."""
