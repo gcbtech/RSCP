@@ -461,13 +461,14 @@ def test_job_units_match_layout():
                  'ProtectHome=true', 'PrivateTmp=true', 'RestrictSUIDSGID=true', 'LockPersonality=true'):
         assert line in service, line
     timers = [j for j in jobs.JOBS.values() if j.timer]
-    assert {j.name for j in timers} == {'package-maintenance', 'eod-email'}
+    assert {j.name for j in timers} == {'package-maintenance', 'eod-email', 'monitor'}
     for job in timers:
         timer = _read(f'deploy/{job.timer}').splitlines()
         for line in (f'Unit=rscp-job@{job.name}.service', 'Persistent=true', 'WantedBy=timers.target'):
             assert line in timer, (job.timer, line)
     assert 'OnCalendar=*:0/15' in _read('deploy/rscp-package-maintenance.timer')
     assert 'OnCalendar=*:0/5' in _read('deploy/rscp-eod-email.timer')
+    assert 'OnCalendar=*:0/2' in _read('deploy/rscp-monitor.timer')
 
     unit = _read('deploy/rscp.service').splitlines()
     migrate = unit.index('ExecStartPre=/opt/rscp/current/venv/bin/python -m app.migrate')

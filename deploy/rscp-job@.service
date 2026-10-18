@@ -2,6 +2,7 @@
 #
 #   rscp-package-maintenance.timer  ->  rscp-job@package-maintenance.service
 #   rscp-eod-email.timer            ->  rscp-job@eod-email.service
+#   rscp-monitor.timer              ->  rscp-job@monitor.service
 #
 # (System migrations are not a timer job: rscp.service runs
 # `python -m app.jobs system-migrations` as an ExecStartPre.)

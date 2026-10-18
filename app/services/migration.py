@@ -1308,6 +1308,30 @@ def _m13_job_status(conn):
         conn.execute(sql)
 
 
+
+# Also used by app/services/monitor.py (CREATE ... IF NOT EXISTS), for the
+# same reason as JOB_TABLES_SQL.
+MONITOR_TABLES_SQL = (
+    '''CREATE TABLE IF NOT EXISTS monitor_alerts (
+        key TEXT PRIMARY KEY,         -- e.g. job_failed:backup, display_offline:<peripheral id>
+        kind TEXT NOT NULL,           -- job_failed | job_stale | display_offline
+        subject TEXT NOT NULL,        -- job name or peripheral id
+        title TEXT,                   -- what the alert email called it
+        since TEXT,                   -- when the problem started, as the email showed it
+        last_sent TEXT,               -- last alert email about it (UTC ISO)
+        detail TEXT
+    )''',
+)
+
+
+def _m14_monitor_alerts(conn):
+    """Open alerts of the monitor job (app/services/monitor.py): one row per
+    problem that has been emailed and not yet reported as recovered, so each
+    problem is mailed once (plus a recovery mail), not on every check."""
+    for sql in MONITOR_TABLES_SQL:
+        conn.execute(sql)
+
+
 # (version, description, function). Version 1 is the ensure_db_ready() baseline.
 SCHEMA_MIGRATIONS = [
     (2, 'PTO tables', _m2_pto_tables),
@@ -1322,6 +1346,7 @@ SCHEMA_MIGRATIONS = [
     (11, 're-import encoded legacy settings (webhook URLs)', _m11_reimport_encoded_settings),
     (12, 'drop email-ingest settings (feature removed)', _m12_drop_email_ingest_settings),
     (13, 'job_status and job_markers tables (scheduled jobs)', _m13_job_status),
+    (14, 'monitor_alerts table (email alerts)', _m14_monitor_alerts),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 assert len({v for v, _, _ in SCHEMA_MIGRATIONS}) == len(SCHEMA_MIGRATIONS), "duplicate schema version"

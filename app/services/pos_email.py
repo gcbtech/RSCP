@@ -4,6 +4,9 @@ Builds and sends the End of Day report email. The manual "Send Email Report"
 button and the automatic daily email both come through here, and both use the
 same figures as the daily report page and its print view
 (pos_reports.generate_daily_report_data).
+
+send_email() is the one SMTP sender (POS_EMAIL_* settings); the monitor's
+alert emails (app/services/monitor.py) use it too.
 """
 import smtplib
 import ssl
@@ -125,6 +128,44 @@ def build_eod_email(report_date):
     return subject, render_eod_email_html(report_date, data), data
 
 
+def recipient_list(recipients):
+    """'a@x, b@y' (commas or semicolons) -> ['a@x', 'b@y']."""
+    return [r.strip() for r in (recipients or '').replace(';', ',').split(',') if r.strip()]
+
+
+def send_email(subject, html, recipients, text=None):
+    """Send one email through the POS SMTP settings (STARTTLS, optional login).
+
+    `recipients` is a list or a comma-separated string. With `text`, the mail
+    is multipart/alternative with a plain-text part first. Raises on any
+    failure (missing host, connection, authentication, refused recipients).
+    """
+    host = get_pos_setting('POS_EMAIL_HOST')
+    if isinstance(recipients, str):
+        recipients = recipient_list(recipients)
+    if not host or not recipients:
+        raise ValueError('Email settings incomplete (SMTP host or recipients missing).')
+    port = int(get_pos_setting('POS_EMAIL_PORT') or '587')
+    user = get_pos_setting('POS_EMAIL_USER')
+    password_enc = get_pos_setting('POS_EMAIL_PASSWORD')
+    password = decrypt(password_enc) if password_enc else None
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = user or 'noreply@rscp.local'
+    msg["To"] = ', '.join(recipients)
+    if text is not None:
+        msg.attach(MIMEText(text, "plain"))
+    msg.attach(MIMEText(html, "html"))
+
+    context = ssl.create_default_context()
+    with smtplib.SMTP(host, port, timeout=SMTP_TIMEOUT_S) as server:
+        server.starttls(context=context)
+        if user and password:
+            server.login(user, password)
+        server.sendmail(msg["From"], recipients, msg.as_string())
+
+
 def deliver_eod_email(report_date):
     """Send the EOD email. Returns (ok, message)."""
     host = get_pos_setting('POS_EMAIL_HOST')
@@ -135,28 +176,10 @@ def deliver_eod_email(report_date):
 
     try:
         subject, html_content, _data = build_eod_email(report_date)
-
-        port = int(get_pos_setting('POS_EMAIL_PORT') or '587')
-        user = get_pos_setting('POS_EMAIL_USER')
-        password_enc = get_pos_setting('POS_EMAIL_PASSWORD')
-        password = decrypt(password_enc) if password_enc else None
-        recipient_list = [r.strip() for r in recipients.split(',') if r.strip()]
-
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = user or 'noreply@rscp.local'
-        msg["To"] = ', '.join(recipient_list)
-        msg.attach(MIMEText(html_content, "html"))
-
-        context = ssl.create_default_context()
-        with smtplib.SMTP(host, port, timeout=SMTP_TIMEOUT_S) as server:
-            server.starttls(context=context)
-            if user and password:
-                server.login(user, password)
-            server.sendmail(msg["From"], recipient_list, msg.as_string())
-
+        to = recipient_list(recipients)
+        send_email(subject, html_content, to)
         logger.info(f"POS EOD Email sent to {recipients}")
-        return True, f"EOD Report sent to {len(recipient_list)} recipient(s)."
+        return True, f"EOD Report sent to {len(to)} recipient(s)."
     except Exception as e:
         logger.error(f"Failed to send POS EOD Email: {e}")
         return False, f"Error sending email: {e}"

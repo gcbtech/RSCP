@@ -133,8 +133,16 @@ def admin_panel():
     except Exception as e:
         logger.warning(f"Error loading POS settings for admin panel: {e}")
     
+    alerts_panel = None
+    try:
+        from app.services import monitor
+        alerts_panel = monitor.admin_summary()
+    except Exception as e:
+        logger.warning(f"Could not load the email alert settings: {e}")
+
     from app.services.settings import template_view
     return render_template('admin.html', 
+                           alerts_panel=alerts_panel,
                            packages=packages, 
                            users=users,
                            current_page=page,
