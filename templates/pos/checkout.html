@@ -246,6 +246,8 @@
 {% block content %}
     <div class="checkout-container">
         <div class="checkout-card">
+            {# "The cart changed since this checkout page opened" etc. must be seen here #}
+            <div class="pt-3">{% include 'pos/_flashes.html' %}</div>
             <div class="checkout-header">
                 <h1>💳 Checkout</h1>
                 {% if cash_discount_enabled and cash_discount_value > 0 %}
@@ -326,6 +328,7 @@
                     <input type="hidden" name="payment_method" id="paymentMethod" value="card">
                     <input type="hidden" name="checkout_token" value="{{ checkout_token }}">
                     <input type="hidden" name="expected_total" value="{{ '%.2f'|format(total) }}">
+                    {% if cart_version is not none %}<input type="hidden" name="cart_version" value="{{ cart_version }}">{% endif %}
 
                     <!-- Cash Payment -->
                     <div id="cash-content" class="payment-content">

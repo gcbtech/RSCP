@@ -22,8 +22,10 @@ import hashlib
 import json
 import logging
 import random
+import re
 import secrets
 import string
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,100 @@ def touch_register(conn, register_id, friendly_name=None):
     conn.commit()
 
 
+_LINE_ID_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_-]{0,31}$')
+
+
+def new_line_id():
+    """A short, stable id for a cart line. Always starts with a letter so it
+    can never be mistaken for a list index in a URL."""
+    return 'L' + uuid.uuid4().hex[:11]
+
+
+def ensure_line_ids(cart):
+    """Give every cart line a line_id. Returns True if any line was changed.
+
+    Lines saved before line ids existed get a DETERMINISTIC id derived from
+    their position and content, so every worker computes the same id for the
+    same stored cart (a rendered page and the request it posts agree even if
+    nothing has persisted the backfill yet). The first mutation then saves
+    the ids, after which they never change.
+    """
+    changed = False
+    seen = set()
+    for i, item in enumerate(cart.get('items') or []):
+        if not isinstance(item, dict):
+            continue
+        lid = item.get('line_id')
+        if not isinstance(lid, str) or not _LINE_ID_RE.match(lid) or lid in seen:
+            basis = f"{i}|{item.get('sku')}|{item.get('name')}|{item.get('inventory_item_id')}"
+            lid = 'B' + hashlib.sha1(basis.encode('utf-8')).hexdigest()[:11]
+            item['line_id'] = lid
+            changed = True
+        seen.add(lid)
+    return changed
+
+
+def normalize_cart(cart):
+    """Repair a cart dict in place so downstream code never KeyErrors."""
+    if not isinstance(cart, dict):
+        cart = empty_cart()
+    if not isinstance(cart.get('items'), list):
+        cart['items'] = []
+    cart.setdefault('discount_amount', 0)
+    cart.setdefault('discount_type', None)
+    cart.setdefault('discount_reason', '')
+    ensure_line_ids(cart)
+    return cart
+
+
+def find_line(cart, line_id):
+    """The cart line with this line_id, or None (never falls back to an index)."""
+    if not line_id:
+        return None
+    return next((i for i in cart.get('items', []) if i.get('line_id') == line_id), None)
+
+
+def _parse_cart(register_id, raw):
+    try:
+        cart = json.loads(raw) if raw else empty_cart()
+    except (ValueError, TypeError):
+        logger.warning(f"Corrupt cart_json for register {register_id}; resetting")
+        cart = empty_cart()
+    return normalize_cart(cart)
+
+
+def read_register_cart(conn, register_id):
+    """Return (cart, version) WITHOUT creating the row or committing, so it
+    is safe inside a caller's transaction. A missing row reads as an empty
+    cart at version 0."""
+    row = conn.execute(
+        'SELECT cart_json, cart_version FROM pos_registers WHERE register_id = ?',
+        (register_id,)
+    ).fetchone()
+    if row is None:
+        return empty_cart(), 0
+    return _parse_cart(register_id, row['cart_json']), row['cart_version']
+
+
+def write_register_cart(conn, register_id, cart):
+    """Write a cart and bump its version WITHOUT committing (the caller owns
+    the transaction). Returns the new version."""
+    conn.execute(
+        '''INSERT INTO pos_registers (register_id, cart_json, cart_version, last_seen)
+           VALUES (?, ?, 1, CURRENT_TIMESTAMP)
+           ON CONFLICT(register_id) DO UPDATE SET
+               cart_json = excluded.cart_json,
+               cart_version = pos_registers.cart_version + 1,
+               last_seen = CURRENT_TIMESTAMP''',
+        (register_id, json.dumps(cart))
+    )
+    row = conn.execute(
+        'SELECT cart_version FROM pos_registers WHERE register_id = ?',
+        (register_id,)
+    ).fetchone()
+    return row['cart_version'] if row else 1
+
+
 def load_register_cart(conn, register_id):
     """Return (cart_dict, version) for a register, creating the row if needed."""
     row = conn.execute(
@@ -91,40 +187,73 @@ def load_register_cart(conn, register_id):
         conn.commit()
         return empty_cart(), 0
 
-    try:
-        cart = json.loads(row['cart_json']) if row['cart_json'] else empty_cart()
-        if not isinstance(cart, dict):
-            cart = empty_cart()
-    except (ValueError, TypeError):
-        logger.warning(f"Corrupt cart_json for register {register_id}; resetting")
-        cart = empty_cart()
-
-    # Repair required keys so downstream code never KeyErrors
-    cart.setdefault('items', [])
-    cart.setdefault('discount_amount', 0)
-    cart.setdefault('discount_type', None)
-    cart.setdefault('discount_reason', '')
-    return cart, row['cart_version']
+    return _parse_cart(register_id, row['cart_json']), row['cart_version']
 
 
 def save_register_cart(conn, register_id, cart):
-    """Persist a register's cart and bump its version. Returns the new version."""
-    payload = json.dumps(cart)
-    conn.execute(
-        '''INSERT INTO pos_registers (register_id, cart_json, cart_version, last_seen)
-           VALUES (?, ?, 1, CURRENT_TIMESTAMP)
-           ON CONFLICT(register_id) DO UPDATE SET
-               cart_json = excluded.cart_json,
-               cart_version = pos_registers.cart_version + 1,
-               last_seen = CURRENT_TIMESTAMP''',
-        (register_id, payload)
-    )
+    """Persist a register's cart and bump its version. Returns the new version.
+
+    Blind overwrite (last write wins): request handlers must use
+    mutate_register_cart() instead. Kept for tests and one-off tools.
+    """
+    if conn.in_transaction:
+        conn.commit()
+    version = write_register_cart(conn, register_id, cart)
     conn.commit()
-    row = conn.execute(
-        'SELECT cart_version FROM pos_registers WHERE register_id = ?',
-        (register_id,)
-    ).fetchone()
-    return row['cart_version'] if row else 1
+    return version
+
+
+def begin_immediate(conn):
+    """Start a write transaction now (takes SQLite's write lock up front, so
+    concurrent writers from other worker processes queue behind us instead
+    of interleaving). Commits any implicit transaction left open first."""
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute('BEGIN IMMEDIATE')
+
+
+class CartVersionMismatch(Exception):
+    """The cart changed since the client rendered it (expected_version)."""
+
+    def __init__(self, cart, version):
+        super().__init__('cart_version_mismatch')
+        self.cart = cart
+        self.version = version
+
+
+def mutate_register_cart(conn, register_id, fn, expected_version=None):
+    """Atomically apply fn to a register's cart: load -> fn(cart) -> save, all
+    inside ONE BEGIN IMMEDIATE transaction on the register row.
+
+    Every cart change from every worker process goes through here, so two
+    devices acting on the same sale serialize and neither change is lost.
+    fn mutates the cart dict in place and may return a value; it may also
+    write other tables through `conn` (they commit atomically with the
+    cart). If fn raises, nothing is written. If fn leaves the cart unchanged
+    the version is NOT bumped (no needless peripheral refreshes).
+
+    With expected_version, raises CartVersionMismatch (writing nothing) if
+    the cart is no longer at that version -- for all-or-nothing actions such
+    as "clear the cart I am looking at".
+
+    Returns (cart, version, fn_result).
+    """
+    begin_immediate(conn)
+    try:
+        cart, version = read_register_cart(conn, register_id)
+        if expected_version is not None and expected_version != version:
+            raise CartVersionMismatch(cart, version)
+        before = json.dumps(cart, sort_keys=True)
+        result = fn(cart)
+        cart = normalize_cart(cart)
+        if json.dumps(cart, sort_keys=True) != before:
+            version = write_register_cart(conn, register_id, cart)
+        conn.commit()
+    except BaseException:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
+    return cart, version, result
 
 
 def get_register_name(conn, register_id):

@@ -194,22 +194,36 @@ def resolve_register_id():
 
 
 def get_cart():
-    """Get the current cart.
+    """Get the current cart (read-only snapshot).
 
     The authoritative cart lives on the register (pos_registers row,
     resolved via resolve_register_id). Requests with no register identity
     fall back to a session-local cart so a bare browser still works.
+
+    The version the snapshot was read at is left on g.cart_version (None for
+    session carts) so pages can render it for stale-action detection.
+
+    Never mutate the result and save it back: use mutate_cart().
     """
+    from flask import g
     from app.services import pos_registers
 
+    g.cart_version = None
     register_id = resolve_register_id()
     if register_id:
         try:
-            cart, _version = pos_registers.load_register_cart(get_request_db(), register_id)
+            cart, version = pos_registers.load_register_cart(get_request_db(), register_id)
+            g.cart_version = version
             return cart
         except Exception as e:
             logger.error(f"Error loading register cart for {register_id}: {e}")
             # Fall through to the session cart rather than 500 mid-sale
+
+    return _session_cart()
+
+
+def _session_cart():
+    from app.services import pos_registers
 
     cart = session.get('pos_cart')
     if cart is None or not isinstance(cart, dict):
@@ -217,45 +231,99 @@ def get_cart():
         session['pos_cart'] = cart
         return cart
 
-    modified = False
-    for key, default in (('items', []), ('discount_amount', 0),
-                         ('discount_type', None), ('discount_reason', '')):
-        if key not in cart:
-            cart[key] = default
-            modified = True
-    if modified:
+    before = json.dumps(cart, sort_keys=True)
+    pos_registers.normalize_cart(cart)
+    if json.dumps(cart, sort_keys=True) != before:
+        session['pos_cart'] = cart
         session.modified = True
     return cart
 
 
-def save_cart(cart):
-    """Save the cart to its single authoritative home.
+def current_cart_version():
+    """Version of the cart most recently read/written in this request
+    (None for session carts or before any read)."""
+    from flask import g
+    return g.get('cart_version')
 
-    Register-identified requests write the register row, bumping
-    cart_version — which paired displays and scanners poll — so one save
-    is the whole synchronization story. Otherwise the session cart is used.
+
+def mutate_cart(fn, expected_version=None):
+    """THE way to change the cart: fn(cart) mutates it in place (and may
+    return a value). Returns (cart, fn_result).
+
+    Register carts: load -> fn -> save inside one BEGIN IMMEDIATE transaction
+    (pos_registers.mutate_register_cart), so concurrent changes from the
+    register, a paired scanner or a slaved handheld -- in any worker
+    process -- serialize and none is lost; cart_version is bumped once.
+
+    expected_version (register carts only) makes the change all-or-nothing:
+    pos_registers.CartVersionMismatch is raised if the cart moved on.
+
+    Session carts: fn runs on a copy that replaces the session cart only if
+    fn succeeds. fn may write other tables through get_request_db(); in both
+    cases those writes commit atomically with the cart change.
     """
+    import copy
+    from flask import g
     from app.services import pos_registers
 
+    conn = get_request_db()
     register_id = resolve_register_id()
     if register_id:
         try:
-            pos_registers.save_register_cart(get_request_db(), register_id, cart)
-            return
-        except Exception as e:
-            logger.error(f"Error saving register cart for {register_id}: {e}")
+            cart, version, result = pos_registers.mutate_register_cart(
+                conn, register_id, fn, expected_version=expected_version)
+        except pos_registers.CartVersionMismatch as e:
+            g.cart_version = e.version
+            raise
+        g.cart_version = version
+        return cart, result
 
+    g.cart_version = None
+    cart = copy.deepcopy(_session_cart())
+    pos_registers.begin_immediate(conn)
+    try:
+        result = fn(cart)
+        pos_registers.normalize_cart(cart)
+        conn.commit()
+    except BaseException:
+        if conn.in_transaction:
+            conn.rollback()
+        raise
     session['pos_cart'] = cart
     session.modified = True
+    return cart, result
+
+
+def save_cart(cart):
+    """Replace the whole cart (last write wins).
+
+    Only for callers that genuinely mean "the cart is now exactly this"
+    (e.g. recalling a held order). Anything that changes part of the cart
+    must use mutate_cart() so it can't overwrite a concurrent change.
+    """
+    replacement = json.loads(json.dumps(cart))
+
+    def _replace(c):
+        c.clear()
+        c.update(replacement)
+
+    return mutate_cart(_replace)[0]
 
 
 def clear_cart():
-    """Clear the current cart (bumps the version so peripherals refresh)."""
+    """Empty the cart (bumps the version so peripherals refresh)."""
     from app.services import pos_registers
 
-    save_cart(pos_registers.empty_cart())
+    empty = pos_registers.empty_cart()
+
+    def _clear(c):
+        c.clear()
+        c.update(empty)
+
+    cart, _ = mutate_cart(_clear)
     session.pop('pos_cart', None)
     session.modified = True
+    return cart
 
 
 def compute_cart_totals(cart):

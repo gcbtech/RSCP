@@ -10,11 +10,12 @@ from flask_login import current_user, login_required
 
 from app.routes.pos import pos_bp
 from app.routes.pos.core import (
-    get_cart, save_cart, clear_cart, get_inventory_item, get_tax_rate,
-    calculate_tax, calculate_line_total, require_manager_for_void, allow_hold_orders,
-    calculate_percentage, compute_cart_totals
+    get_cart, mutate_cart, current_cart_version, get_inventory_item,
+    calculate_line_total, require_manager_for_void, allow_hold_orders,
+    compute_cart_totals
 )
-from app.services.db import get_db_connection, get_request_db
+from app.services.pos_registers import new_line_id, find_line
+from app.services.db import get_request_db
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ def sales():
     return render_template('pos/sales.html',
                            drawer_banner=drawer_banner,
                            cart=cart,
+                           cart_version=current_cart_version(),
                            subtotal=totals['subtotal'],
                            order_discount=totals['order_discount'],
                            tax_rate=totals['tax_rate_pct'],
@@ -79,6 +81,7 @@ def _render_cart_ajax(cart):
     totals = compute_cart_totals(cart)
     return render_template('pos/_cart_fragment.html',
                            cart=cart,
+                           cart_version=current_cart_version(),
                            subtotal=totals['subtotal'],
                            order_discount=totals['order_discount'],
                            tax_rate=totals['tax_rate_pct'],
@@ -99,13 +102,17 @@ def _reject_line_discount(cart, message):
     return redirect(url_for('pos.sales'))
 
 
-def _cart_json(cart, success=True, error=None, status=200):
-    """JSON cart state for scanner clients: totals + drained flash messages."""
+def _cart_json(cart, success=True, error=None, status=200, extra=None):
+    """JSON cart state for scanner clients: totals, the cart_version they
+    describe, and drained flash messages."""
     from flask import get_flashed_messages
     payload = compute_cart_totals(cart)
     payload['success'] = success
+    payload['version'] = current_cart_version()
     if error:
         payload['error'] = error
+    if extra:
+        payload.update(extra)
     # Drain flashes (stock warnings etc.) into the JSON response so they
     # surface on the scanner instead of piling up in its session.
     payload['messages'] = [
@@ -113,6 +120,44 @@ def _cart_json(cart, success=True, error=None, status=200):
         for cat, msg in get_flashed_messages(with_categories=True)
     ]
     return jsonify(payload), status
+
+
+def _respond(cart, success=True, error=None, status=200):
+    """Answer a cart action in whatever form the client asked for."""
+    if _wants_json():
+        return _cart_json(cart, success=success, error=error, status=status)
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return _render_cart_ajax(cart)
+    return redirect(url_for('pos.sales'))
+
+
+def _client_cart_version():
+    """The cart_version the client rendered from (optional), or None."""
+    raw = request.form.get('cart_version')
+    if raw is None or str(raw).strip() == '':
+        return None
+    try:
+        version = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return version if version >= 0 else None  # -1 = client never synced
+
+
+def _line_gone(cart):
+    """The target line no longer exists (removed on another device, or the
+    sale was completed/cleared). Never act on a different line -- report it
+    and hand back the current cart.
+
+    Lines are addressed by line_id, so a client acting from a stale
+    cart_version is safe whenever its line still exists; the version only
+    tells us (and the client) that it was looking at an old cart."""
+    flash('That item was already removed from the cart (it changed on another device).', 'warning')
+    if _wants_json():
+        client_version = _client_cart_version()
+        stale = client_version is not None and client_version != current_cart_version()
+        return _cart_json(cart, success=False, error='line_not_found', status=409,
+                          extra={'stale': stale})
+    return redirect(url_for('pos.sales'))
 
 
 @pos_bp.route('/cart/fragment')
@@ -137,55 +182,47 @@ def cart_add():
 
     if not sku:
         flash('Please enter a SKU or scan an item.')
-        if _wants_json():
-            return _cart_json(get_cart(), success=False, error='missing_sku', status=400)
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return _render_cart_ajax(get_cart())
-        return redirect(url_for('pos.sales'))
+        return _respond(get_cart(), success=False, error='missing_sku', status=400)
 
-    # Look up the item
+    # Look up the item (outside the cart lock: the lock covers only the cart)
     item = get_inventory_item(sku)
     if not item:
         flash(f'Item not found: {sku}. Use "Add Custom Item" for non-inventory items.', 'warning')
-        if _wants_json():
-            return _cart_json(get_cart(), success=False, error='not_found', status=404)
-        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-            return _render_cart_ajax(get_cart())
-        return redirect(url_for('pos.sales'))
-    
-    cart = get_cart()
-    
-    # Check how many of this item are already in cart by inventory_item_id
-    # (not by input sku, since user may have searched by UPC or part number)
-    existing = next((i for i in cart['items'] if i.get('inventory_item_id') == item['id']), None)
-    cart_qty = existing['quantity'] if existing else 0
-    total_qty = cart_qty + quantity
-    
-    # Check stock (warning only, don't block)
-    if item['quantity'] <= 0:
-        flash(f'⚠️ STOCK WARNING: "{item["name"]}" shows OUT OF STOCK in inventory!', 'warning')
-    elif total_qty > item['quantity']:
-        flash(f'⚠️ STOCK WARNING: Selling {total_qty} but only {item["quantity"]} in inventory!', 'warning')
-    
-    # Check for legacy item (warning only, allow sale)
-    if item.get('is_legacy'):
-        flash(f'📦 LEGACY ITEM: "{item["name"]}" is marked as discontinued. Proceed with sale if appropriate.', 'warning')
-    
-    # Calculate line total
+        return _respond(get_cart(), success=False, error='not_found', status=404)
+
     unit_price = item.get('current_price') or item.get('sell_price') or 0
-    line_total = calculate_line_total(unit_price, quantity)
-    
-    # Check if item already in cart - if so, update quantity
-    if existing:
-        existing['quantity'] += quantity
-        existing['line_total'] = calculate_line_total(
-            existing['unit_price'], 
-            existing['quantity'],
-            existing.get('discount_amount', 0),
-            existing.get('discount_type')
-        )
-    else:
+
+    def _add(cart):
+        # Check how many of this item are already in cart by inventory_item_id
+        # (not by input sku, since user may have searched by UPC or part number)
+        existing = next((i for i in cart['items'] if i.get('inventory_item_id') == item['id']), None)
+        cart_qty = existing['quantity'] if existing else 0
+        total_qty = cart_qty + quantity
+
+        # Check stock (warning only, don't block)
+        if item['quantity'] <= 0:
+            flash(f'⚠️ STOCK WARNING: "{item["name"]}" shows OUT OF STOCK in inventory!', 'warning')
+        elif total_qty > item['quantity']:
+            flash(f'⚠️ STOCK WARNING: Selling {total_qty} but only {item["quantity"]} in inventory!', 'warning')
+
+        # Check for legacy item (warning only, allow sale)
+        if item.get('is_legacy'):
+            flash(f'📦 LEGACY ITEM: "{item["name"]}" is marked as discontinued. Proceed with sale if appropriate.', 'warning')
+
+        # Item already in cart - add to that line's quantity
+        if existing:
+            existing['quantity'] += quantity
+            existing['line_total'] = calculate_line_total(
+                existing['unit_price'],
+                existing['quantity'],
+                existing.get('discount_amount', 0),
+                existing.get('discount_type')
+            )
+            return existing['line_id']
+
+        line_id = new_line_id()
         cart['items'].append({
+            'line_id': line_id,
             'inventory_item_id': item['id'],
             'sku': sku,
             'name': item['name'],
@@ -197,18 +234,13 @@ def cart_add():
             'stock_quantity': item['quantity'],  # Current inventory stock level
             'discount_amount': 0,
             'discount_type': None,
-            'line_total': line_total,
+            'line_total': calculate_line_total(unit_price, quantity),
             'image_url': item.get('image_url'),
         })
-    
-    save_cart(cart)
+        return line_id
 
-    if _wants_json():
-        return _cart_json(cart)
-    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
-        return _render_cart_ajax(cart)
-
-    return redirect(url_for('pos.sales'))
+    cart, _line_id = mutate_cart(_add)
+    return _respond(cart)
 
 
 @pos_bp.route('/cart/add-custom', methods=['POST'])
@@ -236,104 +268,125 @@ def cart_add_custom():
         flash('Price cannot be negative.')
         return redirect(url_for('pos.sales'))
 
-    cart = get_cart()
-    
-    # Generate a unique custom SKU with timestamp to avoid collisions
-    timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-    custom_sku = f"CUSTOM-{timestamp}-{len(cart['items']) + 1}"
-    line_total = calculate_line_total(unit_price, quantity)
-    
-    cart['items'].append({
-        'inventory_item_id': None,  # No inventory link
-        'sku': custom_sku,
-        'name': name,
-        'quantity': quantity,
-        'unit_price': unit_price,
-        'sell_price': unit_price,  # For template price warning check
-        'discount_amount': 0,
-        'discount_type': None,
-        'line_total': line_total,
-        'image_url': None,
-        'is_custom': True,
-    })
-    
-    save_cart(cart)
+    line_id = new_line_id()
+
+    def _add_custom(cart):
+        # Unique custom SKU (timestamp + part of the line id) so concurrent
+        # custom items never collide
+        timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
+        cart['items'].append({
+            'line_id': line_id,
+            'inventory_item_id': None,  # No inventory link
+            'sku': f"CUSTOM-{timestamp}-{line_id[1:5].upper()}",
+            'name': name,
+            'quantity': quantity,
+            'unit_price': unit_price,
+            'sell_price': unit_price,  # For template price warning check
+            'discount_amount': 0,
+            'discount_type': None,
+            'line_total': calculate_line_total(unit_price, quantity),
+            'image_url': None,
+            'is_custom': True,
+        })
+
+    mutate_cart(_add_custom)
     flash(f'Custom item "{name}" added.')
     return redirect(url_for('pos.sales'))
 
 
-@pos_bp.route('/cart/remove/<int:index>', methods=['POST'])
-def cart_remove(index):
-    """Remove an item from the cart."""
-    cart = get_cart()
-
+@pos_bp.route('/cart/remove/<line_id>', methods=['POST'])
+def cart_remove(line_id):
+    """Remove one cart line, addressed by its stable line_id."""
     # Check if manager auth required
     if require_manager_for_void():
         # Check for manager session auth
         if not session.get('pos_manager_auth'):
             flash('Manager authentication required to void items.')
             if _wants_json():
-                return _cart_json(cart, success=False, error='manager_required', status=403)
+                return _cart_json(get_cart(), success=False, error='manager_required', status=403)
             return redirect(url_for('pos.sales'))
 
-    if 0 <= index < len(cart['items']):
-        removed = cart['items'].pop(index)
-        flash(f'Removed: {removed["name"]}')
-        save_cart(cart)
+    def _remove(cart):
+        line = find_line(cart, line_id)
+        if line is not None:
+            cart['items'] = [i for i in cart['items'] if i is not line]
+        return line
 
-    if _wants_json():
-        return _cart_json(cart)
-    return redirect(url_for('pos.sales'))
+    cart, removed = mutate_cart(_remove)
+    if removed is None:
+        return _line_gone(cart)
+    flash(f'Removed: {removed["name"]}')
+    return _respond(cart)
 
 
-@pos_bp.route('/cart/update/<int:index>', methods=['POST'])
-def cart_update(index):
-    """Update quantity or discount for a cart item."""
-    cart = get_cart()
-    
-    if 0 <= index < len(cart['items']):
-        item = cart['items'][index]
-        
-        # Update quantity
-        quantity = request.form.get('quantity')
-        if quantity:
-            item['quantity'] = max(1, int(quantity))
-        
-        # Update discount
-        discount_amount = request.form.get('discount_amount')
+@pos_bp.route('/cart/update/<line_id>', methods=['POST'])
+def cart_update(line_id):
+    """Update quantity or discount for one cart line (by line_id).
+
+    quantity sets an absolute quantity (the register's qty box);
+    quantity_delta adjusts it relative to the CURRENT value (the scanner's
+    +/- buttons), so a concurrent add on the other device isn't overwritten.
+    """
+    quantity = None
+    raw_qty = request.form.get('quantity')
+    if raw_qty:
+        try:
+            quantity = max(1, int(raw_qty))
+        except (TypeError, ValueError):
+            quantity = None
+    delta = None
+    raw_delta = request.form.get('quantity_delta')
+    if raw_delta:
+        try:
+            delta = int(raw_delta)
+        except (TypeError, ValueError):
+            delta = None
+
+    # Discount: validated up front (the limits don't depend on the cart)
+    discount = None
+    discount_amount = request.form.get('discount_amount')
+    if discount_amount is not None:
         discount_type = request.form.get('discount_type')
-        if discount_amount is not None:
-            try:
-                line_discount = float(discount_amount) if discount_amount else 0
-            except ValueError:
-                line_discount = 0
-            if discount_type not in ('percent', 'fixed'):
-                discount_type = 'fixed'
-            if line_discount < 0 or (discount_type == 'percent' and line_discount > 100):
-                return _reject_line_discount(cart, 'Invalid discount amount.')
-            # Same limits as order-level discounts: beyond them, managers only.
-            from app.services.data_manager import load_config
-            from app.utils.permissions import has_permission
-            conf = load_config()
-            over_limit = (discount_type == 'percent' and line_discount > conf.get('POS_MAX_DISCOUNT_PERCENT', 10)) or                          (discount_type == 'fixed' and line_discount > conf.get('POS_MAX_DISCOUNT_AMOUNT', 20))
-            if over_limit and not has_permission(current_user, 'pos.manage'):
-                return _reject_line_discount(cart, 'Discount exceeds limit. Manager approval required.')
-            item['discount_amount'] = line_discount
-            item['discount_type'] = discount_type if line_discount > 0 else None
-        
-        # Recalculate line total
+        try:
+            line_discount = float(discount_amount) if discount_amount else 0
+        except ValueError:
+            line_discount = 0
+        if discount_type not in ('percent', 'fixed'):
+            discount_type = 'fixed'
+        if line_discount < 0 or (discount_type == 'percent' and line_discount > 100):
+            return _reject_line_discount(get_cart(), 'Invalid discount amount.')
+        # Same limits as order-level discounts: beyond them, managers only.
+        from app.services.data_manager import load_config
+        from app.utils.permissions import has_permission
+        conf = load_config()
+        over_limit = ((discount_type == 'percent' and line_discount > conf.get('POS_MAX_DISCOUNT_PERCENT', 10)) or
+                      (discount_type == 'fixed' and line_discount > conf.get('POS_MAX_DISCOUNT_AMOUNT', 20)))
+        if over_limit and not has_permission(current_user, 'pos.manage'):
+            return _reject_line_discount(get_cart(), 'Discount exceeds limit. Manager approval required.')
+        discount = (line_discount, discount_type if line_discount > 0 else None)
+
+    def _update(cart):
+        item = find_line(cart, line_id)
+        if item is None:
+            return None
+        if quantity is not None:
+            item['quantity'] = quantity
+        elif delta:
+            item['quantity'] = max(1, int(item.get('quantity', 1)) + delta)
+        if discount is not None:
+            item['discount_amount'], item['discount_type'] = discount
         item['line_total'] = calculate_line_total(
             item['unit_price'],
             item['quantity'],
             item.get('discount_amount', 0),
             item.get('discount_type')
         )
+        return item
 
-        save_cart(cart)
-
-    if _wants_json():
-        return _cart_json(cart)
-    return redirect(url_for('pos.sales'))
+    cart, updated = mutate_cart(_update)
+    if updated is None:
+        return _line_gone(cart)
+    return _respond(cart)
 
 
 @pos_bp.route('/cart/discount', methods=['POST'])
@@ -341,10 +394,9 @@ def cart_discount():
     """Apply order-level discount. Requires manager approval if threshold exceeded."""
     from app.services.data_manager import load_config
     from datetime import datetime
-    
-    cart = get_cart()
+
     config = load_config()
-    
+
     discount_amount = request.form.get('discount_amount', 0)
     discount_type = request.form.get('discount_type', 'fixed')
     discount_reason = request.form.get('discount_reason', '')
@@ -362,26 +414,23 @@ def cart_discount():
     if discount_value < 0 or (discount_type == 'percent' and discount_value > 100):
         flash('Invalid discount amount.')
         return redirect(url_for('pos.sales'))
-    if discount_value > 0 and (cart.get('applied_coupon') or {}).get('cannot_combine'):
-        flash('The applied coupon cannot be combined with other discounts.')
-        return redirect(url_for('pos.sales'))
-    
+
     # Check if discount exceeds thresholds
     needs_approval = False
     max_percent = config.get('POS_MAX_DISCOUNT_PERCENT', 10)
     max_amount = config.get('POS_MAX_DISCOUNT_AMOUNT', 20)
-    
+
     if discount_value > 0:
         if discount_type == 'percent' and discount_value > max_percent:
             needs_approval = True
         elif discount_type == 'fixed' and discount_value > max_amount:
             needs_approval = True
-    
+
     # Admins and POS managers approve their own discounts
     from app.utils.permissions import has_permission
     if has_permission(current_user, 'pos.manage'):
         needs_approval = False
-    
+
     # Check for manager override approval from session
     if needs_approval and not manager_override:
         manager_auth = session.get('pos_discount_manager_auth')
@@ -391,23 +440,30 @@ def cart_discount():
             if datetime.now().timestamp() - auth_time < 120:
                 manager_override = manager_auth.get('username')
                 needs_approval = False
-    
+
     if needs_approval and not manager_override:
         # Return error - frontend should show manager approval modal
         flash(f'Discount exceeds limit. Manager approval required (max {max_percent}% or ${max_amount}).')
         return redirect(url_for('pos.sales'))
-    
-    # Apply the discount
-    cart['discount_amount'] = discount_value
-    cart['discount_type'] = discount_type if discount_value > 0 else None
-    cart['discount_reason'] = discount_reason
-    if manager_override:
-        cart['discount_approved_by'] = manager_override
-    
+
+    def _apply(cart):
+        if discount_value > 0 and (cart.get('applied_coupon') or {}).get('cannot_combine'):
+            return False
+        cart['discount_amount'] = discount_value
+        cart['discount_type'] = discount_type if discount_value > 0 else None
+        cart['discount_reason'] = discount_reason
+        if manager_override:
+            cart['discount_approved_by'] = manager_override
+        return True
+
+    _cart, applied = mutate_cart(_apply)
+    if not applied:
+        flash('The applied coupon cannot be combined with other discounts.')
+        return redirect(url_for('pos.sales'))
+
     # Clear the session approval
     session.pop('pos_discount_manager_auth', None)
-    
-    save_cart(cart)
+
     if manager_override:
         flash(f'Order discount applied (approved by {manager_override}).')
     else:
@@ -417,78 +473,116 @@ def cart_discount():
 
 @pos_bp.route('/cart/clear', methods=['POST'])
 def cart_clear():
-    """Clear the entire cart."""
-    clear_cart()
+    """Clear the entire cart.
+
+    If the client says which cart_version it was looking at and the cart has
+    changed since (e.g. the customer's scanner just added an item), nothing
+    is cleared: the user reviews the cart and confirms again.
+    """
+    from app.services import pos_registers
+    empty = pos_registers.empty_cart()
+
+    def _clear(c):
+        c.clear()
+        c.update(empty)
+
+    try:
+        cart, _ = mutate_cart(_clear, expected_version=_client_cart_version())
+    except pos_registers.CartVersionMismatch as e:
+        flash('The cart changed on another device. Review it, then clear again if needed.', 'warning')
+        if _wants_json():
+            return _cart_json(e.cart, success=False, error='cart_changed', status=409)
+        return redirect(url_for('pos.sales'))
     flash('Cart cleared.')
     if _wants_json():
-        return _cart_json(get_cart())
+        return _cart_json(cart)
     return redirect(url_for('pos.sales'))
 
 
 @pos_bp.route('/cart/hold', methods=['POST'])
 def cart_hold():
-    """Hold the current cart for later recall at any register."""
+    """Hold the current cart for later recall at any register.
+
+    The hold record and the clear happen in one transaction under the cart
+    lock, so an item a paired scanner adds at the same moment is either in
+    the held order or left in the (new) cart -- never dropped.
+    """
     if not allow_hold_orders():
         flash('Hold orders feature is disabled.')
         if _wants_json():
             return _cart_json(get_cart(), success=False, error='holds_disabled', status=400)
         return redirect(url_for('pos.sales'))
 
-    cart = get_cart()
-    if not cart['items']:
+    note = request.form.get('note', '')
+    from app.services import pos_registers
+
+    def _hold(cart):
+        if not cart['items']:
+            return False
+        get_request_db().execute('''
+            INSERT INTO pos_held_orders (operator_id, cart_data, note)
+            VALUES (?, ?, ?)
+        ''', (current_user.id, json.dumps(cart), note))
+        cart.clear()
+        cart.update(pos_registers.empty_cart())
+        return True
+
+    try:
+        cart, held = mutate_cart(_hold)
+    except Exception as e:
+        logger.error(f"Error holding cart: {e}")
+        flash('Error holding cart.')
+        if _wants_json():
+            return _cart_json(get_cart(), success=False, error='hold_failed', status=500)
+        return redirect(url_for('pos.sales'))
+
+    if not held:
         flash('Cannot hold an empty cart.')
         if _wants_json():
             return _cart_json(cart, success=False, error='empty_cart', status=400)
         return redirect(url_for('pos.sales'))
 
-    note = request.form.get('note', '')
-
-    conn = get_db_connection()
-    try:
-        conn.execute('''
-            INSERT INTO pos_held_orders (operator_id, cart_data, note)
-            VALUES (?, ?, ?)
-        ''', (current_user.id, json.dumps(cart), note))
-        conn.commit()
-        clear_cart()
-        flash('Cart held for later.')
-    except Exception as e:
-        logger.error(f"Error holding cart: {e}")
-        flash('Error holding cart.')
-    finally:
-        conn.close()
-
+    flash('Cart held for later.')
     if _wants_json():
-        return _cart_json(get_cart())
+        return _cart_json(cart)
     return redirect(url_for('pos.sales'))
 
 
 @pos_bp.route('/cart/recall/<int:held_id>', methods=['POST'])
 def cart_recall(held_id):
-    """Recall a held cart."""
-    conn = get_db_connection()
+    """Recall a held cart into the (empty) current cart.
+
+    Refused while the current cart has items, so recalling can't silently
+    discard a sale in progress (including items a paired scanner just added).
+    The held row is deleted in the same transaction that loads it.
+    """
+    def _recall(cart):
+        if cart['items']:
+            return 'busy'
+        conn = get_request_db()
+        row = conn.execute('SELECT cart_data FROM pos_held_orders WHERE id = ?',
+                           (held_id,)).fetchone()
+        if not row:
+            return 'missing'
+        held = json.loads(row['cart_data'])
+        if not isinstance(held, dict):
+            raise ValueError('corrupt held order')
+        conn.execute('DELETE FROM pos_held_orders WHERE id = ?', (held_id,))
+        cart.clear()
+        cart.update(held)
+        return 'ok'
+
     try:
-        # Store-wide: any register can recall a hold, including ones
-        # created by a different operator on a handheld scanner.
-        result = conn.execute('''
-            SELECT cart_data FROM pos_held_orders
-            WHERE id = ?
-        ''', (held_id,)).fetchone()
-        
-        if result:
-            cart = json.loads(result['cart_data'])
-            save_cart(cart)
-            
-            # Delete the held order
-            conn.execute('DELETE FROM pos_held_orders WHERE id = ?', (held_id,))
-            conn.commit()
-            flash('Cart recalled.')
-        else:
-            flash('Held order not found.')
+        _cart, outcome = mutate_cart(_recall)
     except Exception as e:
         logger.error(f"Error recalling cart: {e}")
         flash('Error recalling cart.')
-    finally:
-        conn.close()
-    
+        return redirect(url_for('pos.sales'))
+
+    if outcome == 'ok':
+        flash('Cart recalled.')
+    elif outcome == 'busy':
+        flash('Finish, hold or clear the current sale before recalling another order.', 'warning')
+    else:
+        flash('Held order not found.')
     return redirect(url_for('pos.sales'))

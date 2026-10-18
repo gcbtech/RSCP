@@ -569,44 +569,49 @@ def apply_coupon():
     """Apply a coupon to the cart, re-validating and recomputing the discount
     server-side. Only the coupon CODE from the client is trusted; the posted
     discount amount is ignored and re-derived from the authoritative live cart,
-    so a crafted request can't apply an arbitrary (or oversized) discount."""
-    from app.routes.pos.core import get_cart, save_cart
+    so a crafted request can't apply an arbitrary (or oversized) discount.
+
+    Evaluated under the cart lock (mutate_cart), so the discount matches the
+    exact cart it is saved onto even if a scanner is adding items."""
+    from app.routes.pos.core import mutate_cart
+    from app.services.db import get_request_db
 
     data = request.get_json() or {}
     code = data.get('code', '').strip().upper()
     if not code:
         return jsonify({'success': False, 'error': 'Coupon code required.'}), 400
 
-    cart = get_cart()
-    cart_items = cart.get('items', [])
-    cart_subtotal = sum(item.get('line_total', 0) for item in cart_items)
+    def _apply(cart):
+        cart_items = cart.get('items', [])
+        cart_subtotal = sum(item.get('line_total', 0) for item in cart_items)
+        result = evaluate_coupon(code, cart_items, cart_subtotal, get_request_db(), cart=cart)
+        if not result.get('valid'):
+            return result
+        coupon = result['coupon']
+        cart['applied_coupon'] = {
+            'id': coupon['id'],
+            'code': coupon['code'],
+            'name': coupon['name'],
+            'discount': result['discount_amount'],
+            'cannot_combine': coupon.get('cannot_combine', False),
+        }
+        return result
 
-    conn = get_db_connection()
-    result = evaluate_coupon(code, cart_items, cart_subtotal, conn, cart=cart)
+    _cart, result = mutate_cart(_apply)
     if not result.get('valid'):
         return jsonify({'success': False, 'error': result.get('error', 'Invalid coupon.')}), 400
-
-    coupon = result['coupon']
-    cart['applied_coupon'] = {
-        'id': coupon['id'],
-        'code': coupon['code'],
-        'name': coupon['name'],
-        'discount': result['discount_amount'],
-        'cannot_combine': coupon.get('cannot_combine', False),
-    }
-    save_cart(cart)
 
     return jsonify({'success': True, 'discount_amount': result['discount_amount']})
 
 
 @pos_bp.route('/api/coupon/remove', methods=['POST'])
 def remove_coupon():
-    """Remove applied coupon from cart session."""
-    from app.routes.pos.core import get_cart, save_cart
-    
-    cart = get_cart()
-    if 'applied_coupon' in cart:
-        cart['applied_coupon'] = None
-        save_cart(cart)
-    
+    """Remove the applied coupon from the cart."""
+    from app.routes.pos.core import mutate_cart
+
+    def _remove(cart):
+        if cart.get('applied_coupon'):
+            cart['applied_coupon'] = None
+
+    mutate_cart(_remove)
     return jsonify({'success': True})
