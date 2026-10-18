@@ -23,131 +23,66 @@ from app.utils.permissions import require_permission
 logger = logging.getLogger(__name__)
 
 
+# Longest range the dashboard will chart (a day per point); wider custom ranges keep the end date.
+_DASHBOARD_MAX_DAYS = 7320
+
+
+def _dashboard_range():
+    """(start, end, use_custom_range) from ?start_date&end_date or the ?days preset.
+    Junk falls back to the default timeframe instead of failing."""
+    def parse(value):
+        try:
+            d = date.fromisoformat(value)
+        except ValueError:
+            return None
+        return d if 1971 <= d.year <= 2999 else None
+
+    start = parse(request.args.get('start_date', '').strip())
+    end = parse(request.args.get('end_date', '').strip())
+    if start and end:
+        if start > end:
+            start, end = end, start
+        start = max(start, end - timedelta(days=_DASHBOARD_MAX_DAYS - 1))
+        return start, end, True
+
+    try:
+        days = int(request.args.get('days') or get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30'))
+    except (TypeError, ValueError):
+        days = 30
+    days = min(max(days, 1), _DASHBOARD_MAX_DAYS)
+    end = date.today()
+    return end - timedelta(days=days - 1), end, False
+
+
 @pos_bp.route('/management')
 @require_permission('pos.manage')
 def management():
-    """Management dashboard with analytics overview."""
+    """Management dashboard. Money figures come from the report engine
+    (pos_reports), so they match the End of Day, Custom and Top Sellers reports."""
+    from app.services.pos_reports import build_sales_report, daily_sales_series, generate_top_sellers_data
+
     conn = get_request_db()
-    
-    # Date range - support both "days" preset OR custom start/end dates
-    default_days = get_pos_setting('POS_DEFAULT_REPORT_TIMEFRAME', '30')
-    
-    # Check for custom date range first
-    custom_start = request.args.get('start_date', '').strip()
-    custom_end = request.args.get('end_date', '').strip()
-    
-    if custom_start and custom_end:
-        # Custom date range mode
-        start_date = custom_start
-        end_date = custom_end
-        # Calculate days for display
-        from datetime import datetime
-        try:
-            d1 = datetime.strptime(custom_start, '%Y-%m-%d')
-            d2 = datetime.strptime(custom_end, '%Y-%m-%d')
-            days = (d2 - d1).days + 1
-        except:
-            days = 0
-        use_custom_range = True
-    else:
-        # Days preset mode
-        days = int(request.args.get('days', default_days))
-        lookback = max(0, days - 1)
-        start_date = (date.today() - timedelta(days=lookback)).strftime('%Y-%m-%d')
-        end_date = date.today().strftime('%Y-%m-%d')
-        use_custom_range = False
-    
-    # Summary stats
-    stats = conn.execute('''
-        SELECT 
-            COUNT(*) as total_orders,
-            COALESCE(SUM(total), 0) as total_revenue,
-            COALESCE(AVG(total), 0) as avg_order,
-            COALESCE(SUM(discount_amount), 0) as total_discounts,
-            COALESCE(SUM(tax_amount), 0) as total_tax
-        FROM pos_orders
-        WHERE date(created_at, 'localtime') BETWEEN ? AND ? AND status != 'held'
-    ''', (start_date, end_date)).fetchone()
-    
-    # Refund stats
-    refund_stats = conn.execute('''
-        SELECT 
-            COUNT(*) as refund_count,
-            COALESCE(SUM(amount), 0) as refund_total
-        FROM pos_refunds
-        WHERE date(created_at, 'localtime') BETWEEN ? AND ?
-    ''', (start_date, end_date)).fetchone()
-    
-    # Profit stats
-    profit_stats = conn.execute('''
-        SELECT 
-            COALESCE(SUM(oi.line_total), 0) as gross_sales,
-            COALESCE(SUM(oi.quantity * COALESCE(inv.buy_price, 0)), 0) as cogs,
-            COALESCE(SUM(oi.line_total), 0) - COALESCE(SUM(oi.quantity * COALESCE(inv.buy_price, 0)), 0) as estimated_profit
-        FROM pos_order_items oi
-        JOIN pos_orders o ON oi.order_id = o.id
-        LEFT JOIN inventory_items inv ON oi.inventory_item_id = inv.id
-        WHERE date(o.created_at, 'localtime') BETWEEN ? AND ? AND o.status != 'held'
-        AND oi.inventory_item_id IS NOT NULL
-    ''', (start_date, end_date)).fetchone()
-    
-    # Daily sales trend
-    days_data = conn.execute('''
-        SELECT date(created_at, 'localtime') as day, 
-               COUNT(*) as orders,
-               COALESCE(SUM(total), 0) as revenue
-        FROM pos_orders
-        WHERE date(created_at, 'localtime') BETWEEN ? AND ? AND status != 'held'
-        GROUP BY date(created_at, 'localtime')
-        ORDER BY day
-    ''', (start_date, end_date)).fetchall()
-    
-    # Fill in missing dates with 0
-    daily_sales = []
-    sales_map = {row['day']: row for row in days_data}
-    
-    # Generate date range
-    from datetime import datetime as dt
-    try:
-        range_start = dt.strptime(start_date, '%Y-%m-%d')
-        range_end = dt.strptime(end_date, '%Y-%m-%d')
-        delta_days = (range_end - range_start).days + 1
-        for i in range(delta_days):
-            d = (range_start + timedelta(days=i)).strftime('%Y-%m-%d')
-            if d in sales_map:
-                daily_sales.append(sales_map[d])
-            else:
-                daily_sales.append({'day': d, 'orders': 0, 'revenue': 0})
-    except:
-        daily_sales = list(days_data)
-    
-    # Top sellers -- same figures as the Top Sellers report ("View All" opens it with this range)
-    from app.services.pos_reports import generate_top_sellers_data
-    try:
-        top_report = generate_top_sellers_data(date.fromisoformat(start_date), date.fromisoformat(end_date), {})
-        top_sellers = [{'sku': i['sku'], 'name': i['name'], 'sold': i['net_qty'], 'revenue': i['net_revenue']}
-                       for i in top_report['items'][:10]]
-    except ValueError:
-        top_sellers = []
-    
-    # Payment method breakdown
-    payment_breakdown = conn.execute('''
-        SELECT payment_method, COUNT(*) as count, SUM(total) as amount
-        FROM pos_orders
-        WHERE date(created_at, 'localtime') BETWEEN ? AND ? AND status != 'held'
-        GROUP BY payment_method
-    ''', (start_date, end_date)).fetchall()
-    
+    start, end, use_custom_range = _dashboard_range()
+
+    report = build_sales_report(start, end, conn=conn)
+    avg_order = round(report['sales_total'] / report['order_count'], 2) if report['order_count'] else 0.0
+    daily_sales = daily_sales_series(start, end, conn=conn)
+
+    # Top sellers and est. profit -- same figures as the Top Sellers report ("View All" opens it with this range)
+    top_report = generate_top_sellers_data(start, end, {})
+    top_sellers = [{'sku': i['sku'], 'name': i['name'], 'sold': i['net_qty'], 'revenue': i['net_revenue']}
+                   for i in top_report['items'][:10]]
+
     return render_template('pos/management.html',
-                           stats=stats,
-                           refund_stats=refund_stats,
-                           profit_stats=profit_stats,
+                           report=report,
+                           avg_order=avg_order,
+                           profit=top_report['summary'],
                            daily_sales=daily_sales,
                            top_sellers=top_sellers,
-                           payment_breakdown=payment_breakdown,
-                           days=days,
-                           start_date=start_date,
-                           end_date=end_date,
+                           payment_breakdown=[t for t in report['tenders'] if t['collected'] > 0],
+                           days=(end - start).days + 1,
+                           start_date=start.isoformat(),
+                           end_date=end.isoformat(),
                            use_custom_range=use_custom_range,
                            tax_rate=get_tax_rate() * 100)
 
