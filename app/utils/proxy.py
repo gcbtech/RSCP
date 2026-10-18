@@ -76,3 +76,14 @@ class TrustedProxyFix:
                            f"all tunnel users will appear as {peer}. If this is your cloudflared "
                            f"host, add it under Admin > Settings > Reverse Proxy / Tunnel.")
         return self.raw_app(environ, start_response)
+
+
+def get_client_ip():
+    """The requesting client's address, for rate limits and logs.
+
+    TrustedProxyFix has already rewritten REMOTE_ADDR from X-Forwarded-For
+    when (and only when) the peer is a trusted proxy, so this is the one
+    place to ask; never read X-Forwarded-For directly.
+    """
+    from flask import request
+    return request.remote_addr or 'unknown'

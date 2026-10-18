@@ -4,47 +4,37 @@ PIN and badge login for POS operators.
 """
 import logging
 import time
-from collections import defaultdict
 from flask import request, redirect, url_for, flash, render_template, session
 from flask_login import login_user, current_user
 from werkzeug.security import check_password_hash
 
 from app.routes.pos import pos_bp
+from app.services import throttle
 from app.services.db import get_db_connection, get_request_db
 from app.services.auth import load_users, User
 from app.utils.permissions import has_permission
+from app.utils.proxy import get_client_ip
 
 logger = logging.getLogger(__name__)
 
-# Rate limiting for POS login (in-memory, per worker)
-_pos_login_attempts = defaultdict(list)
-_POS_RATE_LIMIT = 5  # max attempts
-_POS_RATE_WINDOW = 60  # seconds
+# Failed POS sign-ins (badge, PIN or password), shared across all gunicorn
+# workers via services/throttle. Per register IP: 10 failures a minute, so a
+# busy register where cashiers fat-finger PINs is never held up for long,
+# while one machine can't run through PINs quickly. Per username (PIN and
+# password forms): 10 failures per 15 minutes, the same allowance as /login;
+# with 4-digit PINs this is what actually stops guessing one account. A
+# correct sign-in from a register without its own recent failures is never
+# blocked by failures elsewhere (see throttle.FailureLimit).
+POS_LOGIN = throttle.FailureLimit('pos_login', ip_limit=10, ip_window=60,
+                                  user_limit=10, user_window=15 * 60)
 
 
-def check_pos_rate_limit(identifier: str) -> bool:
-    """
-    Check if identifier (IP address) is rate limited.
-    Returns True if rate limited (blocked), False if allowed.
-    """
-    current = time.time()
-    # Clean old attempts
-    _pos_login_attempts[identifier] = [
-        t for t in _pos_login_attempts[identifier] 
-        if current - t < _POS_RATE_WINDOW
-    ]
-    
-    if len(_pos_login_attempts[identifier]) >= _POS_RATE_LIMIT:
-        return True
-    
-    _pos_login_attempts[identifier].append(current)
-    return False
-
-
-def get_client_ip() -> str:
-    """Get client IP, accounting for reverse proxy."""
-    # X-Forwarded-For is handled by ProxyFix middleware
-    return request.remote_addr or 'unknown'
+def _sign_in(user, how):
+    login_user(user)
+    session['login_time'] = time.time()
+    POS_LOGIN.succeeded(user.username)
+    logger.info(f"POS {how} login: {user.username}")
+    return redirect(url_for('pos.sales'))
 
 
 @pos_bp.route('/login', methods=['GET', 'POST'])
@@ -55,41 +45,35 @@ def pos_login():
         return redirect(url_for('pos.sales'))
     
     if request.method == 'POST':
-        # Rate limiting check
         client_ip = get_client_ip()
-        if check_pos_rate_limit(client_ip):
-            logger.warning(f"POS rate limit exceeded for IP: {client_ip}")
-            flash('Too many login attempts. Please wait a minute.')
-            return render_template('pos/login.html')
-        
         login_type = request.form.get('login_type', 'password')
+        username = '' if login_type == 'badge' else request.form.get('username', '').strip()
+
+        if POS_LOGIN.refused(client_ip, username):
+            logger.warning(f"POS login throttled for '{username}' from {client_ip}")
+            flash('Too many failed sign-in attempts. Please wait a minute and try again.')
+            return render_template('pos/login.html'), 429
         
         if login_type == 'badge':
             badge_id = request.form.get('badge_id', '').strip()
             if badge_id:
                 user = authenticate_by_badge(badge_id)
                 if user:
-                    login_user(user)
-                    session['login_time'] = time.time()
-                    logger.info(f"POS badge login: {user.username}")
-                    return redirect(url_for('pos.sales'))
+                    return _sign_in(user, 'badge')
+                POS_LOGIN.failed(client_ip)
                 flash('Invalid badge.')
         
         elif login_type == 'pin':
-            username = request.form.get('username', '').strip()
             pin = request.form.get('pin', '')
             
             if username and pin:
                 user = authenticate_by_pin(username, pin)
                 if user:
-                    login_user(user)
-                    session['login_time'] = time.time()
-                    logger.info(f"POS PIN login: {user.username}")
-                    return redirect(url_for('pos.sales'))
+                    return _sign_in(user, 'PIN')
+                POS_LOGIN.failed(client_ip, username)
                 flash('Invalid username or PIN.')
         
         else:  # Standard password login
-            username = request.form.get('username', '').strip()
             password = request.form.get('password', '')
             
             if username and password:
@@ -97,11 +81,8 @@ def pos_login():
                 user_data = users.get(username)
                 
                 if user_data and check_password_hash(user_data['password_hash'], password):
-                    user = User.get_by_username(username)
-                    login_user(user)
-                    session['login_time'] = time.time()
-                    logger.info(f"POS password login: {username}")
-                    return redirect(url_for('pos.sales'))
+                    return _sign_in(User.get_by_username(username), 'password')
+                POS_LOGIN.failed(client_ip, username)
                 flash('Invalid username or password.')
     
     return render_template('pos/login.html')

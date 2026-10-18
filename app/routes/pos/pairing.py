@@ -30,9 +30,21 @@ from flask_login import current_user, login_required
 
 from app.routes.pos import pos_bp
 from app.services.db import get_request_db
-from app.services import pos_registers
+from app.services import pos_registers, throttle
+from app.utils.proxy import get_client_ip
 
 logger = logging.getLogger(__name__)
+
+# Rate limits, shared across gunicorn workers (services/throttle).
+# Code requests are public: 20 per minute per IP is far above what a real
+# peripheral needs (one request per pairing screen, refreshed every ~8 min)
+# and stops one client from flooding the code table. Code claims test a
+# guess against the live 6-digit codes: 10 wrong codes per 5 minutes per
+# register IP allows plenty of typos yet makes hitting someone else's code
+# (a few live codes out of 1,000,000) practically impossible.
+PAIRING_REQUEST_LIMIT = 20
+PAIRING_REQUEST_WINDOW = 60  # seconds
+PAIRING_CLAIM = throttle.FailureLimit('pairing_claim', ip_limit=10, ip_window=300)
 
 
 # =====================================================================
@@ -68,6 +80,11 @@ def pairing_request_code():
         return jsonify({'success': False, 'message': 'peripheral_id required'}), 400
     if role not in pos_registers.VALID_ROLES:
         return jsonify({'success': False, 'message': 'Invalid role'}), 400
+
+    client_ip = get_client_ip()
+    if throttle.is_limited('pairing_request', client_ip, PAIRING_REQUEST_LIMIT, PAIRING_REQUEST_WINDOW):
+        return jsonify({'success': False, 'message': 'Too many requests. Try again shortly.'}), 429
+    throttle.hit('pairing_request', client_ip)
 
     try:
         code = pos_registers.create_pairing_code(get_request_db(), peripheral_id, role)
@@ -230,6 +247,11 @@ def register_claim_code():
     if not code or not register_id:
         return jsonify({'success': False, 'message': 'code and register_id required'}), 400
 
+    client_ip = get_client_ip()
+    if PAIRING_CLAIM.refused(client_ip):
+        return jsonify({'success': False,
+                        'message': 'Too many wrong codes. Wait a few minutes and try again.'}), 429
+
     try:
         conn = get_request_db()
         result = pos_registers.claim_pairing_code(
@@ -251,6 +273,7 @@ def register_claim_code():
             'message': f'{role_label} paired successfully!',
         })
     except ValueError:
+        PAIRING_CLAIM.failed(client_ip)
         return jsonify({'success': False, 'message': 'Invalid or expired pairing code'}), 404
     except Exception as e:
         logger.error(f"Error claiming pairing code: {e}")

@@ -11,6 +11,11 @@ Usage:
         return 429
     ...on failure:  throttle.hit('login_ip', ip)
     ...on success:  throttle.clear('login_user', username)
+
+Credential checks (PIN, password, badge, codes) use FailureLimit, which
+bundles the per-IP and per-username buckets for one kind of check. The IP
+must come from app.utils.proxy.get_client_ip (TrustedProxyFix), never from
+X-Forwarded-For directly.
 """
 import logging
 import time
@@ -68,3 +73,63 @@ def clear(bucket, key):
         logger.error(f"[Throttle] clear failed for {bucket}: {e}")
     finally:
         conn.close()
+
+
+class FailureLimit:
+    """Failed-attempt limits for one kind of credential check.
+
+    Two dimensions, both counting failures only:
+
+    * Per client IP: `ip_limit` failures within `ip_window` seconds refuse
+      every further attempt from that IP, right or wrong, until the oldest
+      failure ages out.
+    * Per target username (optional, only where the form names a user):
+      `user_limit` failures within `user_window` against one username, from
+      any IP, refuse further attempts for that username -- except from an IP
+      that has no failures of its own for this check within `user_window`.
+      That keeps a cashier at a clean register able to sign in while someone
+      elsewhere hammers their username, so failures from a different IP never
+      lock out a correct sign-in; a guesser spreading attempts over many
+      addresses gets one try per fresh IP per window.
+
+    A success clears the username's failures but not the IP's: knowing one
+    valid PIN must not reset an IP's budget for guessing the others.
+    """
+
+    def __init__(self, name, ip_limit, ip_window, user_limit=None, user_window=None):
+        self.name = name
+        self.ip_bucket = f'{name}_ip'
+        self.user_bucket = f'{name}_user'
+        self.ip_limit = ip_limit
+        self.ip_window = ip_window
+        self.user_limit = user_limit
+        self.user_window = user_window
+
+    @staticmethod
+    def _user_key(username):
+        return (username or '').strip().lower()
+
+    def _tracks_user(self, username):
+        return bool(self.user_limit and self._user_key(username))
+
+    def refused(self, ip, username=None):
+        """True if this attempt must be refused without checking the credential."""
+        if is_limited(self.ip_bucket, ip, self.ip_limit, self.ip_window):
+            return True
+        if self._tracks_user(username) and is_limited(
+                self.user_bucket, self._user_key(username), self.user_limit, self.user_window):
+            # The username is under attack; only an IP with its own recent
+            # failures is turned away.
+            return is_limited(self.ip_bucket, ip, 1, self.user_window)
+        return False
+
+    def failed(self, ip, username=None):
+        """Record one failed attempt."""
+        hit(self.ip_bucket, ip)
+        if self._tracks_user(username):
+            hit(self.user_bucket, self._user_key(username))
+
+    def succeeded(self, username=None):
+        """Record a successful attempt: forget the username's failures."""
+        if self._tracks_user(username):
+            clear(self.user_bucket, self._user_key(username))
