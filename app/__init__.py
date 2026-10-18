@@ -2,8 +2,6 @@ from flask import Flask, session, g, request
 import os
 import logging
 from datetime import timedelta
-from flask_limiter import Limiter
-from flask_limiter.util import get_remote_address
 
 # Import Routes
 from app.routes.main import main_bp
@@ -28,6 +26,33 @@ def _template_config(conf):
     (e.g. config.SSO_CLIENT_SECRET_SET)."""
     from app.services.settings import template_view
     return template_view(conf)
+
+
+# Requests per minute per client IP for the public pairing endpoints.
+PAIRING_RATE_LIMITS = {
+    'pos.pairing_request_code': 20,
+    'pos.register_claim_code': 15,
+}
+
+
+def _per_ip_rate_limit(view, bucket, limit, window):
+    """Wrap a view: at most `limit` requests per `window` seconds per client
+    IP (app/services/throttle.py), else 429. RATELIMIT_ENABLED=False in the
+    app config turns it off (tests)."""
+    import functools
+    from app.services import throttle
+
+    @functools.wraps(view)
+    def limited(*args, **kwargs):
+        from flask import current_app, jsonify
+        if current_app.config.get('RATELIMIT_ENABLED', True):
+            ip = request.remote_addr or 'unknown'
+            if throttle.is_limited(bucket, ip, limit, window):
+                return jsonify({'success': False,
+                                'message': 'Too many requests. Wait a minute and try again.'}), 429
+            throttle.hit(bucket, ip)
+        return view(*args, **kwargs)
+    return limited
 
 
 def create_app(test_config=None):
@@ -84,21 +109,11 @@ def create_app(test_config=None):
     # File Upload Size Limit (32MB)
     app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
     
-    # Rate Limiter (attached to app, used in routes)
-    # Per-IP rate limiting to prevent abuse
-    limiter = Limiter(
-        key_func=get_remote_address,
-        app=app,
-        default_limits=[],
-        storage_uri="memory://"
-    )
-    app.limiter = limiter  # Make accessible to blueprints
-    
     # Static file caching (1 week for images, CSS, JS)
     app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 604800  # 7 days in seconds
     
-    # Login throttling lives in app/routes/auth.py (shared across workers via
-    # SQLite); Flask-Limiter's memory:// store is per-process.
+    # Rate limits (login, pairing codes, manager overrides) use the SQLite
+    # ledger in app/services/throttle.py, shared by all gunicorn workers.
 
     # Database connection cleanup (for request-scoped connections)
     from app.services.db import init_app as init_db_app
@@ -152,18 +167,13 @@ def create_app(test_config=None):
     from app.routes.notifications import notifications_bp
     app.register_blueprint(notifications_bp)
     
-    # Rate-limit the public POS pairing endpoints (6-digit code guessing).
-    # Applied here, after blueprint registration, so the view functions exist.
-    try:
-        for endpoint, limit in (
-            ('pos.pairing_request_code', '20 per minute'),
-            ('pos.register_claim_code', '15 per minute'),
-        ):
-            view = app.view_functions.get(endpoint)
-            if view:
-                app.view_functions[endpoint] = limiter.limit(limit)(view)
-    except Exception as e:
-        logging.warning(f"Could not apply pairing rate limits: {e}")
+    # Rate-limit the public POS pairing endpoints (6-digit code guessing),
+    # per client IP across all workers. Applied here, after blueprint
+    # registration, so the view functions exist.
+    for endpoint, limit in PAIRING_RATE_LIMITS.items():
+        view = app.view_functions.get(endpoint)
+        if view:
+            app.view_functions[endpoint] = _per_ip_rate_limit(view, endpoint, limit, 60)
 
 
     # Global Error Handler

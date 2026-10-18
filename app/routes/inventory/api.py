@@ -1,10 +1,9 @@
 """
 Inventory API Module
 JSON API endpoints for inventory operations.
-Rate limited to 100 requests per minute per IP.
 """
 import logging
-from flask import request, session, jsonify, current_app
+from flask import request, session, jsonify
 from flask_login import current_user
 
 from app.routes.inventory import inventory_bp
@@ -13,15 +12,6 @@ from app.services.db import get_db_connection
 from app.services import inventory
 
 logger = logging.getLogger(__name__)
-
-# Rate limit decorator helper - applied to each API route
-def get_api_limiter():
-    """Get limiter with API rate limit (100 per minute per IP)."""
-    try:
-        return current_app.limiter.limit("100 per minute")
-    except AttributeError:
-        return lambda f: f  # No-op if limiter not available
-
 
 @inventory_bp.route('/api/match/<asin>')
 def match_asin(asin):

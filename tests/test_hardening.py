@@ -112,6 +112,48 @@ def test_login_rejects_offsite_next(fresh_client):
     assert 'evil.com' not in r.headers['Location']
 
 
+# --- pairing endpoints are rate limited per IP (throttle.py) -----------------
+
+def test_pairing_code_requests_are_rate_limited_across_workers(fresh_app, fresh_client):
+    """The limit lives in the shared rate_events ledger, not in one process:
+    a second client (as if served by another worker) shares the allowance."""
+    from app import PAIRING_RATE_LIMITS
+    limit = PAIRING_RATE_LIMITS['pos.pairing_request_code']
+    other = fresh_app.test_client()
+    for i in range(limit):
+        client = fresh_client if i % 2 else other
+        r = client.post('/pos/api/pairing/request-code', json={'peripheral_id': f'p{i}'})
+        assert r.status_code == 200, (i, r.get_json())
+    r = fresh_client.post('/pos/api/pairing/request-code', json={'peripheral_id': 'one-more'})
+    assert r.status_code == 429
+    assert r.get_json()['success'] is False
+    # Another IP is unaffected.
+    r = fresh_client.post('/pos/api/pairing/request-code', json={'peripheral_id': 'x'},
+                          environ_base={'REMOTE_ADDR': '10.9.8.7'})
+    assert r.status_code == 200
+
+
+def test_claim_code_guessing_is_rate_limited(fresh_client):
+    from app import PAIRING_RATE_LIMITS
+    login(fresh_client, 2)
+    for _ in range(PAIRING_RATE_LIMITS['pos.register_claim_code']):
+        r = fresh_client.post('/pos/api/register/claim-code', json={'code': '000000', 'register_id': 'R1'})
+        assert r.status_code != 429
+    r = fresh_client.post('/pos/api/register/claim-code', json={'code': '000000', 'register_id': 'R1'})
+    assert r.status_code == 429
+
+
+def test_rate_limit_can_be_disabled_by_config(fresh_app, fresh_client):
+    from app import PAIRING_RATE_LIMITS
+    fresh_app.config['RATELIMIT_ENABLED'] = False
+    try:
+        for i in range(PAIRING_RATE_LIMITS['pos.pairing_request_code'] + 2):
+            r = fresh_client.post('/pos/api/pairing/request-code', json={'peripheral_id': f'p{i}'})
+            assert r.status_code == 200
+    finally:
+        fresh_app.config['RATELIMIT_ENABLED'] = True
+
+
 # --- POS settings are manager-only ------------------------------------------
 
 def _tax_rate(app):

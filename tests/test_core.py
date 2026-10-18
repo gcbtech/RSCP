@@ -65,10 +65,7 @@ class TestApplicationStartup:
         """Application should have a secret key configured."""
         assert app.secret_key is not None
         assert len(app.secret_key) > 0
-    
-    def test_rate_limiter_attached(self, app):
-        """Rate limiter should be attached to app."""
-        assert hasattr(app, 'limiter')
+
 
 
 class TestConfigurationManagement:
