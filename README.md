@@ -2,9 +2,11 @@
 
 A self-hosted package and shipment management system for tracking incoming packages, deliveries, returns, and inventory.
 
-![Version](https://img.shields.io/badge/version-2.6.0-blue)
+[![Tests](https://github.com/gcbtech/RSCP/actions/workflows/tests.yml/badge.svg)](https://github.com/gcbtech/RSCP/actions/workflows/tests.yml)
+[![Stable](https://img.shields.io/github/v/release/gcbtech/RSCP?label=stable)](https://github.com/gcbtech/RSCP/releases/latest)
+[![Beta](https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fraw.githubusercontent.com%2Fgcbtech%2FRSCP%2Fbeta%2FVERSION&search=%5Cd%2B%5C.%5Cd%2B%5C.%5Cd%2B&label=beta&color=orange)](https://github.com/gcbtech/RSCP/tree/beta)
 ![Python](https://img.shields.io/badge/python-3.11+-green)
-![Flask](https://img.shields.io/badge/flask-2.3+-orange)
+![Flask](https://img.shields.io/badge/flask-3.1+-orange)
 
 ## Features
 
@@ -279,8 +281,90 @@ rscp/
 Run the test suite with pytest:
 
 ```bash
-python -m pytest tests/ -v
+pip install -r requirements-dev.txt
+python -m pytest -q -p no:cacheprovider tests/
 ```
+
+Tests never touch real data: `tests/conftest.py` points `RSCP_DATA_DIR` at a
+temporary folder and builds each app on a fresh database.
+
+GitHub Actions (`.github/workflows/tests.yml`) runs on every push and pull
+request: the suite on Python 3.11 and 3.12 (Ubuntu, UTC), plus a lint job
+(`bash -n install.sh`, `shellcheck install.sh`, `python -m compileall app`).
+Merge and release only from a green run.
+
+## Releases
+
+### Channels
+
+| Channel | What it installs | Who reads it |
+|---------|------------------|--------------|
+| **stable** | the newest GitHub Release (`releases/latest`), else the highest `vX.Y.Z` tag | `install.sh` default, the updater's *Stable* button |
+| **beta** | the tip of the `beta` branch | `install.sh --channel beta`, the updater's *Beta* button |
+
+Both the installer and **Admin > System Updates** download a GitHub tarball
+(`archive/refs/tags/vX.Y.Z.tar.gz` or `archive/refs/heads/beta.tar.gz`), so a
+release only exists once its tag is pushed. Pin a host to one release with
+`sudo /opt/rscp/bin/rscp-update --upgrade --version vX.Y.Z` (or
+`install.sh --version vX.Y.Z` for a fresh install).
+
+Until the first tag exists, stable falls back to the `main` branch, and the
+install one-liner always fetches `install.sh` from `main`, so keep `main` on
+the latest release.
+
+### Branch flow
+
+`dev` -> `beta` -> `main`, fast-forward only. Work lands on `dev` (directly or
+by merging feature branches); `beta` is moved up to a tested `dev` commit;
+`main` is moved up to the commit a release tag points at. No automation
+commits to any of these branches, so `git push origin dev:beta` and the
+`main` update below never need a merge or a force.
+
+### Cutting a release
+
+1. On `dev`, bump `VERSION` (e.g. `3.0.0`) in its own commit and push. Wait
+   for the Tests run to pass.
+2. Promote to beta and let beta hosts run it:
+   `git push origin dev:beta`
+3. When beta is good, tag that exact commit, push the tag, and move `main`:
+
+   ```bash
+   git fetch origin
+   git tag -a v3.0.0 -m "RSCP 3.0.0" origin/beta
+   git push origin v3.0.0
+   git push origin "v3.0.0^{commit}:refs/heads/main"
+   ```
+
+4. Publish a GitHub Release for the tag (this is what `releases/latest`
+   returns, and what turns the stable update on for every host):
+
+   ```bash
+   gh release create v3.0.0 --verify-tag --title "RSCP 3.0.0" --notes-file NOTES.md
+   ```
+
+   Use `--prerelease` for a release candidate: pre-releases are never
+   "latest". If you ever publish a fix for an older line after a newer
+   release, pass `--latest=false` so stable does not go backwards.
+
+Tags are permanent: never move or re-push a published tag. Ship a new patch
+version instead.
+
+### Repairing `main` (one time)
+
+`main` is stale at 2.6.0 and carries one commit that is not on `dev`
+(`0fd7446 Delete tests directory`), so it cannot be fast-forwarded. Its
+parent is already on `dev`, so nothing is lost by realigning it. Either point
+it at the current release on `dev` now, or do it as part of the first
+release (step 3 above, with `--force-with-lease` added once):
+
+```bash
+git fetch origin
+git push --force-with-lease=main:0fd74468 origin origin/dev:refs/heads/main
+```
+
+This rewrites `main`, so it needs the repo owner's approval and, if branch
+protection is on, a temporary allowance for force-pushes. After that, `main`
+only ever moves forward.
 
 ## Security
 
