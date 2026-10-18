@@ -12,7 +12,6 @@ A self-hosted package and shipment management system for tracking incoming packa
 - **Package Scanning** - Barcode/tracking number scanning with status tracking
 - **Dashboard** - Live stats for expected, received, past-due, and returned items
 - **Return Management** - Track returns and refunds with reason logging
-- **Email Ingestion** - Auto-import tracking from Amazon shipping emails
 - **Webhook Alerts** - Priority package notifications to Slack/Discord
 
 ### 📋 Inventory Management
@@ -247,9 +246,6 @@ cd /opt/rscp/current && sudo -u rscp RSCP_DATA_DIR=/var/lib/rscp venv/bin/python
 | `FLASK_ENV` | Set to `production` for secure cookies |
 | `RSCP_SECRET_KEY` | Flask session secret key |
 | `RSCP_WEBHOOK_URL` | Webhook URL for priority alerts |
-| `RSCP_IMAP_SERVER` | IMAP server for email ingestion |
-| `RSCP_EMAIL_USER` | Email username |
-| `RSCP_EMAIL_PASS` | Email password |
 
 ### First Run
 On first run, the setup wizard creates:

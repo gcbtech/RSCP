@@ -33,7 +33,6 @@ The Receiving module is your "Inbox" for physical goods. It tracks everything co
 
 ### Key Functions
 *   **Dashboard**: A high-level view of your pipeline. See what's **Expected**, **Pending** (arrived but not processed), and **Past Due**.
-*   **Email Ingestion**: Forward your Amazon/eBay "Shipped" emails to your RSCP email address. The system automatically extracts tracking numbers and item names.
 *   **Scan & Receive**: Use a barcode scanner (or mobile camera) to scan incoming tracking numbers.
     *   *Found*: System marks it as "Received" and shows you what's inside.
     *   *Unknown*: System prompts you to add a new manual entry on the fly.

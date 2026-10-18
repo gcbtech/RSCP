@@ -62,7 +62,7 @@ def receiving_dashboard():
     stats = get_dashboard_stats()
     scans = get_scan_count(14)
 
-    # When package data last came in (upload, email or manual add)
+    # When package data last came in (upload or manual add; old rows may say email)
     from app.services.package_imports import last_import
     last = last_import(get_request_db())
     refresh_info = []

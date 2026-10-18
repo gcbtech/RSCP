@@ -1,6 +1,7 @@
 """
-Packages live only in the database: uploads, email ingest, placeholder
-matching, the (tracking, item) identity rule and schema migration 10.
+Packages live only in the database: uploads, placeholder matching (including
+rows left by the retired email ingest), the (tracking, item) identity rule and
+schema migrations 10 and 12.
 """
 import datetime
 import io
@@ -170,55 +171,40 @@ def test_ebay_export_uses_duplicate_tracking_column():
 ORDER = '113-1234567-1234567'
 
 
-def test_email_placeholder_gets_real_tracking_from_shipping_email(fresh_app, monkeypatch):
-    from app.services import package_imports as pi
-    from app.services import data_manager
-
-    monkeypatch.setattr(data_manager, 'load_config', lambda *a, **k: {
-        'EMAIL_INGEST_ENABLED': True, 'IMAP_SERVER': 'imap.test', 'EMAIL_USER': 'u', 'EMAIL_PASS': 'p'})
-    order_email = [{'tracking': f'ORDER-{ORDER}-01', 'order_id': ORDER, 'carrier_tracking': None,
-                    'name': 'Garden Hose 50ft', 'image_url': 'http://img/hose.jpg', 'quantity': 2,
-                    'date': '2030-01-01'}]
-    with fresh_app.app_context():
-        result = pi.run_email_ingest(fetch=lambda *a: order_email)
-    assert result['status'] == 'success' and result['added'] == 1
+def test_upload_placeholder_gets_real_tracking_from_later_upload(fresh_app, fresh_client):
+    login(fresh_client, 1)
+    # An order with no carrier tracking yet: the order ID stands in for it
+    _upload(fresh_client, (CSV_HEADER + f',Garden Hose,2030-01-01,2,{ORDER}\n').encode(),
+            'ordered.csv', CSV_MAPPING)
     placeholder = _rows(fresh_app)[0]
-    assert placeholder['tracking_number'] == f'ORDER-{ORDER}-01'
-    assert placeholder['source'] == 'email' and placeholder['order_id'] == ORDER
+    assert placeholder['tracking_number'] == ORDER and placeholder['order_id'] == ORDER
 
-    # Staff flag it as priority while it is on the way
     conn = _conn(fresh_app)
     conn.execute('UPDATE packages SET priority = 1 WHERE id = ?', (placeholder['id'],))
     conn.commit()
     conn.close()
 
-    shipped = [dict(order_email[0], carrier_tracking='1ZSHIPPED123')]
-    with fresh_app.app_context():
-        result = pi.run_email_ingest(fetch=lambda *a: shipped)
-    assert result['added'] == 0 and result['updated'] == 1
+    _upload(fresh_client, (CSV_HEADER + f'1ZSHIPPED123,Garden Hose,2030-01-09,2,{ORDER}\n').encode(),
+            'shipped.csv', CSV_MAPPING)
     rows = _rows(fresh_app)
     assert len(rows) == 1
     assert rows[0]['id'] == placeholder['id']
     assert rows[0]['tracking_number'] == '1ZSHIPPED123'
+    assert rows[0]['date_expected'] == '2030-01-09'
     assert rows[0]['priority'] == 1
 
-    imports = _rows(fresh_app, 'SELECT source, rows_added, rows_updated FROM package_imports ORDER BY id')
-    assert [(i['source'], i['rows_added'], i['rows_updated']) for i in imports] == \
-        [('email', 1, 0), ('email', 0, 1)]
-
-    # The same emails again change nothing and log nothing
-    with fresh_app.app_context():
-        pi.run_email_ingest(fetch=lambda *a: shipped)
+    # The order-ID-only file again does not bring the placeholder back
+    _upload(fresh_client, (CSV_HEADER + f',Garden Hose,2030-01-01,2,{ORDER}\n').encode(),
+            'ordered.csv', CSV_MAPPING)
     assert len(_rows(fresh_app)) == 1
-    assert len(_rows(fresh_app, 'SELECT * FROM package_imports')) == 2
 
 
-def test_upload_gives_placeholder_its_real_tracking(fresh_app, fresh_client):
-    from app.services import package_imports as pi
+def test_upload_gives_legacy_email_placeholder_its_real_tracking(fresh_app, fresh_client):
+    # A row the retired email ingest left behind ('ORDER-...' tracking, source 'email')
     conn = _conn(fresh_app)
-    pi.ingest_email_items(conn, [{'tracking': f'ORDER-{ORDER}-01', 'order_id': ORDER,
-                                  'name': 'Garden Hose', 'image_url': 'http://img/hose.jpg',
-                                  'quantity': 3, 'date': '2030-01-01'}])
+    conn.execute("INSERT INTO packages (tracking_number, item_name, date_expected, quantity, status, "
+                 "image_url, source, order_id) VALUES (?, 'Garden Hose', '2030-01-01', 3, 'on_time', "
+                 "'http://img/hose.jpg', 'email', ?)", (f'ORDER-{ORDER}-01', ORDER))
     conn.commit()
     ph_id = conn.execute('SELECT id FROM packages').fetchone()['id']
     conn.close()
@@ -236,31 +222,6 @@ def test_upload_gives_placeholder_its_real_tracking(fresh_app, fresh_client):
     assert row['image_url'] == 'http://img/hose.jpg'   # kept from the email
     assert row['quantity'] == 3                        # the email's quantity is trusted
     assert row['date_expected'] == '2030-01-09'
-
-
-def test_email_after_upload_enriches_instead_of_duplicating(fresh_app, fresh_client):
-    from app.services import package_imports as pi
-    login(fresh_client, 1)
-    csv_data = (CSV_HEADER + f'1ZUP1,Garden Hose,2030-01-09,1,{ORDER}\n').encode()
-    _upload(fresh_client, csv_data, 'amazon.csv', CSV_MAPPING)
-
-    conn = _conn(fresh_app)
-    added, updated = pi.ingest_email_items(conn, [{
-        'tracking': f'ORDER-{ORDER}-01', 'order_id': ORDER, 'name': 'Hose, garden, 50ft',
-        'image_url': 'http://img/hose.jpg', 'quantity': 1, 'date': '2030-01-01'}])
-    conn.commit()
-    conn.close()
-    assert (added, updated) == (0, 1)
-    rows = _rows(fresh_app)
-    assert len(rows) == 1 and rows[0]['image_url'] == 'http://img/hose.jpg'
-
-
-def test_extract_tracking_number_needs_a_label():
-    from email_ingest import extract_tracking_number
-    assert extract_tracking_number('Your Tracking number: 1Z999AA10123456784 ships') == '1Z999AA10123456784'
-    assert extract_tracking_number('Tracking ID TBA301234567890') == 'TBA301234567890'
-    assert extract_tracking_number('Order # 113-1234567-1234567 total $12.00') is None
-    assert extract_tracking_number('Tracking number available soon') is None
 
 
 def test_status_refresh_follows_the_calendar(fresh_app):

@@ -463,10 +463,3 @@ def check_history(tracking: str, conn=None) -> bool:
     finally:
         if close_conn:
             conn.close()
-
-# --- EMAIL INGEST INTEGRATION ---
-
-def sync_email_ingest():
-    """Run the email ingest now (admin button). Same path as the background job."""
-    from app.services.package_imports import run_email_ingest
-    return run_email_ingest()

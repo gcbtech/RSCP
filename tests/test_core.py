@@ -303,7 +303,7 @@ class TestBackgroundTasks:
         
         assert isinstance(status, dict)
         assert 'last_maintenance' in status
-        assert 'last_email_check' in status
+        assert 'last_email_check' not in status   # email ingest was removed
         assert 'maintenance_count' in status
         assert 'errors' in status
 class TestVersionComparison:

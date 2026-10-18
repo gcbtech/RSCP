@@ -133,11 +133,6 @@
             color: #c2185b;
         }
 
-        .icon-automation {
-            background: #fff8e1;
-            color: #ffa000;
-        }
-
         .icon-backup {
             background: #eceff1;
             color: #546e7a;
@@ -1510,61 +1505,6 @@
                                         autocomplete="new-password" value=""
                                         placeholder="{{ '(saved - leave blank to keep)' if config.PUBLIC_API_KEY_SET else 'Not set (API disabled)' }}">
                                     <button class="btn btn-outline-primary btn-sm w-100" type="submit">Save</button>
-                                </form>
-                            </div>
-                        </div>
-
-                        <!-- Automation -->
-                        <div class="admin-card">
-                            <div class="card-header">
-                                <div class="icon icon-automation">🤖</div>
-                                <span>Email Automation</span>
-                            </div>
-                            <div class="card-body">
-                                <form action="{{ url_for('settings.save') }}" method="POST">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <input type="hidden" name="group" value="automation">
-                                    <div class="alert alert-light small mb-3">
-                                        <strong>Auto-Ingest:</strong> Checks email for Amazon shipping notifications
-                                        every 15 mins.
-                                    </div>
-                                    <div class="mb-2">
-                                        <label class="form-label small fw-bold">IMAP Server</label>
-                                        <input type="text" name="IMAP_SERVER" class="form-control form-control-sm"
-                                            placeholder="imap.gmail.com" value="{{ config.get('IMAP_SERVER', '') }}">
-                                    </div>
-                                    <div class="mb-2">
-                                        <label class="form-label small fw-bold">Email Address</label>
-                                        <input type="email" name="EMAIL_USER" class="form-control form-control-sm"
-                                            placeholder="burner@example.com" value="{{ config.get('EMAIL_USER', '') }}">
-                                        <div class="form-text small text-warning">
-                                            ⚠️ <strong>Security Tip:</strong> Use a dedicated "burner" email
-                                            account,
-                                            not your personal one. Create a separate Gmail/Outlook just for RSCP.
-                                        </div>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label class="form-label small fw-bold">App Password</label>
-                                        <input type="password" name="EMAIL_PASS" class="form-control form-control-sm" autocomplete="new-password"
-                                            placeholder="Leave blank to keep existing">
-                                    </div>
-                                    <div class="form-check form-switch mb-3">
-                                        <input type="hidden" name="EMAIL_INGEST_ENABLED" value="false">
-                                        <input class="form-check-input" type="checkbox" name="EMAIL_INGEST_ENABLED" value="true"
-                                            id="ingestSwitch" {% if config.get('EMAIL_INGEST_ENABLED') %}checked{% endif
-                                            %}>
-                                        <label class="form-check-label" for="ingestSwitch">Enable
-                                            Auto-Ingest</label>
-                                    </div>
-                                    <button class="btn btn-primary w-100 mb-2" type="submit">Save Settings</button>
-                                </form>
-                                <hr>
-                                <form action="/admin/run_email_ingest" method="POST">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button class="btn btn-warning w-100" type="submit" {% if not
-                                        config.get('EMAIL_INGEST_ENABLED') %}disabled{% endif %}>
-                                        ⚡ Run Ingest Now
-                                    </button>
                                 </form>
                             </div>
                         </div>
