@@ -3,6 +3,7 @@
 
 <head>
     <title>Timesheet Report</title>
+    <script src="{{ url_for('static', filename='js/rscp-common.js') }}"></script>
     <link rel="icon" href="{{ favicon }}">
     <style>
         body {
@@ -106,8 +107,8 @@
 
 <body>
     <div class="no-print" style="margin-bottom: 20px;">
-        <button onclick="window.print()" style="padding: 10px 20px; cursor: pointer;">🖨️ Print / Save PDF</button>
-        <button onclick="window.close()" style="padding: 10px 20px; cursor: pointer;">Unknown Close</button>
+        <button data-action="print" style="padding: 10px 20px; cursor: pointer;">🖨️ Print / Save PDF</button>
+        <button data-action="closeWindow" style="padding: 10px 20px; cursor: pointer;">Unknown Close</button>
     </div>
 
     <div class="header">
@@ -168,6 +169,7 @@
     </div>
     {% endfor %}
 
+    <script src="{{ url_for('static', filename='js/pages/timeclock-report-print.js') }}"></script>
 </body>
 
 </html>

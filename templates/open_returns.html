@@ -26,7 +26,7 @@
                         }}</small>
                 </div>
                 <form action="/mark_refunded/{{ item.tracking }}" method="POST" style="display:inline;"
-                    onsubmit="return confirm('Confirm refund is complete?');">
+                    data-confirm="Confirm refund is complete?">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-success btn-sm">Mark Refunded</button>
                 </form>
@@ -39,5 +39,5 @@
     {% endif %}
 {% endblock %}
 {% block scripts %}
-    <script>if (localStorage.getItem('rscp_darkmode') === 'true') { document.body.style.backgroundColor = '#121212'; document.body.style.color = '#e0e0e0'; }</script>
+    <script src="{{ url_for('static', filename='js/pages/receiving-lists.js') }}"></script>
 {% endblock %}

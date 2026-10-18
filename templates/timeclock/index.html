@@ -172,12 +172,5 @@
     </div>
 {% endblock %}
 {% block scripts %}
-    <script>
-        function updateClock() {
-            const now = new Date();
-            document.getElementById('liveClock').innerText = now.toLocaleTimeString();
-        }
-        setInterval(updateClock, 1000);
-        updateClock();
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/timeclock-index.js') }}"></script>
 {% endblock %}

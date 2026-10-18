@@ -64,7 +64,7 @@
 
             <div class="d-grid gap-2 mt-4">
                 <a href="/" class="btn btn-outline-dark">Return to Dashboard</a>
-                <a href="javascript:history.back()" class="btn btn-link text-muted">Go Back</a>
+                <a href="#" class="btn btn-link text-muted" data-action="goBack">Go Back</a>
             </div>
 
             <div class="req-id">
@@ -73,4 +73,7 @@
             </div>
         </div>
     </div>
+{% endblock %}
+{% block scripts %}
+    <script src="{{ url_for('static', filename='js/pages/core-error.js') }}"></script>
 {% endblock %}

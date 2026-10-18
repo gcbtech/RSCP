@@ -4,11 +4,10 @@
     <td><input type="checkbox" name="trackings" value="{{ tracking }}"></td>
     <td class="text-center">
         {% if data.image and data.image|lower != 'nan' and data.image|length > 10 %}
-        <a href="#" onclick="showImage({{ data.image|js }}); return false;">
+        <a href="#" data-action="showImage" data-src="{{ data.image }}">
             <img src="{{ data.image }}" alt="Img"
                 style="width: 40px; height: 40px; object-fit: contain; border-radius: 4px; background: #f8f9fa;"
-                loading="lazy"
-                onerror="this.onerror=null; this.src='https://placehold.co/40x40?text=?'; this.style.border='1px solid red';">
+                loading="lazy" data-fallback-src="https://placehold.co/40x40?text=?">
         </a>
         {% endif %}
     </td>
@@ -20,11 +19,11 @@
         <div class="d-flex">
             <input type="date" id="date_{{ tracking }}" class="form-control form-control-sm me-1" required>
             <button type="button" class="btn btn-sm btn-outline-dark"
-                onclick="submitDate({{ tracking|js }})">Set</button>
+                data-action="submitDate" data-tracking="{{ tracking }}">Set</button>
         </div>
         {% else %}
         <div class="date-display" id="dateDisplay_{{ tracking }}">
-            <span onclick="toggleDateEdit({{ tracking|js }})" style="cursor: pointer;" title="Click to edit">
+            <span data-action="toggleDateEdit" data-tracking="{{ tracking }}" style="cursor: pointer;" title="Click to edit">
                 {{ data.date | format_date(date_format) }}
                 {% if data.manual_date %}<span class="badge bg-info text-dark ms-1">M</span>{% endif %}
                 <small class="text-muted ms-1">✏️</small>
@@ -35,9 +34,9 @@
                 <input type="date" id="date_{{ tracking }}" class="form-control form-control-sm me-1"
                     value="{{ data.date_expected }}">
                 <button type="button" class="btn btn-sm btn-success"
-                    onclick="submitDate({{ tracking|js }})">Save</button>
+                    data-action="submitDate" data-tracking="{{ tracking }}">Save</button>
                 <button type="button" class="btn btn-sm btn-outline-secondary ms-1"
-                    onclick="toggleDateEdit({{ tracking|js }})">✕</button>
+                    data-action="toggleDateEdit" data-tracking="{{ tracking }}">✕</button>
             </div>
         </div>
         {% endif %}
@@ -48,7 +47,7 @@
     </td>
     <td>
         <div class="qty-display" id="qtyDisplay_{{ data.id }}">
-            <span onclick="toggleQtyEdit({{ data.id }})" style="cursor: pointer;" title="Click to edit Qty">
+            <span data-action="toggleQtyEdit" data-id="{{ data.id }}" style="cursor: pointer;" title="Click to edit Qty">
                 <code>{{ data.quantity or 1 }}</code>
             </span>
         </div>
@@ -56,14 +55,14 @@
             <div class="d-flex" style="width: 80px;">
                 <input type="number" id="qtyInput_{{ data.id }}" class="form-control form-control-sm px-1 py-0 me-1"
                     value="{{ data.quantity or 1 }}" min="1" step="1" style="height: 24px;">
-                <button type="button" class="btn btn-sm btn-success py-0 px-1" onclick="submitQty({{ data.id }})"
+                <button type="button" class="btn btn-sm btn-success py-0 px-1" data-action="submitQty" data-id="{{ data.id }}"
                     style="height: 24px; line-height: 1;">✓</button>
             </div>
         </div>
     </td>
     <td>
         <div class="sku-display" id="skuDisplay_{{ data.id }}">
-            <span onclick="toggleSkuEdit({{ data.id }})" style="cursor: pointer;" title="Click to edit SKU">
+            <span data-action="toggleSkuEdit" data-id="{{ data.id }}" style="cursor: pointer;" title="Click to edit SKU">
                 {% if data.sku %}
                 <code>{{ data.sku }}</code>
                 {% else %}
@@ -75,7 +74,7 @@
             <div class="d-flex">
                 <input type="text" id="skuInput_{{ data.id }}" class="form-control form-control-sm me-1"
                     value="{{ data.sku or '' }}" placeholder="SKU" style="width: 100px;">
-                <button type="button" class="btn btn-sm btn-success" onclick="submitSku({{ data.id }})">✓</button>
+                <button type="button" class="btn btn-sm btn-success" data-action="submitSku" data-id="{{ data.id }}">✓</button>
             </div>
         </div>
     </td>
@@ -94,7 +93,7 @@
                 {% else %}
                     <div style="font-family: monospace; font-size: 0.85rem;">{{ tracking }}</div>
                 {% endif %}
-                <span onclick="toggleTrackingEdit({{ data.id }})" style="cursor: pointer;" title="Edit Tracking Number">
+                <span data-action="toggleTrackingEdit" data-id="{{ data.id }}" style="cursor: pointer;" title="Edit Tracking Number">
                     <small class="text-muted ms-1">✏️</small>
                 </span>
             </div>
@@ -106,9 +105,9 @@
                     value="{{ tracking }}" style="font-family: monospace; font-size: 0.8rem;">
                 <div class="d-flex gap-1">
                     <button type="button" class="btn btn-sm btn-success py-0 flex-grow-1"
-                        onclick="submitTracking({{ data.id }})">Save</button>
+                        data-action="submitTracking" data-id="{{ data.id }}">Save</button>
                     <button type="button" class="btn btn-sm btn-outline-secondary py-0"
-                        onclick="toggleTrackingEdit({{ data.id }})">✕</button>
+                        data-action="toggleTrackingEdit" data-id="{{ data.id }}">✕</button>
                 </div>
             </div>
         </div>
@@ -164,7 +163,7 @@
             {% endif %}
 
             <form action="/admin/delete_package/{{ data.id }}" method="POST" style="display:inline;"
-                onsubmit="return confirm('Delete ' + {{ tracking|js }} + '? This will also remove it from history.');">
+                data-confirm="Delete {{ tracking }}? This will also remove it from history.">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 <button type="submit" class="btn btn-sm btn-danger ms-1">DELETE</button>
             </form>

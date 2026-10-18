@@ -106,7 +106,7 @@
 
                     <a href="{{ url_for('admin.export_logs') }}" class="btn btn-success">📥 Export CSV</a>
                     <form action="{{ url_for('admin.clear_logs') }}" method="POST"
-                        onsubmit="return confirm('This will delete logs older than 7 days. Continue?');"
+                        data-confirm="This will delete logs older than 7 days. Continue?"
                         class="d-inline">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button type="submit" class="btn btn-outline-danger">🗑️ Clear Old Logs</button>
@@ -177,7 +177,7 @@
                                         <div class="fw-bold text-break">{{ log.message }}</div>
                                         {% if log.trace %}
                                         <a href="#" class="small text-decoration-none"
-                                            onclick="toggleTrace('trace_{{ log.id }}'); return false;">View Details</a>
+                                            data-action="toggleTrace" data-target="trace_{{ log.id }}">View Details</a>
                                         <div id="trace_{{ log.id }}" class="trace-box mt-2">{{ log.trace }}</div>
                                         {% endif %}
                                     </td>
@@ -265,11 +265,5 @@
     </div>
 {% endblock %}
 {% block scripts %}
-    <script>
-        function toggleTrace(id) {
-            var el = document.getElementById(id);
-            if (el.style.display === 'block') el.style.display = 'none';
-            else el.style.display = 'block';
-        }
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/admin-logs.js') }}"></script>
 {% endblock %}

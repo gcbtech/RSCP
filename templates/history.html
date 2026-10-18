@@ -25,7 +25,7 @@
         </div>
 
         <div class="card mb-3">
-            <div class="card-header bg-white" style="cursor: pointer;" onclick="toggleFilters()">
+            <div class="card-header bg-white" style="cursor: pointer;" data-action="toggleFilters">
                 <div class="d-flex justify-content-between align-items-center">
                     <span class="fw-bold">🔍 Search & Filters</span>
                     <span id="filterIcon">▼</span>
@@ -98,29 +98,5 @@
     </div>
 {% endblock %}
 {% block scripts %}
-    <script>
-        function toggleFilters() {
-            const card = document.getElementById('filterCard');
-            const icon = document.getElementById('filterIcon');
-            if (card.style.display === 'none') {
-                card.style.display = 'block';
-                icon.innerText = '▲';
-            } else {
-                card.style.display = 'none';
-                icon.innerText = '▼';
-            }
-        }
-
-
-    </script>
-    <script>if (localStorage.getItem('rscp_darkmode') === 'true') {
-            document.body.style.backgroundColor = '#121212';
-            document.body.style.color = '#e0e0e0';
-            document.querySelectorAll('.list-group-item').forEach(el => {
-                el.style.backgroundColor = '#1e1e1e';
-                el.style.color = '#fff';
-                el.style.borderColor = '#444';
-                el.style.borderLeftColor = '#0d6efd';
-            });
-        }</script>
+    <script src="{{ url_for('static', filename='js/pages/receiving-history.js') }}"></script>
 {% endblock %}

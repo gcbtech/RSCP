@@ -4,12 +4,19 @@ timeclock) render through the shared layout templates/base.html.
 """
 import datetime
 import io
+import os
 
 import pytest
 
 from tests.conftest import login
 
 BOOTSTRAP_CSS = 'bootstrap@5.3.0/dist/css/bootstrap.min.css'
+STATIC_DIR = os.path.join(os.path.dirname(__file__), '..', 'static')
+
+
+def _static(path):
+    with open(os.path.join(STATIC_DIR, path), encoding='utf-8') as f:
+        return f.read()
 
 
 def _seed(app):
@@ -92,7 +99,7 @@ def test_dashboard_loads_pinned_chartjs(fresh_app, fresh_client):
     assert 'chart.js@4.4.0' in html
     assert 'npm/chart.js"' not in html
     # Chart.js must load before the page script that builds the sparkline
-    assert html.index('chart.js@4.4.0') < html.index('new Chart(')
+    assert html.index('chart.js@4.4.0') < html.index('js/pages/core-dashboard.js')
 
 
 def test_export_custom_uses_pinned_tom_select(fresh_app, fresh_client):
@@ -100,7 +107,7 @@ def test_export_custom_uses_pinned_tom_select(fresh_app, fresh_client):
     html = assert_layout(fresh_client.get('/timeclock/manager/export/custom'), 'Export Timesheets')
     assert html.count('tom-select@2.2.2') == 2
     assert '<body class="bg-light">' in html
-    assert html.index('tom-select.complete.min.js') < html.index('new TomSelect(')
+    assert html.index('tom-select.complete.min.js') < html.index('js/pages/timeclock-export-custom.js')
 
 
 def test_login_page(fresh_client):
@@ -143,6 +150,8 @@ def test_nav_notifications_use_global_escape(fresh_client):
     login(fresh_client, 1)
     html = fresh_client.get('/settings').get_data(as_text=True)
     assert 'function escapeHtml' not in html
-    assert "openNotification(${n.id}, '${n.link" not in html
-    assert 'data-link="${escapeHtml(n.link' in html
-    assert html.index('js/rscp-common.js') < html.index('id="quickSidebar"')
+    assert html.index('js/rscp-common.js') < html.index('id="quickSidebar"') < html.index('js/nav.js')
+    nav_js = _static('js/nav.js')
+    assert 'function escapeHtml' not in nav_js
+    assert "openNotification(${n.id}, '${n.link" not in nav_js
+    assert 'data-link="${escapeHtml(n.link' in nav_js

@@ -110,7 +110,7 @@
                                             method="POST" style="display:inline;">
                                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                             <button type="submit" class="btn btn-sm btn-outline-danger"
-                                                onclick="return confirm('Force clock out?')">Clock Out</button>
+                                                data-confirm="Force clock out?">Clock Out</button>
                                         </form>
                                     </td>
                                 </tr>

@@ -11,7 +11,7 @@ from tests.conftest import login
 
 BOOTSTRAP_CSS = 'bootstrap@5.3.0/dist/css/bootstrap.min.css'
 BOOTSTRAP_JS = 'bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js'
-NAV_MARKER = 'window.rscpPoll'  # defined by _nav.html
+NAV_MARKER = 'js/nav.js'  # loaded by _nav.html; defines window.rscpPoll
 
 
 def _db(app):

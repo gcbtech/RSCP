@@ -19,7 +19,7 @@
 
                     <div class="mb-3">
                         <label class="form-label">Type of Request</label>
-                        <select name="request_type" id="requestType" class="form-select" onchange="togglePartial()">
+                        <select name="request_type" id="requestType" class="form-select" data-change="togglePartial">
                             <option value="full">Full Shift Off</option>
                             <option value="partial">Partial Shift (Hours)</option>
                         </select>
@@ -66,19 +66,5 @@
     </div>
 {% endblock %}
 {% block scripts %}
-    <script>
-        function togglePartial() {
-            const type = document.getElementById('requestType').value;
-            const partialDiv = document.getElementById('partialFields');
-            const inputs = partialDiv.querySelectorAll('input');
-
-            if (type === 'partial') {
-                partialDiv.style.display = 'block';
-                inputs.forEach(i => i.required = true);
-            } else {
-                partialDiv.style.display = 'none';
-                inputs.forEach(i => i.required = false);
-            }
-        }
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/timeclock-request-pto.js') }}"></script>
 {% endblock %}

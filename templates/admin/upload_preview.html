@@ -240,7 +240,5 @@
     </div>
 {% endblock %}
 {% block scripts %}
-    <script>
-        if (localStorage.getItem('rscp_dark_mode') === 'true') document.body.classList.add('dark-mode');
-    </script>
+    <script src="{{ url_for('static', filename='js/pages/admin-upload-preview.js') }}"></script>
 {% endblock %}

@@ -6,7 +6,10 @@
     {% block title %}History{% endblock %}
     {% block head %}<style> page-only CSS </style>{% endblock %}
     {% block content %} ... {% endblock %}
-    {% block scripts %}<script> page-only JS </script>{% endblock %}
+    {% block scripts %}<script src="{{ url_for('static', filename='js/pages/<area>-<page>.js') }}"></script>{% endblock %}
+
+  No inline JavaScript (no <script> code, no on*= attributes): see the
+  conventions at the top of static/js/rscp-common.js.
 
   Optional blocks:
     body_class        classes on <body>
