@@ -19,14 +19,13 @@ TABS = {
     'settings': ('settings', [
         'action="/admin/add_user"', 'action="/admin/set_user_roles/admin"',
         'action="/admin/reset_password/cashier"', 'name="group" value="security"',
-        'name="group" value="sso"', 'name="group" value="automation"',
+        'name="group" value="sso"',
         'name="group" value="notifications"', 'name="group" value="modules"',
         'onclick="checkForUpdates()"', 'id="updateProgressModal"', 'id="rollbackSection"']),
 }
 
 SECRETS = {
     'sso': {'SSO_CLIENT_SECRET': 'sso-secret-ui-admin-111'},
-    'automation': {'EMAIL_PASS': 'imap-secret-ui-admin-222'},
     'pos': {'POS_EMAIL_PASSWORD': 'smtp-secret-ui-admin-333'},
     'notifications': {'WEBHOOK_URL': 'https://discord.com/api/webhooks/ui-admin-444'},
 }
@@ -97,7 +96,6 @@ def test_admin_panel_never_renders_secrets(fresh_app, fresh_client):
         from app.services import settings
         settings.set_many({k: v for fields in SECRETS.values() for k, v in fields.items()})
         assert settings.get('SSO_CLIENT_SECRET') == SECRETS['sso']['SSO_CLIENT_SECRET']
-        assert settings.get('EMAIL_PASS') == SECRETS['automation']['EMAIL_PASS']
         assert settings.get('WEBHOOK_URL') == SECRETS['notifications']['WEBHOOK_URL']
         stored_pw = settings.get('POS_EMAIL_PASSWORD')
         assert stored_pw
@@ -110,3 +108,16 @@ def test_admin_panel_never_renders_secrets(fresh_app, fresh_client):
         assert stored_pw not in body, tab
     body = _get(fresh_client, 'settings')
     assert '(saved - leave blank to keep)' in body       # SSO secret shown only as "set"
+
+
+def test_settings_tab_has_no_email_ingest_card(fresh_client):
+    """The Amazon/eBay email ingest was removed: no card, no route, no leftovers."""
+    login(fresh_client, 1)
+    body = _get(fresh_client, 'settings')
+    for gone in ('name="group" value="automation"', 'IMAP_SERVER', 'name="EMAIL_USER"',
+                 'name="EMAIL_PASS"', 'EMAIL_INGEST_ENABLED', 'ingestSwitch',
+                 'run_email_ingest', 'Run Ingest Now', 'Auto-Ingest', 'icon-automation'):
+        assert gone not in body, gone
+    # the POS end-of-day SMTP settings are a different feature and stay
+    assert 'name="POS_EMAIL_PASSWORD"' in body
+    assert fresh_client.post('/admin/run_email_ingest').status_code in (400, 404)

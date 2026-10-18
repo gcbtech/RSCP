@@ -253,14 +253,11 @@ def test_invalid_submission_saves_nothing(fresh_app, fresh_client, st):
 def test_secrets_are_write_only_and_never_rendered(fresh_app, fresh_client, st):
     login(fresh_client, 1)
     _save(fresh_client, 'sso', SSO_CLIENT_SECRET='sso-secret-value-123')
-    _save(fresh_client, 'automation', EMAIL_PASS='imap-secret-value-456')
     _save(fresh_client, 'pos', POS_EMAIL_PASSWORD='smtp-secret-value-789')
     # blank / placeholder keeps the stored secret
     _save(fresh_client, 'sso', SSO_CLIENT_SECRET='', SSO_CLIENT_ID='client')
-    _save(fresh_client, 'automation', EMAIL_PASS='********')
     with fresh_app.app_context():
         assert st.get('SSO_CLIENT_SECRET') == 'sso-secret-value-123'
-        assert st.get('EMAIL_PASS') == 'imap-secret-value-456'
         stored_pw = st.get('POS_EMAIL_PASSWORD')
         assert stored_pw and stored_pw != 'smtp-secret-value-789'   # encrypted at rest
         from app.services.security import decrypt
@@ -270,7 +267,7 @@ def test_secrets_are_write_only_and_never_rendered(fresh_app, fresh_client, st):
         r = fresh_client.get(url)
         assert r.status_code == 200, url
         body = r.get_data(as_text=True)
-        for secret in ('sso-secret-value-123', 'imap-secret-value-456', 'smtp-secret-value-789', stored_pw):
+        for secret in ('sso-secret-value-123', 'smtp-secret-value-789', stored_pw):
             assert secret not in body, url
     body = fresh_client.get('/admin/?tab=settings').get_data(as_text=True)
     assert '(saved - leave blank to keep)' in body                    # SSO_CLIENT_SECRET_SET
@@ -280,7 +277,6 @@ def test_secrets_are_write_only_and_never_rendered(fresh_app, fresh_client, st):
         from app.services.data_manager import load_config
         view = _template_config(load_config())
     assert view['SSO_CLIENT_SECRET_SET'] is True and 'SSO_CLIENT_SECRET' not in view
-    assert view['EMAIL_PASS_SET'] is True and 'EMAIL_PASS' not in view
 
 
 def test_json_save_for_auto_confirm(fresh_app, fresh_client, st):
@@ -341,3 +337,72 @@ def test_restoring_pre_v6_backup_applies_its_config_json(fresh_app, fresh_client
     with fresh_app.app_context():
         assert st.get('ORG_NAME') == 'Restored Shop'
         assert st.get('SESSION_TIMEOUT_MINUTES') == 15
+
+
+# --- migration 12: email ingest removed ----------------------------------------
+
+EMAIL_INGEST_KEYS = ('EMAIL_INGEST_ENABLED', 'IMAP_SERVER', 'EMAIL_USER', 'EMAIL_PASS', 'EMAIL_PASSWORD')
+
+
+def _db_copy_at(fresh_app, path, version):
+    src = sqlite3.connect(fresh_app.config['DATABASE'])
+    dst = sqlite3.connect(path)
+    src.backup(dst)
+    src.close()
+    dst.execute(f'PRAGMA user_version = {int(version)}')
+    dst.commit()
+    return dst
+
+
+def test_migration_12_deletes_email_ingest_settings_only(fresh_app, tmp_path):
+    from app.services import migration
+    db = str(tmp_path / 'v11.db')
+    conn = _db_copy_at(fresh_app, db, 11)
+    conn.executemany("INSERT OR REPLACE INTO settings (key, value, updated_by) VALUES (?, ?, 'test')",
+                     [('EMAIL_INGEST_ENABLED', 'true'), ('IMAP_SERVER', '"imap.example.com"'),
+                      ('EMAIL_USER', '"burner@example.com"'), ('EMAIL_PASS', '"imap-pw"'),
+                      ('EMAIL_PASSWORD', '"old-imap-pw"'), ('ORG_NAME', '"Kept Shop"'),
+                      ('POS_EMAIL_USER', '"eod@example.com"')])
+    conn.execute("INSERT INTO packages (tracking_number, item_name, status, source) "
+                 "VALUES ('ORDER-113-1234567-1234567-01', 'From email', 'on_time', 'email')")
+    conn.commit()
+    token_before = conn.execute('SELECT token FROM settings_meta').fetchone()[0]
+    conn.close()
+
+    migration.run_migrations(db)
+
+    conn = sqlite3.connect(db)
+    assert conn.execute('PRAGMA user_version').fetchone()[0] == migration.LATEST_SCHEMA_VERSION >= 12
+    keys = {r[0] for r in conn.execute('SELECT key FROM settings')}
+    assert not keys & set(EMAIL_INGEST_KEYS)
+    assert {'ORG_NAME', 'POS_EMAIL_USER'} <= keys
+    assert conn.execute("SELECT value FROM settings WHERE key = 'ORG_NAME'").fetchone()[0] == '"Kept Shop"'
+    assert conn.execute('SELECT token FROM settings_meta').fetchone()[0] != token_before   # caches reload
+    # packages the email ingest created are real data and stay
+    assert conn.execute("SELECT count(*) FROM packages WHERE source = 'email'").fetchone()[0] == 1
+    conn.close()
+
+
+def test_upgrade_from_2x_does_not_keep_email_ingest_settings(fresh_app, tmp_path, monkeypatch):
+    """Migration 6 imports config.json wholesale; migration 12 then drops the ingest keys."""
+    from app import paths
+    from app.services import migration
+    db = str(tmp_path / 'v5.db')
+    conn = _db_copy_at(fresh_app, db, 5)
+    conn.execute('DROP TABLE settings')
+    conn.execute('DROP TABLE settings_meta')
+    conn.commit()
+    conn.close()
+    cfg = tmp_path / 'config.json'
+    cfg.write_text(json.dumps({'SECRET_KEY': 'k', 'ORG_NAME': 'Old Shop', 'EMAIL_INGEST_ENABLED': True,
+                               'IMAP_SERVER': 'imap.example.com', 'EMAIL_USER': 'u@example.com',
+                               'EMAIL_PASS': 'imap-pw'}))
+    monkeypatch.setattr(paths, 'CONFIG_FILE', str(cfg))
+
+    migration.run_migrations(db)
+
+    conn = sqlite3.connect(db)
+    keys = {r[0] for r in conn.execute('SELECT key FROM settings')}
+    conn.close()
+    assert 'ORG_NAME' in keys
+    assert not keys & set(EMAIL_INGEST_KEYS)

@@ -1259,6 +1259,21 @@ def _m8_pos_ledger(conn):
                      (r_method, r_tax, rid))
 
 
+def _m12_drop_email_ingest_settings(conn):
+    """The Amazon/eBay email ingest was removed: delete its stored settings
+    (including the IMAP password). Packages it created are real data and stay.
+    Self-contained on purpose: the keys are no longer in the settings registry."""
+    keys = ('EMAIL_INGEST_ENABLED', 'IMAP_SERVER', 'EMAIL_USER', 'EMAIL_PASS', 'EMAIL_PASSWORD')
+    has_settings = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'").fetchone()
+    if not has_settings:
+        return
+    cur = conn.execute(f"DELETE FROM settings WHERE key IN ({', '.join('?' * len(keys))})", keys)
+    if cur.rowcount:
+        # Tell every worker's settings cache to reload.
+        conn.execute("UPDATE settings_meta SET token = lower(hex(randomblob(16))) WHERE id = 1")
+
+
 # (version, description, function). Version 1 is the ensure_db_ready() baseline.
 SCHEMA_MIGRATIONS = [
     (2, 'PTO tables', _m2_pto_tables),
@@ -1271,6 +1286,7 @@ SCHEMA_MIGRATIONS = [
     (9, 'admin flag folded into super_admin role', _m9_unify_admin_roles),
     (10, 'packages: database is the only source (manifest.csv retired)', _m10_packages_db_only),
     (11, 're-import encoded legacy settings (webhook URLs)', _m11_reimport_encoded_settings),
+    (12, 'drop email-ingest settings (feature removed)', _m12_drop_email_ingest_settings),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 assert len({v for v, _, _ in SCHEMA_MIGRATIONS}) == len(SCHEMA_MIGRATIONS), "duplicate schema version"

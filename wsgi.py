@@ -18,9 +18,8 @@ def _acquire_singleton_lock():
     """Try to become the one process that runs background tasks.
 
     Gunicorn imports this module once per worker, so anything started here
-    would otherwise run in EVERY worker (duplicate email ingest, racing
-    manifest syncs). An exclusive non-blocking flock lets exactly one worker
-    win; the fd is held for the life of the process so the lock releases
+    would otherwise run in EVERY worker (duplicate scheduled jobs). An
+    exclusive non-blocking flock lets exactly one worker win; the fd is held for the life of the process so the lock releases
     automatically if that worker dies (a future worker restart re-acquires).
 
     Returns the open fd on success (kept referenced by the caller), True on
@@ -49,7 +48,7 @@ def _acquire_singleton_lock():
         return None
 
 
-# Start background tasks (manifest sync every 5 min, email ingest every 15 min)
+# Start background tasks (package status upkeep, POS EOD email)
 # and run pending system migrations, in exactly ONE worker process.
 _lock_fd = _acquire_singleton_lock()
 if _lock_fd is not None:

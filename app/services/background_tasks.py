@@ -1,6 +1,6 @@
 """
 Background Tasks Module
-Handles scheduled background jobs: package status upkeep and email ingestion.
+Handles scheduled background jobs: package status upkeep and the POS EOD email.
 
 Uses APScheduler for reliable job scheduling with:
 - Retry logic with exponential backoff
@@ -30,11 +30,8 @@ except ImportError:
 # Background sync status (for monitoring)
 SYNC_STATUS = {
     'last_maintenance': None,
-    'last_email_check': None,
     'maintenance_count': 0,
-    'email_check_count': 0,
     'maintenance_failures': 0,
-    'email_failures': 0,
     'errors': [],
     'scheduler_running': False
 }
@@ -42,7 +39,6 @@ SYNC_STATUS = {
 # Configuration
 MAX_CONSECUTIVE_FAILURES = 5
 MAINTENANCE_INTERVAL_MINUTES = 15
-EMAIL_CHECK_INTERVAL_MINUTES = 15
 
 # Global scheduler instance
 scheduler = None
@@ -80,21 +76,6 @@ def package_maintenance_job():
         SYNC_STATUS['maintenance_failures'] = 0
     except Exception as e:
         _record_failure('package_maintenance', 'maintenance_failures', '[Packages]', e)
-
-
-def email_ingest_job():
-    """Background job: import order emails straight into packages."""
-    try:
-        from app.services.package_imports import run_email_ingest
-        result = run_email_ingest()
-        if result.get('failed'):
-            raise RuntimeError(result.get('message'))
-        if result['status'] == 'success':
-            SYNC_STATUS['last_email_check'] = datetime.datetime.now().isoformat()
-            SYNC_STATUS['email_check_count'] += 1
-        SYNC_STATUS['email_failures'] = 0
-    except Exception as e:
-        _record_failure('email_ingest', 'email_failures', '[Auto-Ingest]', e)
 
 
 def eod_email_job():
@@ -217,14 +198,6 @@ def start_scheduler():
         )
         
         scheduler.add_job(
-            email_ingest_job,
-            'interval',
-            minutes=EMAIL_CHECK_INTERVAL_MINUTES,
-            id='email_ingest',
-            name='Email Ingestion'
-        )
-
-        scheduler.add_job(
             eod_email_job,
             'interval',
             minutes=1,
@@ -235,7 +208,7 @@ def start_scheduler():
         # Start scheduler
         scheduler.start()
         SYNC_STATUS['scheduler_running'] = True
-        logger.info(f"[Background] APScheduler started (packages: every {MAINTENANCE_INTERVAL_MINUTES}min, email: every {EMAIL_CHECK_INTERVAL_MINUTES}min)")
+        logger.info(f"[Background] APScheduler started (packages: every {MAINTENANCE_INTERVAL_MINUTES}min)")
         
         # Register shutdown handler
         atexit.register(shutdown_scheduler)
@@ -284,19 +257,8 @@ def _start_threading_fallback():
                 logger.error(f"[Packages] Thread error: {e}")
             time.sleep(MAINTENANCE_INTERVAL_MINUTES * 60)
     
-    def email_loop():
-        while True:
-            try:
-                email_ingest_job()
-            except Exception as e:
-                logger.error(f"[Auto-Ingest] Thread error: {e}")
-            time.sleep(EMAIL_CHECK_INTERVAL_MINUTES * 60)
-    
     maintenance_thread = threading.Thread(target=maintenance_loop, daemon=True, name="PackageMaintenance")
     maintenance_thread.start()
-    
-    email_thread = threading.Thread(target=email_loop, daemon=True, name="EmailIngest")
-    email_thread.start()
     
     SYNC_STATUS['scheduler_running'] = True
     logger.info("[Background] Threading fallback started (APScheduler not available)")
@@ -306,11 +268,6 @@ def _start_threading_fallback():
 def start_background_tasks():
     """Legacy function - now uses start_scheduler()."""
     start_scheduler()
-
-
-def start_email_thread():
-    """Deprecated: Use start_background_tasks() instead."""
-    start_background_tasks()
 
 
 def get_sync_status():
@@ -345,8 +302,6 @@ def resume_job(job_id):
         scheduler.resume_job(job_id)
         if job_id == 'package_maintenance':
             SYNC_STATUS['maintenance_failures'] = 0
-        elif job_id == 'email_ingest':
-            SYNC_STATUS['email_failures'] = 0
         logger.info(f"[Background] Resumed job: {job_id}")
         return True
     return False

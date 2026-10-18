@@ -45,9 +45,6 @@ BOOTSTRAP_KEYS = frozenset({'SECRET_KEY'})
 # Environment variables override these keys wherever they are read.
 ENV_OVERRIDES = {
     'WEBHOOK_URL': 'RSCP_WEBHOOK_URL',
-    'IMAP_SERVER': 'RSCP_IMAP_SERVER',
-    'EMAIL_USER': 'RSCP_EMAIL_USER',
-    'EMAIL_PASS': 'RSCP_EMAIL_PASS',
     'SECRET_KEY': 'RSCP_SECRET_KEY',
     'SSO_CLIENT_ID': 'RSCP_SSO_CLIENT_ID',
     'SSO_CLIENT_SECRET': 'RSCP_SSO_CLIENT_SECRET',
@@ -289,7 +286,6 @@ GROUPS = {
     'notifications': ('Notifications', 'settings'),
     'sso': ('SSO / OIDC', 'settings'),
     'network': ('Reverse proxy', 'settings'),
-    'automation': ('Email automation', 'settings'),
     'timeclock': ('Timeclock', None),
     'api': ('Public API', 'settings'),
 }
@@ -399,13 +395,6 @@ SETTINGS = {
     # Network
     'TRUSTED_PROXIES': S(list, ['127.0.0.1', '::1'], 'network', 'Trusted proxies',
                          validator=_validate_proxies, restart=True),
-
-    # Email automation (package ingest)
-    'IMAP_SERVER': S(str, '', 'automation', 'IMAP server'),
-    'EMAIL_USER': S(str, '', 'automation', 'Ingest email address'),
-    'EMAIL_PASS': S(str, '', 'automation', 'Ingest email password', secret=True),
-    'EMAIL_PASSWORD': S(str, '', 'automation', 'Ingest email password (legacy)', secret=True, editable=False),
-    'EMAIL_INGEST_ENABLED': S(bool, False, 'automation', 'Email auto-ingest'),
 
     # Timeclock
     'TIMECLOCK_PAY_PERIOD_START': S(str, '2024-01-01', 'timeclock', 'Pay period start',

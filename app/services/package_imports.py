@@ -1,6 +1,6 @@
 """
-Expected-package imports: CSV/XLSX uploads, email ingest, and the one-time
-legacy manifest.csv import.
+Expected-package imports: CSV/XLSX uploads and the one-time legacy
+manifest.csv import.
 
 The `packages` table is the only source of truth. Every import writes
 straight into it (inside the caller's transaction) and leaves a row in
@@ -11,10 +11,14 @@ Identity of a package row: (tracking_number, item_name). One shipment
 receiving a tracking number receives all of them (see log_receipt).
 
 Placeholders: when the real carrier tracking is not known yet a row uses an
-order ID instead, either 'ORDER-<order id>[-NN]' (created by email ingest) or
-the raw order ID (an upload row with no tracking). When the real tracking
-arrives, from an upload or a shipping email, the placeholder row is updated
-in place, so its id, priority flag, manual date and SKU survive.
+order ID instead, either 'ORDER-<order id>[-NN]' (written by the retired
+email ingest; such rows may still exist) or the raw order ID (an upload row
+with no tracking). When an upload brings the real tracking, the placeholder
+row is updated in place, so its id, priority flag, manual date and SKU survive.
+
+packages.source 'email' marks rows written by that retired email ingest. They
+are real data, so uploads still merge into them and the status/trim upkeep
+still knows them.
 """
 import csv
 import datetime
@@ -30,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 PLACEHOLDER_PREFIX = 'ORDER-'
 SOURCE_UPLOAD = 'manifest'   # packages.source of uploaded rows (historic value, shown as MANIFEST)
-SOURCE_EMAIL = 'email'
+SOURCE_EMAIL = 'email'       # retired email ingest; existing rows only
 SOURCE_MANUAL = 'manual'
 
 # Statuses that are still "on the way" and derive from the expected date.
@@ -329,8 +333,7 @@ def _name_ratio(a, b):
     return difflib.SequenceMatcher(None, (a or '').lower(), (b or '').lower()).ratio()
 
 
-def _best_match(rows, name, claimed=(), fallback_first=False):
-    rows = [r for r in rows if r['id'] not in claimed]
+def _best_match(rows, name):
     if not rows:
         return None
     if len(rows) == 1:
@@ -338,7 +341,7 @@ def _best_match(rows, name, claimed=(), fallback_first=False):
     best = max(rows, key=lambda r: _name_ratio(name, r['item_name']))
     if _name_ratio(name, best['item_name']) >= NAME_MATCH_THRESHOLD:
         return best
-    return rows[0] if fallback_first else None
+    return None
 
 
 def _like_escape(s):
@@ -491,75 +494,6 @@ def apply_items(conn, items, source=SOURCE_UPLOAD, insert_only=False, today=None
     return added, updated
 
 
-def ingest_email_items(conn, items, today=None):
-    """Write parsed email orders (email_ingest.check_amazon_emails) into
-    packages. Returns (added, updated).
-
-    An email about an order we already know (from an upload, an earlier email,
-    or a received package) enriches that row instead of adding a duplicate; a
-    shipping email that carries the carrier tracking gives it to the order's
-    placeholder row.
-    """
-    today = today or datetime.date.today()
-    added = updated = 0
-    claimed = set()
-    for raw in items:
-        placeholder_tracking = _clean_id(raw.get('tracking'))
-        order_id = _clean_id(raw.get('order_id')) or order_id_from_placeholder(placeholder_tracking)
-        carrier = _clean_id(raw.get('carrier_tracking')).upper()
-        name = _clean_name(raw.get('name')) or 'Unknown'
-        qty = _parse_qty(raw.get('quantity'))
-        image = _clean_text(raw.get('image_url'))
-        date = normalize_date(raw.get('date'))
-        tracking = carrier or placeholder_tracking
-        if not tracking:
-            continue
-
-        row = _get_row(conn, tracking, name)
-        if row:
-            claimed.add(row['id'])
-            changes = {}
-            if image and not row['image_url']:
-                changes['image_url'] = image
-            if order_id and not row['order_id']:
-                changes['order_id'] = order_id
-            if _apply_changes(conn, row, changes):
-                updated += 1
-            continue
-
-        if order_id:
-            match = _best_match(_order_rows(conn, order_id, unscanned_only=False), name,
-                                claimed, fallback_first=True)
-            if match:
-                claimed.add(match['id'])
-                changes = {}
-                if not match['order_id']:
-                    changes['order_id'] = order_id
-                if image and not match['image_url']:
-                    changes['image_url'] = image
-                open_row = match['date_scanned'] is None and match['source'] != SOURCE_MANUAL
-                if open_row and qty > 1:
-                    changes['quantity'] = qty
-                if open_row and carrier and is_placeholder_row(match) \
-                        and not _get_row(conn, carrier, match['item_name']):
-                    changes['tracking_number'] = carrier
-                if _apply_changes(conn, match, changes):
-                    updated += 1
-                continue
-
-        conn.execute('''
-            INSERT INTO packages (tracking_number, item_name, date_expected, quantity, status,
-                                  image_url, source, order_id, sku)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (tracking, name, date, qty, status_for_date(date, today), image, SOURCE_EMAIL,
-              order_id or None, _mapped_sku(conn, name)))
-        row = _get_row(conn, tracking, name)
-        if row:
-            claimed.add(row['id'])
-        added += 1
-    return added, updated
-
-
 def record_import(conn, source, filename, added, updated, user):
     conn.execute('''
         INSERT INTO package_imports (source, filename, rows_added, rows_updated, user)
@@ -632,66 +566,6 @@ def import_items(items, source, filename, user, package_source=SOURCE_UPLOAD):
         return added, updated
     finally:
         conn.close()
-
-
-def _current_username():
-    try:
-        from flask import has_request_context
-        from flask_login import current_user
-        if has_request_context() and current_user.is_authenticated:
-            return current_user.username
-    except Exception:
-        pass
-    return None
-
-
-def run_email_ingest(fetch=None):
-    """The one email-ingest path (background job and the admin button).
-
-    Returns {'status': 'success'|'skipped'|'error', 'message', 'count',
-    'added', 'updated'}; 'failed': True when something raised.
-    """
-    from app.services.data_manager import load_config
-    try:
-        config = load_config()
-        if not config.get('EMAIL_INGEST_ENABLED', False):
-            return {'status': 'skipped', 'message': 'Email Ingest Disabled', 'count': 0}
-        server = config.get('IMAP_SERVER')
-        user = config.get('EMAIL_USER')
-        password = config.get('EMAIL_PASS') or config.get('EMAIL_PASSWORD')
-        if not (server and user and password):
-            return {'status': 'error', 'message': 'Missing Credentials', 'count': 0}
-
-        if fetch is None:
-            import email_ingest
-            fetch = email_ingest.check_amazon_emails
-        logger.info(f"[Email Ingest] Checking {user} on {server}...")
-        items = fetch(server, user, password)
-        if not items:
-            return {'status': 'success', 'message': 'No new emails found', 'count': 0,
-                    'added': 0, 'updated': 0}
-
-        conn = _connect()
-        try:
-            conn.execute('BEGIN IMMEDIATE')
-            try:
-                added, updated = ingest_email_items(conn, items)
-                if added or updated:
-                    record_import(conn, 'email', None, added, updated,
-                                  _current_username() or 'system')
-                conn.commit()
-            except Exception:
-                conn.rollback()
-                raise
-        finally:
-            conn.close()
-        logger.info(f"[Email Ingest] {added} added, {updated} updated.")
-        return {'status': 'success', 'count': added,
-                'message': f"Imported {added} new, updated {updated}",
-                'added': added, 'updated': updated}
-    except Exception as e:
-        logger.error(f"[Email Ingest] Failed: {e}")
-        return {'status': 'error', 'message': str(e), 'count': 0, 'failed': True}
 
 
 def run_package_maintenance():

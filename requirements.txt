@@ -20,5 +20,3 @@ openpyxl>=3.1,<4
 Pillow>=10.0
 cryptography>=42.0
 pyserial>=3.5,<4
-# HTML parsing for email_ingest.py.
-beautifulsoup4>=4.12,<5
