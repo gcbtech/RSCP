@@ -1300,7 +1300,7 @@ JOB_TABLES_SQL = (
 )
 
 
-def _m14_job_status(conn):
+def _m13_job_status(conn):
     """Scheduled-job bookkeeping (app/jobs.py): last run/result per job for
     the admin "Scheduled jobs" panel, and markers that make jobs idempotent
     (the end-of-day email's "sent today" claim)."""
@@ -1321,7 +1321,7 @@ SCHEMA_MIGRATIONS = [
     (10, 'packages: database is the only source (manifest.csv retired)', _m10_packages_db_only),
     (11, 're-import encoded legacy settings (webhook URLs)', _m11_reimport_encoded_settings),
     (12, 'drop email-ingest settings (feature removed)', _m12_drop_email_ingest_settings),
-    (14, 'job_status and job_markers tables (scheduled jobs)', _m14_job_status),
+    (13, 'job_status and job_markers tables (scheduled jobs)', _m13_job_status),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 assert len({v for v, _, _ in SCHEMA_MIGRATIONS}) == len(SCHEMA_MIGRATIONS), "duplicate schema version"

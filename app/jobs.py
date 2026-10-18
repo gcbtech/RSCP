@@ -25,7 +25,7 @@ Who runs them:
 Each run takes a per-job lock (an flock on <tmp>/job-locks/<name>.lock), so
 two runs of one job never overlap, whoever started them; a run that finds
 the lock taken logs that and exits 0. Every run is recorded in the job_status
-table (schema migration 14), which Admin > Logs shows as "Scheduled jobs".
+table (schema migration 13), which Admin > Logs shows as "Scheduled jobs".
 The backup job lives in app/backup.py with its own unit and timer; the panel
 shows its status too.
 """

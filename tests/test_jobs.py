@@ -173,9 +173,9 @@ def test_lock_prevents_overlapping_runs(jobs, db, monkeypatch):
     assert jobs.run_job('package-maintenance', db_path=db).state == 'ok' and calls == [1, 1]
 
 
-def test_job_tables_come_from_schema_migration_14(db):
+def test_job_tables_come_from_schema_migration_13(db):
     from app.services.migration import LATEST_SCHEMA_VERSION, SCHEMA_MIGRATIONS
-    assert 14 in {v for v, _, _ in SCHEMA_MIGRATIONS} and LATEST_SCHEMA_VERSION >= 14
+    assert 13 in {v for v, _, _ in SCHEMA_MIGRATIONS} and LATEST_SCHEMA_VERSION >= 13
     conn = sqlite3.connect(db)
     names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     conn.close()
