@@ -358,9 +358,14 @@ def create_app(test_config=None):
         response.headers['X-Frame-Options'] = 'SAMEORIGIN'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         # Content Security Policy - Prevent XSS attacks
+        # No 'unsafe-inline' for scripts: pages carry no inline JavaScript
+        # (static/js/pages/*.js + data-action handlers, see rscp-common.js),
+        # so an injected <script> or onclick= cannot run.
         response.headers['Content-Security-Policy'] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "script-src 'self' https://cdn.jsdelivr.net; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net; "
             "img-src 'self' data: https: http:; "

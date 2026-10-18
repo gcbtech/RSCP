@@ -3,7 +3,7 @@
   Usage inside a page:
     {% import '_vendor.html' as vendor %}
     {% block head %}{{ vendor.tom_select_css() }}{% endblock %}
-    {% block scripts %}{{ vendor.chartjs() }}{{ vendor.tom_select_js() }}<script>...</script>{% endblock %}
+    {% block scripts %}{{ vendor.chartjs() }}{{ vendor.tom_select_js() }}<script src="{{ url_for('static', filename='js/pages/x.js') }}"></script>{% endblock %}
   All URLs are on cdn.jsdelivr.net, which the Content-Security-Policy allows.
 #}
 {% macro chartjs() %}<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>{% endmacro %}
