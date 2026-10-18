@@ -13,13 +13,13 @@ from flask_login import current_user, login_required
 from app.routes.pos import pos_bp, PAYMENT_METHODS
 from app.utils.permissions import require_permission
 from app.routes.pos.core import (
-    get_cart, mutate_cart, current_cart_version, resolve_register_id, get_tax_rate,
-    generate_order_number, round_money, calculate_percentage, compute_cart_totals,
-    get_pos_setting
+    get_cart, mutate_cart, current_cart_version, resolve_register_id,
+    generate_order_number, compute_cart_totals, pricing_config, get_pos_setting
 )
-from app.services import pos_registers
+from app.services import pos_checkout, pos_sales
 from app.services.db import get_db_connection, get_request_db
-from app.services.pos_ledger import allocate_payments, write_payments, order_payments
+from app.services.pos_ledger import order_payments
+from app.services.pos_pricing import parse_money, parse_money_field
 
 logger = logging.getLogger(__name__)
 
@@ -62,19 +62,9 @@ def checkout():
 
 @pos_bp.route('/checkout/process', methods=['POST'])
 def checkout_process():
-    """Record the sale.
-
-    Everything from re-reading the cart to emptying it happens in one write
-    transaction (BEGIN IMMEDIATE), so concurrent registers cannot interleave:
-    order numbers stay unique, a single-use coupon is redeemed once, and a
-    resubmitted form (same checkout_token) is recorded once.
-
-    The register cart is re-read INSIDE that transaction and emptied in it
-    too: what is sold is exactly what is cleared. An item a paired scanner
-    adds after the checkout page opened either changes the total/version
-    (and the sale is refused for review) or lands after the commit in the
-    next, empty cart -- it is never sold unseen or silently wiped.
-    """
+    """Record the sale (app.services.pos_checkout.complete_sale: one write
+    transaction from re-reading the cart to emptying it) and map the outcome
+    to flashes/redirects."""
     register_id = resolve_register_id()
     cart = get_cart()
 
@@ -86,282 +76,77 @@ def checkout_process():
     if payment_method not in PAYMENT_METHODS:
         flash('Unknown payment method.')
         return redirect(url_for('pos.checkout'))
-    checkout_token = (request.form.get('checkout_token') or '').strip() or None
+
+    payment = pos_checkout.Payment(
+        method=payment_method,
+        tendered=request.form.get('tendered'),
+        cash_amount=request.form.get('cash_amount'),
+        card_amounts=request.form.getlist('card_amount'),
+    )
+    cart_source = (pos_checkout.RegisterCart(register_id) if register_id
+                   else pos_checkout.SessionCart(cart))
 
     conn = get_db_connection()
     conn.isolation_level = None
     try:
-        conn.execute('BEGIN IMMEDIATE')
-
-        # Already recorded? (double-click, or a retry after a lost response)
-        if checkout_token:
-            existing = conn.execute('SELECT order_number FROM pos_orders WHERE checkout_token = ?',
-                                    (checkout_token,)).fetchone()
-            if existing:
-                conn.execute('ROLLBACK')
-                flash(f"Order {existing['order_number']} was already completed.")
-                return redirect(url_for('pos.receipt', order_number=existing['order_number']))
-
-        # The cart as it is NOW, under the write lock: nothing (scanner,
-        # handheld, another tab) can change it until this transaction ends.
-        if register_id:
-            cart, locked_version = pos_registers.read_register_cart(conn, register_id)
-            if not cart['items']:
-                conn.execute('ROLLBACK')
-                flash('Cart is empty.')
-                return redirect(url_for('pos.sales'))
-            expected_version = (request.form.get('cart_version') or '').strip()
-            if expected_version:
-                try:
-                    if int(expected_version) != locked_version:
-                        conn.execute('ROLLBACK')
-                        flash('The cart changed since this checkout page opened. Please review the new total.')
-                        return redirect(url_for('pos.checkout'))
-                except ValueError:
-                    pass
-
-        # Re-validate the coupon against the cart as it is NOW. The discount
-        # stored on the cart was computed when the coupon was applied; items
-        # may have been removed since, and limits must be checked under the lock.
-        coupon = cart.get('applied_coupon')
-        if coupon:
-            from app.routes.pos.coupons import evaluate_coupon
-            subtotal_now = sum(item.get('line_total', 0) for item in cart['items'])
-            result = evaluate_coupon(coupon.get('code'), cart['items'], subtotal_now, conn, cart=cart)
-            if not result.get('valid'):
-                conn.execute('ROLLBACK')
-                # Drop only the coupon; never write back this snapshot
-                mutate_cart(lambda c: c.update(applied_coupon=None) if c.get('applied_coupon') else None)
-                flash(f"Coupon removed: {result.get('error', 'no longer valid')} Please review the total.")
-                return redirect(url_for('pos.checkout'))
-            coupon['discount'] = result['discount_amount']
-
-        totals = compute_cart_totals(cart)
-        subtotal = totals['subtotal']
-        order_discount = totals['order_discount']
-        coupon_discount = totals['coupon_discount']
-        tax_amount = totals['tax_amount']
-        tax_rate = get_tax_rate()
-        total = totals['card_total']
-
-        # The cashier quoted the total shown on the checkout page. If the cart
-        # changed since (e.g. a paired scanner added an item, or the coupon
-        # was recomputed), stop rather than record a different amount.
-        expected = request.form.get('expected_total')
-        if expected:
-            try:
-                if abs(float(expected) - total) > 0.005:
-                    conn.execute('ROLLBACK')
-                    flash('The cart changed since this checkout page opened. Please review the new total.')
-                    return redirect(url_for('pos.checkout'))
-            except ValueError:
-                pass
-
-        payment_details = {}
-        cash_discount_applied = 0.0
-        if payment_method == 'cash':
-            cash_discount_applied = totals['cash_discount_value'] if totals['cash_discount_enabled'] else 0
-            total = round_money(total - cash_discount_applied)
-            tendered = _money_field('tendered', default=total)
-            if tendered is None or tendered < total - 0.01:
-                conn.execute('ROLLBACK')
-                flash(f'Cash tendered must be at least ${total:.2f}.')
-                return redirect(url_for('pos.checkout'))
-            payment_details = {
-                'tendered': tendered,
-                'change': round_money(max(0, tendered - total)),
-                'cash_discount': cash_discount_applied,
-            }
-        elif payment_method == 'split':
-            cash_amount = _money_field('cash_amount', default=0)
-            card_amounts = [_money_value(a) for a in request.form.getlist('card_amount') if a]
-            if cash_amount is None or any(a is None for a in card_amounts):
-                conn.execute('ROLLBACK')
-                flash('Invalid split payment amounts.')
-                return redirect(url_for('pos.checkout'))
-
-            # Cash discount applies to the cash portion only
-            split_cash_discount = 0
-            if totals['cash_discount_enabled'] and cash_amount > 0:
-                cd_amount = float(get_pos_setting('CASH_DISCOUNT_AMOUNT', '0') or 0)
-                cd_type = get_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
-                if cd_amount > 0:
-                    # Discount the cash that pays the sale, not the cash handed
-                    # over: $100 given for a $20 cash balance earns 3% of $20.
-                    cash_basis = min(cash_amount, max(0.0, total - sum(card_amounts)))
-                    if cd_type == 'percent':
-                        split_cash_discount = calculate_percentage(cash_basis, cd_amount)
-                    else:
-                        cash_proportion = cash_basis / total if total > 0 else 0
-                        split_cash_discount = round_money(min(cd_amount * cash_proportion, cash_basis))
-                    total = round_money(total - split_cash_discount)
-
-            total_tendered = round_money(cash_amount + sum(card_amounts))
-            if total_tendered < total - 0.01:
-                conn.execute('ROLLBACK')
-                flash(f'Split payments add up to ${total_tendered:.2f}, less than the ${total:.2f} total.')
-                return redirect(url_for('pos.checkout'))
-            # Change can only be given in cash: cards may not exceed the total
-            if round_money(sum(card_amounts)) > total + 0.005:
-                conn.execute('ROLLBACK')
-                flash(f'Card amounts add up to more than the ${total:.2f} total.')
-                return redirect(url_for('pos.checkout'))
-            cash_discount_applied = split_cash_discount
-            payment_details = {
-                'cash': cash_amount,
-                'cards': card_amounts,
-                'total_tendered': total_tendered,
-                'change': round_money(min(cash_amount, max(0, total_tendered - total))),
-                'cash_discount': split_cash_discount,
-            }
-
-        order_number = generate_order_number(conn=conn)
-
-        # Create order
-        cursor = conn.execute('''
-            INSERT INTO pos_orders (
-                order_number, status, subtotal, tax_rate, tax_amount,
-                discount_amount, discount_type, discount_reason, total,
-                payment_method, payment_details, operator_id, checkout_token, cash_discount
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            order_number, 'completed', round(subtotal, 2), tax_rate, round(tax_amount, 2),
-            round(order_discount, 2), cart.get('discount_type') if order_discount else None,
-            cart.get('discount_reason', ''),
-            total, payment_method, json.dumps(payment_details), current_user.id, checkout_token,
-            round_money(cash_discount_applied)
-        ))
-        order_id = cursor.lastrowid
-
-        # Payments ledger: what each tender paid toward the sale, plus cash
-        # tendered and change given
-        write_payments(conn, order_id, allocate_payments(payment_method, payment_details, total))
-
-        # Create order items and decrement inventory
-        for item in cart['items']:
-            conn.execute('''
-                INSERT INTO pos_order_items (
-                    order_id, inventory_item_id, sku, name, quantity,
-                    unit_price, discount_amount, discount_type, line_total
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                order_id, item.get('inventory_item_id'), item['sku'], item['name'],
-                item['quantity'], item['unit_price'], item.get('discount_amount', 0),
-                item.get('discount_type'), item['line_total']
-            ))
-            
-            # Decrement inventory
-            if item.get('inventory_item_id'):
-                conn.execute('''
-                    UPDATE inventory_items 
-                    SET quantity = quantity - ? 
-                    WHERE id = ?
-                ''', (item['quantity'], item['inventory_item_id']))
-                
-                # Log inventory transaction
-                conn.execute('''
-                    INSERT INTO inventory_transactions (
-                        inventory_item_id, quantity_change, reason, user_id, source_tracking
-                    ) VALUES (?, ?, ?, ?, ?)
-                ''', (
-                    item['inventory_item_id'], -item['quantity'], 
-                    'Sold/Consumed', str(current_user.id), order_number
-                ))
-                
-                # Check for "End Sale on Out of Stock" condition
-                updated_item = conn.execute('''
-                    SELECT quantity, sale_enabled, sale_end_on_stock 
-                    FROM inventory_items WHERE id = ?
-                ''', (item['inventory_item_id'],)).fetchone()
-                
-                if updated_item and updated_item['quantity'] <= 0:
-                    if updated_item['sale_enabled'] and updated_item['sale_end_on_stock']:
-                        conn.execute('''
-                            UPDATE inventory_items SET sale_enabled = 0 WHERE id = ?
-                        ''', (item['inventory_item_id'],))
-                        logger.info(f"Sale auto-ended for item {item['inventory_item_id']} due to stock depletion.")
-        
-        # Record coupon redemption if any
-        if cart.get('applied_coupon'):
-            coupon_id = cart['applied_coupon'].get('id')
-            coupon_code = cart['applied_coupon'].get('code')
-            if coupon_id:
-                conn.execute('''
-                    INSERT INTO pos_coupon_redemptions (
-                        coupon_id, order_id, serial_used, discount_applied, redeemed_by
-                    ) VALUES (?, ?, ?, ?, ?)
-                ''', (coupon_id, order_id, coupon_code, round(coupon_discount, 2), current_user.id))
-                
-                used = conn.execute('''
-                    UPDATE pos_coupons
-                    SET current_uses = COALESCE(current_uses, 0) + 1
-                    WHERE id = ?
-                      AND (max_uses IS NULL OR max_uses = '' OR CAST(max_uses AS INTEGER) <= 0
-                           OR COALESCE(current_uses, 0) < CAST(max_uses AS INTEGER))
-                ''', (coupon_id,)).rowcount
-                if not used:
-                    raise ValueError('Coupon has reached its maximum number of uses.')
-                logger.info(f"Recorded redemption of coupon ID {coupon_id} for order {order_number}")
-        
-        # Empty exactly the cart that was just sold, in the same transaction
-        if register_id:
-            pos_registers.write_register_cart(conn, register_id, pos_registers.empty_cart())
-        conn.commit()
-        if not register_id:
-            session.pop('pos_cart', None)
-            session.modified = True
-        
-        logger.info(f"Order {order_number} completed by {current_user.username}, total: ${total}")
-        flash(f'Order {order_number} completed! Total: ${total:.2f}')
-        
-        # Build redirect URL with optional params for auto-print and cash drawer
-        redirect_params = {}
-        
-        # Check if auto-print is enabled
-        auto_print_enabled = get_pos_setting('AUTO_PRINT_RECEIPT', 'false') == 'true'
-        if auto_print_enabled:
-            redirect_params['auto_print'] = '1'
-        
-        # Check if cash drawer should open (only for cash or split with cash)
-        if get_pos_setting('CASH_DRAWER_ENABLED', 'false') == 'true':
-            has_cash = payment_method == 'cash' or (
-                payment_method == 'split' and payment_details.get('cash', 0) > 0
-            )
-            if has_cash:
-                redirect_params['open_drawer'] = '1'
-        
-        if auto_print_enabled:
-            return redirect(url_for('pos.sales', auto_print_order=order_number, **redirect_params))
-        else:
-            return redirect(url_for('pos.receipt', order_number=order_number, **redirect_params))
-        
+        sale = pos_checkout.complete_sale(
+            conn, cart_source, payment, current_user,
+            token=request.form.get('checkout_token'),
+            expected_total=request.form.get('expected_total'),
+            expected_version=request.form.get('cart_version'),
+            config=pricing_config(),
+            # looked up at call time so tests can intercept it
+            order_number_fn=lambda c: generate_order_number(conn=c),
+        )
+    except pos_checkout.CheckoutError as e:
+        if isinstance(e, pos_checkout.CouponInvalid):
+            # Drop only the coupon; never write back the checkout snapshot
+            mutate_cart(lambda c: c.update(applied_coupon=None) if c.get('applied_coupon') else None)
+        if isinstance(e, pos_checkout.CouponLimitReached):
+            logger.error(f"Checkout error: {e}")
+        flash(e.message)
+        if e.redirect_to == 'receipt':
+            return redirect(url_for('pos.receipt', order_number=e.order_number))
+        return redirect(url_for('pos.sales' if e.redirect_to == 'sales' else 'pos.checkout'))
     except Exception as e:
-        if conn.in_transaction:
-            conn.execute('ROLLBACK')
-        error_details = traceback.format_exc()
-        logger.error(f"Checkout error: {e}\n{error_details}")
+        logger.error(f"Checkout error: {e}\n{traceback.format_exc()}")
         flash(f'Error processing order: {str(e)}')
         return redirect(url_for('pos.checkout'))
     finally:
         conn.close()
 
+    if not register_id:
+        session.pop('pos_cart', None)
+        session.modified = True
 
-def _money_value(raw):
-    """Parse a money form value; None if it is not a finite, non-negative number."""
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None
-    if value != value or value < 0 or value == float('inf'):
-        return None
-    return round_money(value)
+    order_number = sale.order_number
+    flash(f'Order {order_number} completed! Total: ${sale.total:.2f}')
+
+    # Redirect with optional auto-print and cash-drawer flags
+    redirect_params = {}
+    auto_print_enabled = get_pos_setting('AUTO_PRINT_RECEIPT', 'false') == 'true'
+    if auto_print_enabled:
+        redirect_params['auto_print'] = '1'
+
+    # Open the drawer only for cash, or a split with cash
+    if get_pos_setting('CASH_DRAWER_ENABLED', 'false') == 'true':
+        has_cash = sale.payment_method == 'cash' or (
+            sale.payment_method == 'split' and sale.payment_details.get('cash', 0) > 0
+        )
+        if has_cash:
+            redirect_params['open_drawer'] = '1'
+
+    if auto_print_enabled:
+        return redirect(url_for('pos.sales', auto_print_order=order_number, **redirect_params))
+    return redirect(url_for('pos.receipt', order_number=order_number, **redirect_params))
+
+
+# Form money parsing now lives in pos_pricing (kept here for importers)
+_money_value = parse_money
 
 
 def _money_field(name, default=None):
-    raw = request.form.get(name)
-    if raw is None or str(raw).strip() == '':
-        return default
-    return _money_value(raw)
+    return parse_money_field(request.form.get(name), default)
 
 
 def _prepare_receipt_data(conn, order):
@@ -473,90 +258,24 @@ def receipt_print(order_number):
 @pos_bp.route('/order/<order_number>/delete', methods=['POST'])
 @require_permission('admin.manage')
 def delete_order(order_number):
-    """Delete an order (admin only)."""
+    """Delete an order (admin only): pos_sales.delete_order."""
     restore_inventory = request.form.get('restore_inventory') == 'on'
-    
-    from app.services.db import get_db_connection
     conn = get_db_connection()
-    
     try:
-        # Find the order
-        order = conn.execute('SELECT id FROM pos_orders WHERE order_number = ?', (order_number,)).fetchone()
-        
-        if not order:
-            flash('Order not found.')
-            return redirect(url_for('pos.management'))
-        
-        order_id = order['id']
-        
-        # If restoring inventory, put back what actually left the shelf: the
-        # units sold minus any a refund already restocked. Match on the
-        # inventory item id (the order line's sku is whatever code was
-        # scanned, often a UPC, so matching on it silently restored nothing).
-        if restore_inventory:
-            order_items = conn.execute('''
-                SELECT oi.inventory_item_id, oi.quantity,
-                       COALESCE((SELECT SUM(ri.quantity) FROM pos_refund_items ri
-                                 WHERE ri.order_item_id = oi.id AND ri.restock_action = 'restock'), 0)
-                           AS restocked
-                FROM pos_order_items oi WHERE oi.order_id = ?
-            ''', (order_id,)).fetchall()
-
-            restored_count = 0
-            for item in order_items:
-                units = item['quantity'] - item['restocked']
-                if item['inventory_item_id'] and units > 0:
-                    conn.execute('UPDATE inventory_items SET quantity = quantity + ? WHERE id = ?',
-                                 (units, item['inventory_item_id']))
-                    conn.execute('''
-                        INSERT INTO inventory_transactions
-                            (inventory_item_id, quantity_change, reason, user_id, source_tracking)
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (item['inventory_item_id'], units, 'Order Deleted', str(current_user.id), order_number))
-                    restored_count += units
-
-            logger = logging.getLogger(__name__)
-            logger.info(f"Restored {restored_count} units to inventory for order {order_number}")
-
-        # Delete everything that hangs off the order (foreign keys are not
-        # enforced, so nothing cascades on its own)
-        conn.execute('''DELETE FROM pos_refund_items
-                        WHERE refund_id IN (SELECT id FROM pos_refunds WHERE order_id = ?)''', (order_id,))
-        conn.execute('DELETE FROM pos_refunds WHERE order_id = ?', (order_id,))
-        conn.execute('DELETE FROM pos_payments WHERE order_id = ?', (order_id,))
-        for r in conn.execute('SELECT coupon_id FROM pos_coupon_redemptions WHERE order_id = ?',
-                              (order_id,)).fetchall():
-            conn.execute('''UPDATE pos_coupons SET current_uses = MAX(COALESCE(current_uses, 0) - 1, 0)
-                            WHERE id = ?''', (r['coupon_id'],))
-        conn.execute('DELETE FROM pos_coupon_redemptions WHERE order_id = ?', (order_id,))
-        conn.execute('DELETE FROM pos_order_items WHERE order_id = ?', (order_id,))
-        conn.execute('DELETE FROM pos_orders WHERE id = ?', (order_id,))
-
-        # Audit trail: a hard delete otherwise leaves no record at all
-        conn.execute('''
-            INSERT INTO pos_audit_log (action, user_id, user_name, target_type, target_id, details, ip_address)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', ('delete_order', current_user.id, current_user.username, 'order', order_number,
-              json.dumps({'restore_inventory': restore_inventory}), request.remote_addr))
-
-        conn.commit()
-        
-        logger = logging.getLogger(__name__)
-        logger.info(f"Order {order_number} deleted by admin {current_user.username}" + 
-                   (" with inventory restored" if restore_inventory else ""))
-        
-        if restore_inventory:
-            flash(f'Order {order_number} deleted and inventory quantities restored.')
-        else:
-            flash(f'Order {order_number} has been permanently deleted.')
-        return redirect(url_for('pos.sales_history'))
-        
+        pos_sales.delete_order(conn, order_number, restore_inventory, current_user,
+                               ip=request.remote_addr)
+    except pos_sales.OrderNotFound:
+        flash('Order not found.')
+        return redirect(url_for('pos.management'))
     except Exception as e:
-        conn.rollback()
-        logger = logging.getLogger(__name__)
         logger.error(f"Error deleting order {order_number}: {e}")
         flash(f'Error deleting order: {str(e)}')
         return redirect(url_for('pos.receipt', order_number=order_number))
     finally:
         conn.close()
 
+    if restore_inventory:
+        flash(f'Order {order_number} deleted and inventory quantities restored.')
+    else:
+        flash(f'Order {order_number} has been permanently deleted.')
+    return redirect(url_for('pos.sales_history'))
