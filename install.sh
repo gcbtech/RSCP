@@ -1259,7 +1259,9 @@ run_install() {
             local now_schema was_schema
             now_schema=$(db_file_schema "$DATA_DIR/rscp.db")
             was_schema=$(db_file_schema "$DB_BACKUP")
-            if [ -n "$now_schema" ] && [ -n "$was_schema" ] && [ "$now_schema" -gt "$was_schema" ]; then
+            # Unreadable versions count as upgraded: the backup is from moments ago.
+            if ! [[ "$now_schema" =~ ^[0-9]+$ && "$was_schema" =~ ^[0-9]+$ ]] \
+                    || [ "$now_schema" -gt "$was_schema" ]; then
                 warn "The database was already upgraded (schema $was_schema -> $now_schema); restoring the pre-update backup."
                 restore_db_from "$DB_BACKUP"
             fi
@@ -1302,7 +1304,8 @@ run_rollback() {
     local db_schema target_schema backup msg
     db_schema=$(db_file_schema "$DATA_DIR/rscp.db")
     target_schema=$(release_schema "$target")
-    [ -n "$target_schema" ] || die "Can't tell which database version $(basename "$target") needs; not rolling back."
+    [[ "$db_schema" =~ ^[0-9]+$ ]] || die "Can't read the database version; not rolling back."
+    [[ "$target_schema" =~ ^[0-9]+$ ]] || die "Can't tell which database version $(basename "$target") needs; not rolling back."
     if [ "$db_schema" -gt "$target_schema" ]; then
         backup=$(newest_backup_at_most "$target_schema")
         if [ "$RESTORE_DB" -ne 1 ]; then
