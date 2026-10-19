@@ -72,12 +72,16 @@ def _iso(dt):
 
 def package_maintenance(trigger):
     """Package statuses follow the calendar (on_time -> expected -> past_due);
-    AUTO_TRIM removes old packages."""
+    AUTO_TRIM removes old packages. Also checks every item's cached stock
+    against the stock ledger and repairs drift (logged; the ledger wins)."""
+    from app.services.inventory import run_stock_ledger_check
     from app.services.package_imports import run_package_maintenance
     changed, trimmed = run_package_maintenance()
     if changed or trimmed:
         logger.info(f"[Packages] {changed} statuses refreshed, {trimmed} old packages trimmed")
-    return f'{changed} statuses refreshed, {trimmed} old packages trimmed'
+    detail = f'{changed} statuses refreshed, {trimmed} old packages trimmed'
+    stock = run_stock_ledger_check()
+    return f'{detail}; {stock}' if stock else detail
 
 
 EOD_MARKER = 'eod-email'

@@ -1,19 +1,39 @@
 """
 Inventory service: items, stock levels and the stock ledger.
 
-Stock rule: inventory_items.quantity only ever changes through
-adjust_stock() / set_stock() here. Every change is
+Stock rule: an item's stock on hand is the SUM(delta) of its rows in
+inventory_movements, an append-only ledger (schema migration 20). Rows are
+never updated or deleted: SQLite triggers refuse it, the only exception being
+an unused item's opening entries removed together with the item
+(delete_item). inventory_items.quantity is a cached copy of that sum, so
+lists, lookups and alerts stay one-table reads.
 
-  * relative (``quantity = quantity + delta``) so a POS sale or another
-    terminal committing in between is never overwritten by a stale value,
-  * logged as one inventory_transactions row (reason, user, source), and
-  * taken under the write lock (BEGIN IMMEDIATE) when a decision depends on
-    the current quantity (negative guard, absolute counts).
+Both are written only by _move() here, reached through adjust_stock() /
+set_stock(), and always together in one transaction:
+
+  * one inventory_movements row: delta, reason code (REASON_*), optional
+    reference to what caused it (ref_type/ref_id: an order, refund,
+    package, audit session, or the movement a reversal undoes), a note
+    (order number, tracking number, free text) and the acting user;
+  * a relative cache update (quantity = quantity + delta), so a POS sale or
+    another terminal committing in between is never overwritten;
+  * under the write lock (BEGIN IMMEDIATE, or the caller's own open
+    transaction) so the negative-stock guard and absolute counts see the
+    true quantity.
+
+An absolute count (audit, "mark out of stock") is a movement of
+(N - current). check_stock_ledger() compares the cache with the ledger; when
+they disagree the ledger is the truth and the cache is repaired (and logged).
+
+The 2.x audit trail, inventory_transactions, is no longer written. Its rows
+stay readable as an item's earlier history (legacy_transactions()) and still
+count in the overview's 30-day charts.
 
 Conventions (same as pos_registers / package_imports):
   * every function takes an open sqlite3 connection;
   * no Flask request/session/current_user in here: the acting user is passed
-    in explicitly (as the string the ledger stores: username for most flows);
+    in explicitly (as the string the ledger stores: username for most flows,
+    the user id for POS and the scan screen);
   * config values are passed in by the caller, so tests can stub config at
     the route module as before;
   * functions that write commit their own transaction unless the caller
@@ -30,14 +50,61 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
-# Reasons written to inventory_transactions (shown in item history and used
-# by the overview: 'Sold/Consumed' and 'Damaged' count as movement).
-REASON_INITIAL = 'Initial Stock'
-REASON_SOLD = 'Sold/Consumed'
-REASON_RECEIVED_SCAN = 'Received from Scan'
-REASON_OOS_SCAN = 'Marked OOS from Scan'
-REASON_AUDIT = 'Live Audit Correction'
-REASON_CSV_IMPORT = 'CSV Import'
+# Reason codes of inventory_movements rows -> label shown in the item's
+# stock history. A movement with any other reason is refused.
+REASON_OPENING = 'opening_balance'   # stock on hand when the ledger started (migration 20)
+REASON_INITIAL = 'initial'           # stock entered with a new item (form or spreadsheet)
+REASON_SALE = 'sale'                 # POS checkout (ref: order)
+REASON_REFUND = 'refund'             # refund restock (ref: refund)
+REASON_SALE_EDIT = 'sale_edit'       # Edit Sale changed or removed a line (ref: order)
+REASON_SALE_DELETE = 'sale_delete'   # deleted sale, stock put back (ref: order)
+REASON_RECEIVE = 'receive'           # received from a package / scan (ref: package when known)
+REASON_RETURN = 'return'             # manual adjustment: "Returned"
+REASON_CONSUMED = 'consumed'         # manual adjustment / scan screen -1: "Sold/Consumed"
+REASON_DAMAGED = 'damaged'           # manual adjustment: "Damaged"
+REASON_COUNT = 'count'               # absolute count: audit (ref: audit session), mark OOS, count correction
+REASON_ADJUST = 'adjust'             # manual adjustment with a free-text reason (in note)
+REASON_IMPORT = 'import'             # spreadsheet import added to an existing item
+REASON_REVERSAL = 'reversal'         # undoes one earlier movement (ref: movement)
+
+REASON_LABELS = {
+    REASON_OPENING: 'Opening balance',
+    REASON_INITIAL: 'Initial stock',
+    REASON_SALE: 'Sale',
+    REASON_REFUND: 'Refund restock',
+    REASON_SALE_EDIT: 'Sale edited',
+    REASON_SALE_DELETE: 'Sale deleted',
+    REASON_RECEIVE: 'Received',
+    REASON_RETURN: 'Returned',
+    REASON_CONSUMED: 'Sold/Consumed',
+    REASON_DAMAGED: 'Damaged',
+    REASON_COUNT: 'Count',
+    REASON_ADJUST: 'Adjustment',
+    REASON_IMPORT: 'Import',
+    REASON_REVERSAL: 'Reversal',
+}
+
+# An item whose ledger holds nothing but these may still be deleted.
+OPENING_REASONS = (REASON_OPENING, REASON_INITIAL)
+# Overview: "sold" units per day, and units moving off the shelf (top movers).
+SOLD_REASONS = (REASON_SALE, REASON_CONSUMED)
+MOVER_REASONS = SOLD_REASONS + (REASON_DAMAGED,)
+
+REF_ORDER = 'order'          # pos_orders.id
+REF_REFUND = 'refund'        # pos_refunds.id
+REF_PACKAGE = 'package'      # packages.id
+REF_AUDIT = 'audit'          # audit_sessions.id
+REF_MOVEMENT = 'movement'    # inventory_movements.id (a reversal)
+
+# Manual adjustment form (items list "Adjust" dialog): preset label -> code.
+# Any other text is a free-text reason, kept as the note of an 'adjust'.
+MANUAL_REASONS = {
+    'Sold/Consumed': REASON_CONSUMED,
+    'Received': REASON_RECEIVE,
+    'Returned': REASON_RETURN,
+    'Damaged': REASON_DAMAGED,
+    'Count Correction': REASON_COUNT,
+}
 
 ATTENTION_SNOOZE_DAYS = 5
 
@@ -68,14 +135,33 @@ class DuplicateSku(InventoryError):
         self.sku = sku
 
 
-class TransactionNotFound(InventoryError):
-    def __init__(self, tx_id=None):
-        super().__init__('Transaction not found')
-        self.tx_id = tx_id
+class MovementNotFound(InventoryError):
+    def __init__(self, movement_id=None):
+        super().__init__('Stock history entry not found')
+        self.movement_id = movement_id
 
 
-# Result of a stock change.
-StockChange = namedtuple('StockChange', 'item_id old_quantity new_quantity delta name sku')
+class CannotReverse(InventoryError):
+    """The movement is an opening balance, a reversal, already reversed, or
+    changed nothing."""
+
+
+class ItemHasHistory(InventoryError):
+    def __init__(self, item_id=None):
+        super().__init__("This item has stock history (sales, receipts, counts or adjustments) "
+                         "and can't be deleted. Mark it as Legacy to hide it instead.")
+        self.item_id = item_id
+
+
+# Result of a stock change. movement_id is None when nothing changed.
+StockChange = namedtuple('StockChange', 'item_id old_quantity new_quantity delta name sku movement_id',
+                         defaults=(None,))
+
+# check_stock_ledger(): items whose cache disagreed with the ledger
+# (Drift rows), movements of items that no longer exist, and whether the
+# cache was repaired.
+Drift = namedtuple('Drift', 'item_id sku name cached ledger')
+LedgerCheck = namedtuple('LedgerCheck', 'drift orphan_items repaired')
 
 
 # ---------------------------------------------------------------------------
@@ -97,43 +183,52 @@ def write_transaction(conn):
     conn.execute('BEGIN IMMEDIATE')
     try:
         yield conn
+        conn.commit()   # if COMMIT itself fails, roll back below
     except BaseException:
         if conn.in_transaction:
             conn.rollback()
         raise
-    else:
-        conn.commit()
 
 
 # ---------------------------------------------------------------------------
 # Stock
 # ---------------------------------------------------------------------------
 
-def _log_transaction(conn, item_id, delta, reason, user, source):
-    conn.execute('''
-        INSERT INTO inventory_transactions
-            (inventory_item_id, quantity_change, reason, user_id, source_tracking)
-        VALUES (?, ?, ?, ?, ?)
-    ''', (item_id, delta, reason, user, source))
+def _move(conn, item_id, delta, reason, user=None, note=None, ref_type=None, ref_id=None):
+    """THE stock write: append one ledger row and move the cached quantity by
+    the same delta. Callers hold the write lock (write_transaction).
+    Returns the new movement id."""
+    if reason not in REASON_LABELS:
+        raise ValueError(f"Unknown stock movement reason: {reason!r}")
+    cur = conn.execute('''
+        INSERT INTO inventory_movements (item_id, delta, reason, ref_type, ref_id, note, user)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (item_id, delta, reason, ref_type if ref_id is not None else None,
+          int(ref_id) if ref_id is not None else None,
+          (str(note).strip() or None) if note is not None else None,
+          str(user) if user is not None else None))
+    if delta:
+        conn.execute('''
+            UPDATE inventory_items
+            SET quantity = COALESCE(quantity, 0) + ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (delta, item_id))
+    return cur.lastrowid
 
 
-def _apply_delta(conn, item_id, delta):
-    conn.execute('''
-        UPDATE inventory_items
-        SET quantity = quantity + ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-    ''', (delta, item_id))
-
-
-def adjust_stock(conn, item_id, delta, reason, user=None, source=None, *, allow_negative=False):
-    """Change an item's stock by `delta` (positive adds, negative removes).
+def adjust_stock(conn, item_id, delta, reason, user=None, note=None, *, ref_type=None, ref_id=None,
+                 allow_negative=False):
+    """Change an item's stock by `delta` (positive adds, negative removes),
+    recorded as one movement with `reason` (a REASON_* code), the acting
+    `user`, an optional `note` and reference (ref_type REF_*, ref_id).
 
     Raises ItemNotFound, or InsufficientStock when the change would take the
     quantity below zero (unless allow_negative: POS sales and imports never
-    refused). A zero delta changes nothing and logs nothing.
+    refused). A zero delta changes nothing and records nothing.
     Returns a StockChange.
     """
     delta = int(delta)
+    movement_id = None
     with write_transaction(conn):
         row = conn.execute('SELECT quantity, name, sku FROM inventory_items WHERE id = ?',
                            (item_id,)).fetchone()
@@ -143,15 +238,15 @@ def adjust_stock(conn, item_id, delta, reason, user=None, source=None, *, allow_
         if delta < 0 and not allow_negative and old + delta < 0:
             raise InsufficientStock(delta, old)
         if delta != 0:
-            _apply_delta(conn, item_id, delta)
-            _log_transaction(conn, item_id, delta, reason, user, source)
-    return StockChange(item_id, old, old + delta, delta, row['name'], row['sku'])
+            movement_id = _move(conn, item_id, delta, reason, user, note, ref_type, ref_id)
+    return StockChange(item_id, old, old + delta, delta, row['name'], row['sku'], movement_id)
 
 
-def set_stock(conn, item_id, new_quantity, reason, user=None, source=None):
+def set_stock(conn, item_id, new_quantity, reason=REASON_COUNT, user=None, note=None, *,
+              ref_type=None, ref_id=None):
     """Bring an item's stock to an absolute count (audit count, mark out of
-    stock). Applied as a relative change computed under the write lock, so it
-    is logged like any other change. Returns a StockChange."""
+    stock): one movement of (new_quantity - current), computed under the
+    write lock. Returns a StockChange."""
     new_quantity = int(new_quantity)
     with write_transaction(conn):
         row = conn.execute('SELECT quantity FROM inventory_items WHERE id = ?',
@@ -159,35 +254,188 @@ def set_stock(conn, item_id, new_quantity, reason, user=None, source=None):
         if row is None:
             raise ItemNotFound(item_id)
         return adjust_stock(conn, item_id, new_quantity - (row['quantity'] or 0), reason,
-                            user, source, allow_negative=True)
+                            user, note, ref_type=ref_type, ref_id=ref_id, allow_negative=True)
 
 
-def mark_out_of_stock(conn, item_id, user=None, reason=REASON_OOS_SCAN):
-    """Zero an item's stock (logged as one change). Returns a StockChange."""
-    return set_stock(conn, item_id, 0, reason, user)
+def mark_out_of_stock(conn, item_id, user=None, note='Marked out of stock from scan'):
+    """Zero an item's stock (one 'count' movement). Returns a StockChange."""
+    return set_stock(conn, item_id, 0, REASON_COUNT, user, note)
 
 
-def revert_transaction(conn, tx_id):
-    """Undo a ledger row: reverse its quantity change and delete the row
-    (the history then reads as if it never happened). Returns the item id."""
+def manual_reason(text):
+    """The manual adjustment form's reason -> (reason code, note): a preset
+    label maps to its code; free text becomes an 'adjust' with that note."""
+    text = (text or '').strip()
+    if text in MANUAL_REASONS:
+        return MANUAL_REASONS[text], None
+    return REASON_ADJUST, text or None
+
+
+def reverse_movement(conn, movement_id, user=None):
+    """Undo one stock-history entry by appending its opposite (a 'reversal'
+    movement referencing it); the original stays in the history.
+    Raises MovementNotFound, or CannotReverse for an opening balance, a
+    reversal, an entry already reversed, or one that changed nothing.
+    Returns a StockChange."""
     with write_transaction(conn):
-        tx = conn.execute('SELECT inventory_item_id, quantity_change FROM inventory_transactions WHERE id = ?',
-                          (tx_id,)).fetchone()
-        if tx is None:
-            raise TransactionNotFound(tx_id)
-        item_id = tx['inventory_item_id']
-        _apply_delta(conn, item_id, -tx['quantity_change'])
-        conn.execute('DELETE FROM inventory_transactions WHERE id = ?', (tx_id,))
-    return item_id
+        m = conn.execute('SELECT id, item_id, delta, reason FROM inventory_movements WHERE id = ?',
+                         (movement_id,)).fetchone()
+        if m is None:
+            raise MovementNotFound(movement_id)
+        if m['reason'] in (REASON_OPENING, REASON_REVERSAL):
+            raise CannotReverse(f"{REASON_LABELS[m['reason']]} entries can't be reversed. "
+                                "Use an adjustment instead.")
+        if not m['delta']:
+            raise CannotReverse('That entry changed nothing, so there is nothing to reverse.')
+        if conn.execute('SELECT 1 FROM inventory_movements WHERE ref_type = ? AND ref_id = ? LIMIT 1',
+                        (REF_MOVEMENT, m['id'])).fetchone():
+            raise CannotReverse('That entry was already reversed.')
+        label = REASON_LABELS.get(m['reason'], m['reason'])
+        return adjust_stock(conn, m['item_id'], -m['delta'], REASON_REVERSAL, user,
+                            f"Reverses #{m['id']} ({label} {m['delta']:+d})",
+                            ref_type=REF_MOVEMENT, ref_id=m['id'], allow_negative=True)
 
 
-def item_transactions(conn, item_id, limit=50):
+def stock_on_hand(conn, item_id):
+    """Stock on hand from the ledger itself (not the cache)."""
+    return conn.execute('SELECT COALESCE(SUM(delta), 0) FROM inventory_movements WHERE item_id = ?',
+                        (item_id,)).fetchone()[0]
+
+
+def item_movements(conn, item_id, limit=100):
+    """The item's latest stock-history entries, newest first, as dicts:
+    the movement's columns plus
+      balance       stock on hand right after it (running SUM(delta))
+      label         reason label
+      user_name     the user (POS / scan-screen rows store a user id)
+      order_number  for order and refund refs (None once the sale is deleted)
+      tracking      for package refs
+      audit_id      for audit refs
+      reversed_by   id of the reversal that undid it, if any
+    """
+    rows = conn.execute('''
+        SELECT m.*,
+               COALESCE(o.order_number, ro.order_number) AS order_number,
+               p.tracking_number AS tracking,
+               a.id AS audit_id,
+               u.username AS user_name,
+               (SELECT x.id FROM inventory_movements x
+                WHERE x.ref_type = 'movement' AND x.ref_id = m.id LIMIT 1) AS reversed_by
+        FROM (
+            SELECT mv.*, SUM(mv.delta) OVER (ORDER BY mv.id) AS balance
+            FROM inventory_movements mv WHERE mv.item_id = ?
+        ) m
+        LEFT JOIN pos_orders o ON m.ref_type = 'order' AND o.id = m.ref_id
+        LEFT JOIN pos_refunds r ON m.ref_type = 'refund' AND r.id = m.ref_id
+        LEFT JOIN pos_orders ro ON ro.id = r.order_id
+        LEFT JOIN packages p ON m.ref_type = 'package' AND p.id = m.ref_id
+        LEFT JOIN audit_sessions a ON m.ref_type = 'audit' AND a.id = m.ref_id
+        LEFT JOIN users u ON m.user != '' AND m.user NOT GLOB '*[^0-9]*' AND u.id = CAST(m.user AS INTEGER)
+        ORDER BY m.id DESC
+        LIMIT ?
+    ''', (item_id, limit)).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d['label'] = REASON_LABELS.get(d['reason'], d['reason'])
+        d['user_name'] = d['user_name'] or d['user']
+        out.append(d)
+    return out
+
+
+def movement_count(conn, item_id):
+    return conn.execute('SELECT COUNT(*) FROM inventory_movements WHERE item_id = ?',
+                        (item_id,)).fetchone()[0]
+
+
+def legacy_transactions(conn, item_id, limit=50):
+    """The item's 2.x audit-trail rows (inventory_transactions, written
+    before the stock ledger existed), newest first. Read-only history."""
     return conn.execute('''
         SELECT * FROM inventory_transactions
         WHERE inventory_item_id = ?
-        ORDER BY created_at DESC LIMIT ?
+        ORDER BY created_at DESC, id DESC LIMIT ?
     ''', (item_id, limit)).fetchall()
 
+
+def package_ref(conn, tracking):
+    """packages.id to reference for stock received against a tracking number
+    (its first package row), or None."""
+    if not tracking:
+        return None
+    row = conn.execute('SELECT MIN(id) FROM packages WHERE tracking_number = ? COLLATE NOCASE',
+                       (tracking,)).fetchone()
+    return row[0] if row else None
+
+
+# ---------------------------------------------------------------------------
+# Ledger consistency
+# ---------------------------------------------------------------------------
+
+_DRIFT_SQL = '''
+    SELECT i.id, i.sku, i.name, i.quantity AS cached, COALESCE(m.total, 0) AS ledger
+    FROM inventory_items i
+    LEFT JOIN (SELECT item_id, SUM(delta) AS total
+               FROM inventory_movements GROUP BY item_id) m ON m.item_id = i.id
+    WHERE i.quantity IS NOT COALESCE(m.total, 0)
+    ORDER BY i.id
+'''
+
+
+def ledger_drift(conn):
+    """Items whose cached quantity differs from SUM(delta) of their ledger."""
+    return [Drift(r[0], r[1], r[2], r[3], r[4]) for r in conn.execute(_DRIFT_SQL).fetchall()]
+
+
+def check_stock_ledger(conn, repair=True):
+    """Compare every item's cached quantity with its ledger. With repair, a
+    drifted cache is set to the ledger's sum (the ledger is the truth; this
+    is the one cache write that is not a movement) and each repair is logged.
+    Movements of items that no longer exist are counted and logged (nothing
+    to repair). Returns a LedgerCheck."""
+    drift = ledger_drift(conn)   # cheap read first: no write lock when all is well
+    repaired = False
+    if drift and repair:
+        with write_transaction(conn):
+            drift = ledger_drift(conn)   # again under the lock: only what is still wrong
+            for d in drift:
+                conn.execute('UPDATE inventory_items SET quantity = ?, updated_at = CURRENT_TIMESTAMP '
+                             'WHERE id = ?', (d.ledger, d.item_id))
+                logger.warning(f"[Stock] Item {d.item_id} ({d.sku}) cached quantity {d.cached} "
+                               f"!= ledger {d.ledger}: cache repaired from the ledger")
+        repaired = bool(drift)
+    elif drift:
+        for d in drift:
+            logger.warning(f"[Stock] Item {d.item_id} ({d.sku}) cached quantity {d.cached} "
+                           f"!= ledger {d.ledger}")
+    orphans = conn.execute('''
+        SELECT COUNT(DISTINCT item_id) FROM inventory_movements
+        WHERE item_id NOT IN (SELECT id FROM inventory_items)
+    ''').fetchone()[0]
+    if orphans:
+        logger.warning(f"[Stock] Stock ledger has movements for {orphans} item(s) that no longer exist")
+    return LedgerCheck(drift, orphans, repaired)
+
+
+def run_stock_ledger_check():
+    """The package-maintenance job's stock check: repairs drift on the app's
+    database. Returns a short summary for the job status, '' when all is well
+    (or the ledger does not exist yet: schema not migrated)."""
+    from app.services.db import get_db_connection
+    conn = get_db_connection()
+    try:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                            "AND name = 'inventory_movements'").fetchone():
+            return ''
+        result = check_stock_ledger(conn, repair=True)
+    finally:
+        conn.close()
+    parts = []
+    if result.drift:
+        parts.append(f"stock cache repaired for {len(result.drift)} item(s)")
+    if result.orphan_items:
+        parts.append(f"stock ledger has {result.orphan_items} deleted item(s)")
+    return '; '.join(parts)
 
 # ---------------------------------------------------------------------------
 # Low-stock alerts
@@ -396,13 +644,14 @@ def _resolve_images(image_url, gallery, asin):
 
 
 def create_item(conn, fields, user=None, first_stock_date_default=None):
-    """Insert an item and log its initial stock. Returns the new item id.
+    """Insert an item and record its initial stock (one 'initial' movement,
+    noted with source_tracking when given). Returns the new item id.
 
     fields: sku (required: generate one first), name, quantity, location_*,
     asin, image_url, additional_images (list), source_url, buy_price,
     sell_price, supplier, first_stock_date, resupply_interval,
     alert_threshold, upc, part_number, keywords, addon_1, addon_2,
-    description, notes.
+    description, notes, source_tracking.
     Alerts are enabled exactly when alert_threshold > 0. An ASIN fills in a
     missing cover image and source URL. first_stock_date_default is used when
     the form left the date empty (TRACK_FIRST_STOCK_DATE).
@@ -436,11 +685,10 @@ def create_item(conn, fields, user=None, first_stock_date_default=None):
                   1 if f.get('addon_1') else 0, 1 if f.get('addon_2') else 0,
                   f.get('description') or None, json.dumps(gallery) if gallery else None, f.get('notes')))
             item_id = cur.lastrowid
-            if quantity > 0:
-                adjust_stock(conn, item_id, quantity, REASON_INITIAL, user)
-            elif quantity < 0:
-                # Never refused before; kept, but there is nothing to "start" from.
-                _apply_delta(conn, item_id, quantity)
+            if quantity:
+                # A negative start was never refused; kept (and recorded).
+                adjust_stock(conn, item_id, quantity, REASON_INITIAL, user,
+                             f.get('source_tracking') or None, allow_negative=True)
     except sqlite3.IntegrityError as e:
         if 'UNIQUE constraint failed' in str(e) and 'sku' in str(e).lower():
             raise DuplicateSku(sku) from e
@@ -484,10 +732,29 @@ def update_item(conn, item_id, fields):
 
 
 def delete_item(conn, item_id):
-    """Delete an item together with its stock ledger."""
-    with write_transaction(conn):
-        conn.execute('DELETE FROM inventory_transactions WHERE inventory_item_id = ?', (item_id,))
-        conn.execute('DELETE FROM inventory_items WHERE id = ?', (item_id,))
+    """Delete an item that has no stock history: its ledger holds nothing
+    but opening entries (opening balance / initial stock), which go with it
+    (the only rows the ledger's delete trigger lets go), as do its 2.x
+    audit-trail rows.
+
+    Raises ItemHasHistory when it has any other movement, or when other
+    records (sales lines, audit records) still reference it under enforced
+    foreign keys. Use toggle_legacy() to retire such an item.
+    """
+    placeholders = ', '.join('?' * len(OPENING_REASONS))
+    try:
+        with write_transaction(conn):
+            if conn.execute(f'SELECT 1 FROM inventory_movements WHERE item_id = ? '
+                            f'AND reason NOT IN ({placeholders}) LIMIT 1',
+                            (item_id, *OPENING_REASONS)).fetchone():
+                raise ItemHasHistory(item_id)
+            conn.execute('DELETE FROM inventory_movements WHERE item_id = ?', (item_id,))
+            conn.execute('DELETE FROM inventory_transactions WHERE inventory_item_id = ?', (item_id,))
+            conn.execute('DELETE FROM inventory_items WHERE id = ?', (item_id,))
+    except sqlite3.IntegrityError as e:
+        if 'FOREIGN KEY' in str(e).upper():
+            raise ItemHasHistory(item_id) from e
+        raise
 
 
 def toggle_legacy(conn, item_id):
@@ -546,15 +813,18 @@ def save_alert_settings(conn, settings):
 
 def record_audit_count(conn, session_id, item_id, count, user=None):
     """Apply a live audit count: the item's stock becomes `count` at once
-    (logged as an audit correction when it differs) and the session's record
-    for the item is created or updated. Raises ItemNotFound."""
+    (a 'count' movement referencing the audit session when it differs) and
+    the session's record for the item is created or updated.
+    Raises ItemNotFound."""
     count = int(count)
     with write_transaction(conn):
         item = conn.execute('SELECT id, sku, name, quantity FROM inventory_items WHERE id = ?',
                             (item_id,)).fetchone()
         if not item:
             raise ItemNotFound(item_id)
-        set_stock(conn, item_id, count, REASON_AUDIT, user)
+        set_stock(conn, item_id, count, REASON_COUNT, user,
+                  f"Audit count: {count} (was {item['quantity'] or 0})",
+                  ref_type=REF_AUDIT, ref_id=session_id)
         record = conn.execute('SELECT id FROM audit_records WHERE session_id = ? AND item_id = ?',
                               (session_id, item_id)).fetchone()
         if record:
@@ -620,11 +890,13 @@ def _map_import_row(row):
 def import_items(conn, rows, update_existing, user=None):
     """Import parsed spreadsheet rows (dicts keyed by header).
 
-    Rows without SKU or name are skipped. New SKUs are inserted and their
-    quantity logged as a 'CSV Import' change; existing SKUs are skipped, or
-    with update_existing get their details refreshed and the row's quantity
-    ADDED to stock (also logged). A bad row is reported (by spreadsheet row
-    number) and rolled back on its own; the rest still import.
+    Rows without SKU or name are skipped. New SKUs are inserted with their
+    quantity as an 'initial' movement (noted as a spreadsheet import, also
+    for 0 so the history shows where the item came from); existing SKUs are
+    skipped, or with update_existing get their details refreshed and the
+    row's quantity ADDED to stock (an 'import' movement). A bad row is
+    reported (by spreadsheet row number) and rolled back on its own; the
+    rest still import.
     Returns ImportResult(added, updated, skipped, errors).
     """
     added = updated = skipped = 0
@@ -665,8 +937,8 @@ def import_items(conn, rows, update_existing, user=None):
                               data.get('location_area'), data.get('location_aisle'),
                               data.get('location_shelf'), data.get('location_bin'),
                               data.get('keywords'), ids_json, existing['id']))
-                        adjust_stock(conn, existing['id'], quantity, REASON_CSV_IMPORT, user,
-                                     allow_negative=True)
+                        adjust_stock(conn, existing['id'], quantity, REASON_IMPORT, user,
+                                     'Spreadsheet import', allow_negative=True)
                         updated += 1
                     else:
                         skipped += 1
@@ -683,10 +955,8 @@ def import_items(conn, rows, update_existing, user=None):
                           data.get('supplier'), data.get('asin'),
                           data.get('keywords'), ids_json))
                     new_id = cur.lastrowid
-                    if quantity:
-                        _apply_delta(conn, new_id, quantity)
-                    # Logged even for 0 so the item's history shows where it came from.
-                    _log_transaction(conn, new_id, quantity, REASON_CSV_IMPORT, user, None)
+                    # Recorded even for 0 so the item's history shows where it came from.
+                    _move(conn, new_id, quantity, REASON_INITIAL, user, 'Spreadsheet import')
                     added += 1
                 conn.execute('RELEASE import_row')
             except Exception as row_e:
@@ -836,23 +1106,41 @@ def inventory_stats(conn, low_threshold, now=None):
     return stats
 
 
+# The same flows as recorded by 2.x in inventory_transactions (no longer
+# written, so the two sources never overlap).
+_LEGACY_SOLD_REASONS = "'Sold/Consumed'"
+_LEGACY_MOVER_REASONS = "'Sold/Consumed', 'Damaged'"
+
+
+def _units_out_sql(placeholders, legacy_reasons):
+    """Units taken off the shelf per (item_id, units, created_at): ledger
+    movements with the given reason codes (bound to `placeholders`) plus the
+    matching pre-ledger inventory_transactions rows."""
+    return f'''
+        SELECT item_id, -delta AS units, created_at FROM inventory_movements
+        WHERE delta < 0 AND reason IN ({placeholders})
+        UNION ALL
+        SELECT inventory_item_id, -quantity_change, created_at FROM inventory_transactions
+        WHERE quantity_change < 0 AND reason IN ({legacy_reasons})
+    '''
+
+
 def overview_data(conn, low_threshold, now=None):
     """Top movers, attention list (minus snoozed items), snoozed count and the
     31-day sales trend for the inventory overview page."""
     now = now or datetime.now()
     today = now.date()
     thirty_days_ago = (today - timedelta(days=30)).strftime('%Y-%m-%d')
-    top_movers = conn.execute('''
-        SELECT i.id, i.name, i.sku, ABS(SUM(t.quantity_change)) as sold
-        FROM inventory_transactions t
-        JOIN inventory_items i ON t.inventory_item_id = i.id
-        WHERE t.quantity_change < 0
-          AND t.reason IN ('Sold/Consumed', 'Damaged')
-          AND t.created_at > ?
+    movers = ', '.join('?' * len(MOVER_REASONS))
+    top_movers = conn.execute(f'''
+        SELECT i.id, i.name, i.sku, SUM(t.units) as sold
+        FROM ({_units_out_sql(movers, _LEGACY_MOVER_REASONS)}) t
+        JOIN inventory_items i ON t.item_id = i.id
+        WHERE t.created_at > ?
         GROUP BY i.id
         ORDER BY sold DESC
         LIMIT 5
-    ''', (thirty_days_ago,)).fetchall()
+    ''', (*MOVER_REASONS, thirty_days_ago)).fetchall()
 
     now_str = now.strftime('%Y-%m-%d %H:%M:%S')
     attention_items = conn.execute(f'''
@@ -869,14 +1157,13 @@ def overview_data(conn, low_threshold, now=None):
         AND attention_snoozed_until > ?
     ''', (low_threshold, low_threshold, now_str)).fetchone()[0]
 
-    sales = conn.execute('''
-        SELECT date(created_at) as day, COALESCE(SUM(ABS(quantity_change)), 0) as cnt
-        FROM inventory_transactions
-        WHERE quantity_change < 0
-          AND reason = 'Sold/Consumed'
-          AND date(created_at) >= ?
+    sold = ', '.join('?' * len(SOLD_REASONS))
+    sales = conn.execute(f'''
+        SELECT date(created_at) as day, COALESCE(SUM(units), 0) as cnt
+        FROM ({_units_out_sql(sold, _LEGACY_SOLD_REASONS)}) t
+        WHERE date(created_at) >= ?
         GROUP BY date(created_at)
-    ''', (thirty_days_ago,)).fetchall()
+    ''', (*SOLD_REASONS, thirty_days_ago)).fetchall()
     by_day = {row['day']: row['cnt'] for row in sales}
     sales_trend = []
     for i in range(30, -1, -1):

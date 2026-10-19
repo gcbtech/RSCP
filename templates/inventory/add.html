@@ -654,10 +654,84 @@
     </div>
     </div>
 
-    {% if edit_mode and transactions %}
-    <div class="card mt-4 mb-4">
-        <div class="card-header">📜 Transaction History (Last 50)</div>
+    {% if edit_mode %}
+    <div class="card mt-4 mb-4" id="stock-history">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <span>📜 Stock history</span>
+            <small class="text-muted">
+                {% if movement_total > movements|length %}latest {{ movements|length }} of {{ movement_total }} entries{% else %}{{ movement_total }} {{ 'entry' if movement_total == 1 else 'entries' }}{% endif %}
+            </small>
+        </div>
         <div class="card-body">
+            {% if movements %}
+            <div class="table-responsive">
+                <table class="table table-sm table-striped mb-0">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Change</th>
+                            <th>Stock</th>
+                            <th>Reason</th>
+                            <th>For</th>
+                            <th>User</th>
+                            <th>Note</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for m in movements %}
+                        <tr id="mv-{{ m.id }}">
+                            <td class="text-nowrap">{{ m.created_at | local_time }}</td>
+                            <td>
+                                <span class="badge {% if m.delta > 0 %}bg-success{% elif m.delta < 0 %}bg-danger{% else %}bg-secondary{% endif %}">{{ '%+d' % m.delta if m.delta else '0' }}</span>
+                            </td>
+                            <td>{{ m.balance }}</td>
+                            <td>
+                                {{ m.label }}
+                                {% if m.reversed_by %}<br><small class="text-muted">reversed by <a href="#mv-{{ m.reversed_by }}">#{{ m.reversed_by }}</a></small>{% endif %}
+                            </td>
+                            <td class="text-nowrap">
+                                {% if m.ref_type == 'order' %}
+                                    {% if m.order_number %}<a href="{{ url_for('pos.receipt', order_number=m.order_number) }}">Order {{ m.order_number }}</a>{% else %}<span class="text-muted">Order (deleted)</span>{% endif %}
+                                {% elif m.ref_type == 'refund' %}
+                                    {% if m.order_number %}<a href="{{ url_for('pos.receipt', order_number=m.order_number) }}">Refund #{{ m.ref_id }} on {{ m.order_number }}</a>{% else %}<span class="text-muted">Refund #{{ m.ref_id }}</span>{% endif %}
+                                {% elif m.ref_type == 'package' %}
+                                    {% if m.tracking %}<a href="{{ url_for('main.history_view', search_term=m.tracking) }}">Package {{ m.tracking }}</a>{% else %}<span class="text-muted">Package (deleted)</span>{% endif %}
+                                {% elif m.ref_type == 'audit' %}
+                                    {% if m.audit_id %}<a href="{{ url_for('inventory.audit_report', session_id=m.audit_id) }}">Audit #{{ m.audit_id }}</a>{% else %}<span class="text-muted">Audit #{{ m.ref_id }}</span>{% endif %}
+                                {% elif m.ref_type == 'movement' %}
+                                    <a href="#mv-{{ m.ref_id }}">Entry #{{ m.ref_id }}</a>
+                                {% endif %}
+                            </td>
+                            <td><small>{{ m.user_name or 'System' }}</small></td>
+                            <td><small class="text-muted">{{ m.note or '' }}</small></td>
+                            <td>
+                                {% if m.delta and not m.reversed_by and m.reason not in ('opening_balance', 'reversal') %}
+                                <form action="{{ url_for('inventory.reverse_movement', movement_id=m.id) }}" method="POST"
+                                    data-confirm="Reverse this entry? A new entry of {{ '%+d' % -m.delta }} will be added; this one stays in the history."
+                                    class="d-inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-secondary" title="Reverse this entry">↩</button>
+                                </form>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted mb-0">No stock changes recorded yet.</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if legacy_transactions %}
+    <div class="card mb-4">
+        <div class="card-header">🗄️ Earlier history (before the stock ledger, read-only)</div>
+        <div class="card-body">
+            <p class="small text-muted">Recorded by older versions. These entries may be incomplete; the
+                stock history above starts from the opening balance.</p>
             <div class="table-responsive">
                 <table class="table table-sm table-striped mb-0">
                     <thead>
@@ -666,35 +740,19 @@
                             <th>User</th>
                             <th>Change</th>
                             <th>Reason</th>
-                            <th>Action</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for tx in transactions %}
+                        {% for tx in legacy_transactions %}
                         <tr>
-                            <td>{{ tx.created_at | local_time }}</td>
+                            <td class="text-nowrap">{{ tx.created_at | local_time }}</td>
                             <td><small>{{ tx.user_id or 'System' }}</small></td>
                             <td>
-                                <span
-                                    class="badge {% if tx.quantity_change > 0 %}bg-success{% elif tx.quantity_change < 0 %}bg-danger{% else %}bg-secondary{% endif %}">
-                                    {{ tx.quantity_change }}
-                                </span>
+                                <span class="badge {% if tx.quantity_change > 0 %}bg-success{% elif tx.quantity_change < 0 %}bg-danger{% else %}bg-secondary{% endif %}">{{ tx.quantity_change }}</span>
                             </td>
                             <td>
                                 {{ tx.reason }}
-                                {% if tx.source_tracking %}
-                                <br><small class="text-muted" style="font-size: 0.75rem;">{{ tx.source_tracking
-                                    }}</small>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <form action="/inventory/transaction/delete/{{ tx.id }}" method="POST"
-                                    data-confirm="Delete this record? Stock will be reverted."
-                                    style="display:inline;">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <button type="submit" class="btn btn-sm btn-outline-danger"
-                                        title="Delete & Revert">🗑️</button>
-                                </form>
+                                {% if tx.source_tracking %}<br><small class="text-muted">{{ tx.source_tracking }}</small>{% endif %}
                             </td>
                         </tr>
                         {% endfor %}
@@ -703,6 +761,7 @@
             </div>
         </div>
     </div>
+    {% endif %}
     {% endif %}
 
     <!-- Camera Modal -->

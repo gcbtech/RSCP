@@ -24,7 +24,7 @@ from app.services.pos_ledger import REFUND_METHODS, default_refund_method, money
 
 logger = logging.getLogger(__name__)
 
-REASON_REFUND_RESTOCK = 'Refund Restock'
+REASON_REFUND_RESTOCK = inventory.REASON_REFUND  # stock movement reason (ref: the refund)
 
 # Reasons that restock by default (item is sellable and back on the shelf)
 RESTOCK_REASONS = frozenset({'customer_changed_mind', 'wrong_item', 'price_adjustment'})
@@ -238,7 +238,9 @@ def _record_refund(conn, order_id, refund_type, reason, reason_notes, refund_met
         if item['inventory_item_id'] and item['restock_action'] == 'restock':
             try:
                 inventory.adjust_stock(conn, item['inventory_item_id'], item['quantity'],
-                                       REASON_REFUND_RESTOCK, str(manager_id), allow_negative=True)
+                                       REASON_REFUND_RESTOCK, str(manager_id), order_number,
+                                       ref_type=inventory.REF_REFUND, ref_id=refund_id,
+                                       allow_negative=True)
             except inventory.ItemNotFound:
                 logger.warning(f"Refund on {order_number}: inventory item {item['inventory_item_id']} "
                                f"no longer exists; not restocked")

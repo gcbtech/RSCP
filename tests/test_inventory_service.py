@@ -27,27 +27,27 @@ def _qty(conn, item_id):
 
 def _ledger(conn, item_id):
     return [tuple(r) for r in conn.execute(
-        'SELECT quantity_change, reason, user_id, source_tracking FROM inventory_transactions '
-        'WHERE inventory_item_id = ? ORDER BY id', (item_id,))]
+        'SELECT delta, reason, user, note FROM inventory_movements '
+        'WHERE item_id = ? ORDER BY id', (item_id,))]
 
 
 # --- stock ---------------------------------------------------------------
 
 def test_adjust_stock_is_relative_and_logged(conn):
     item_id = _item(conn, qty=5)
-    change = inv.adjust_stock(conn, item_id, 3, 'Received from Scan', 'cashier', '1ZTRACK')
+    change = inv.adjust_stock(conn, item_id, 3, inv.REASON_RECEIVE, 'cashier', '1ZTRACK')
     assert (change.old_quantity, change.new_quantity, change.delta) == (5, 8, 3)
-    assert change.name == 'Widget' and change.sku == 'SKU-1'
+    assert change.name == 'Widget' and change.sku == 'SKU-1' and change.movement_id
     assert _qty(conn, item_id) == 8
-    assert _ledger(conn, item_id) == [(5, 'Initial Stock', 'admin', None),
-                                      (3, 'Received from Scan', 'cashier', '1ZTRACK')]
+    assert _ledger(conn, item_id) == [(5, 'initial', 'admin', None),
+                                      (3, 'receive', 'cashier', '1ZTRACK')]
     assert not conn.in_transaction
 
 
 def test_adjust_stock_refuses_to_go_negative(conn):
     item_id = _item(conn, qty=2)
     with pytest.raises(inv.InsufficientStock) as exc:
-        inv.adjust_stock(conn, item_id, -3, 'Sold/Consumed', 'admin')
+        inv.adjust_stock(conn, item_id, -3, inv.REASON_CONSUMED, 'admin')
     assert str(exc.value) == 'Cannot reduce by 3 - only 2 in stock'
     assert (exc.value.requested, exc.value.available) == (-3, 2)
     assert _qty(conn, item_id) == 2
@@ -57,22 +57,32 @@ def test_adjust_stock_refuses_to_go_negative(conn):
 
 def test_adjust_stock_allow_negative(conn):
     item_id = _item(conn, qty=1)
-    assert inv.adjust_stock(conn, item_id, -3, 'Sold/Consumed', allow_negative=True).new_quantity == -2
+    assert inv.adjust_stock(conn, item_id, -3, inv.REASON_SALE, allow_negative=True).new_quantity == -2
+    assert inv.stock_on_hand(conn, item_id) == -2
 
 
 def test_adjust_stock_zero_and_missing(conn):
     item_id = _item(conn, qty=4)
-    assert inv.adjust_stock(conn, item_id, 0, 'x').new_quantity == 4
+    zero = inv.adjust_stock(conn, item_id, 0, inv.REASON_ADJUST)
+    assert zero.new_quantity == 4 and zero.movement_id is None
     assert len(_ledger(conn, item_id)) == 1
     with pytest.raises(inv.ItemNotFound):
-        inv.adjust_stock(conn, 9999, 1, 'x')
-    assert conn.execute('SELECT COUNT(*) FROM inventory_transactions WHERE inventory_item_id = 9999').fetchone()[0] == 0
+        inv.adjust_stock(conn, 9999, 1, inv.REASON_ADJUST)
+    assert conn.execute('SELECT COUNT(*) FROM inventory_movements WHERE item_id = 9999').fetchone()[0] == 0
+
+
+def test_adjust_stock_refuses_unknown_reason(conn):
+    item_id = _item(conn, qty=4)
+    with pytest.raises(ValueError):
+        inv.adjust_stock(conn, item_id, 1, 'Sold/Consumed')   # a 2.x label, not a code
+    assert _qty(conn, item_id) == 4 and len(_ledger(conn, item_id)) == 1
+    assert not conn.in_transaction
 
 
 def test_adjust_stock_joins_callers_transaction(conn):
     item_id = _item(conn, qty=5)
     conn.execute('BEGIN IMMEDIATE')
-    inv.adjust_stock(conn, item_id, -1, 'Sold/Consumed')
+    inv.adjust_stock(conn, item_id, -1, inv.REASON_SALE)
     assert conn.in_transaction  # not committed behind the caller's back
     conn.rollback()
     assert _qty(conn, item_id) == 5
@@ -83,8 +93,8 @@ def test_changes_from_two_connections_both_land(fresh_app, conn):
     item_id = _item(conn, qty=10)
     other = get_db_connection(fresh_app.config['DATABASE'])
     try:
-        inv.adjust_stock(conn, item_id, -2, 'Sold/Consumed')
-        inv.adjust_stock(other, item_id, -3, 'Sold/Consumed')
+        inv.adjust_stock(conn, item_id, -2, inv.REASON_SALE)
+        inv.adjust_stock(other, item_id, -3, inv.REASON_SALE)
     finally:
         other.close()
     assert _qty(conn, item_id) == 5
@@ -92,25 +102,35 @@ def test_changes_from_two_connections_both_land(fresh_app, conn):
 
 def test_set_stock_and_mark_out_of_stock(conn):
     item_id = _item(conn, qty=7)
-    change = inv.set_stock(conn, item_id, 4, 'Live Audit Correction', 'admin')
+    change = inv.set_stock(conn, item_id, 4, inv.REASON_COUNT, 'admin')
     assert (change.delta, change.new_quantity) == (-3, 4)
     oos = inv.mark_out_of_stock(conn, item_id, '1')
     assert (oos.delta, oos.new_quantity, oos.name) == (-4, 0, 'Widget')
-    assert _ledger(conn, item_id)[-1] == (-4, 'Marked OOS from Scan', '1', None)
+    assert _ledger(conn, item_id)[-1] == (-4, 'count', '1', 'Marked out of stock from scan')
     # Already zero: nothing to log
     inv.mark_out_of_stock(conn, item_id, '1')
     assert len(_ledger(conn, item_id)) == 3
 
 
-def test_revert_transaction(conn):
+def test_reverse_movement(conn):
     item_id = _item(conn, qty=5)
-    inv.adjust_stock(conn, item_id, -2, 'Damaged')
-    tx_id = conn.execute('SELECT MAX(id) FROM inventory_transactions').fetchone()[0]
-    assert inv.revert_transaction(conn, tx_id) == item_id
-    assert _qty(conn, item_id) == 5
-    assert len(_ledger(conn, item_id)) == 1
-    with pytest.raises(inv.TransactionNotFound):
-        inv.revert_transaction(conn, tx_id)
+    damaged = inv.adjust_stock(conn, item_id, -2, inv.REASON_DAMAGED, 'admin').movement_id
+    change = inv.reverse_movement(conn, damaged, 'manager')
+    assert (change.item_id, change.old_quantity, change.new_quantity) == (item_id, 3, 5)
+    # Appended, never deleted: the damage entry stays, its reversal points at it
+    assert _ledger(conn, item_id) == [(5, 'initial', 'admin', None),
+                                      (-2, 'damaged', 'admin', None),
+                                      (2, 'reversal', 'manager', f'Reverses #{damaged} (Damaged -2)')]
+    ref = conn.execute('SELECT ref_type, ref_id FROM inventory_movements WHERE id = ?',
+                       (change.movement_id,)).fetchone()
+    assert tuple(ref) == ('movement', damaged)
+    with pytest.raises(inv.CannotReverse):
+        inv.reverse_movement(conn, damaged)              # only once
+    with pytest.raises(inv.CannotReverse):
+        inv.reverse_movement(conn, change.movement_id)   # a reversal is final
+    with pytest.raises(inv.MovementNotFound):
+        inv.reverse_movement(conn, 999999)
+    assert _qty(conn, item_id) == 5 == inv.stock_on_hand(conn, item_id)
 
 
 # --- items ---------------------------------------------------------------
@@ -119,7 +139,7 @@ def test_create_item_rules(conn):
     item_id = _item(conn, sku='SKU-A', qty=0, asin='B000TEST01', alert_threshold=3,
                     upc='0123', addon_1=True)
     row = inv.get_item(conn, item_id)
-    assert row['quantity'] == 0 and _ledger(conn, item_id) == []  # nothing to log
+    assert row['quantity'] == 0 and _ledger(conn, item_id) == []  # nothing to record
     assert row['alert_enabled'] == 1 and row['alert_threshold'] == 3
     assert row['image_url'] == inv.amazon_image_url('B000TEST01')
     assert row['source_url'] == 'https://www.amazon.com/dp/B000TEST01'
@@ -179,11 +199,22 @@ def test_toggle_legacy_and_delete(conn):
     item_id = _item(conn)
     assert inv.toggle_legacy(conn, item_id) == ('Widget', 1)
     assert inv.toggle_legacy(conn, item_id) == ('Widget', 0)
+    # Only its initial stock in the ledger: deletable, the entry goes with it
     inv.delete_item(conn, item_id)
     assert inv.get_item(conn, item_id) is None
     assert _ledger(conn, item_id) == []
     with pytest.raises(inv.ItemNotFound):
         inv.toggle_legacy(conn, item_id)
+
+
+def test_delete_item_with_history_is_refused(conn):
+    item_id = _item(conn, qty=5)
+    inv.adjust_stock(conn, item_id, -1, inv.REASON_SALE, '2')
+    with pytest.raises(inv.ItemHasHistory) as exc:
+        inv.delete_item(conn, item_id)
+    assert 'Legacy' in str(exc.value)
+    assert inv.get_item(conn, item_id) is not None and len(_ledger(conn, item_id)) == 2
+    assert not conn.in_transaction
 
 
 def test_bulk_update_items(conn):
@@ -204,7 +235,9 @@ def test_record_audit_count(conn):
     conn.commit()
     inv.record_audit_count(conn, session_id, item_id, 8, 'admin')
     assert _qty(conn, item_id) == 8
-    assert _ledger(conn, item_id)[-1] == (-2, 'Live Audit Correction', 'admin', None)
+    assert _ledger(conn, item_id)[-1] == (-2, 'count', 'admin', 'Audit count: 8 (was 10)')
+    ref = conn.execute('SELECT ref_type, ref_id FROM inventory_movements ORDER BY id DESC').fetchone()
+    assert tuple(ref) == ('audit', session_id)
     rec = conn.execute('SELECT expected_qty, counted_qty FROM audit_records').fetchall()
     assert [tuple(r) for r in rec] == [(10, 8)]
     # Recount: the record is updated, not duplicated; stock follows
@@ -231,10 +264,10 @@ def test_import_items(conn):
     assert len(result.errors) == 1 and result.errors[0].startswith('Row 5 Error')
     new = conn.execute("SELECT * FROM inventory_items WHERE sku = 'NEW-1'").fetchone()
     assert new['quantity'] == 4 and new['buy_price'] == 1.5 and json.loads(new['secondary_ids']) == {'upc': '42'}
-    assert _ledger(conn, new['id']) == [(4, 'CSV Import', 'admin', None)]
+    assert _ledger(conn, new['id']) == [(4, 'initial', 'admin', 'Spreadsheet import')]
     old = inv.get_item(conn, existing)
     assert old['name'] == 'Old Renamed' and old['quantity'] == 5
-    assert _ledger(conn, existing)[-1] == (3, 'CSV Import', 'admin', None)
+    assert _ledger(conn, existing)[-1] == (3, 'import', 'admin', 'Spreadsheet import')
     assert conn.execute("SELECT COUNT(*) FROM inventory_items WHERE sku = 'BAD'").fetchone()[0] == 0
 
     again = inv.import_items(conn, [{'sku': 'OLD', 'name': 'x', 'qty': '1'}], update_existing=False)

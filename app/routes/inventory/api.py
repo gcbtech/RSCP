@@ -92,8 +92,11 @@ def api_add_quantity(item_id):
 
     conn = get_db_connection()
     try:
-        change = inventory.adjust_stock(conn, item_id, quantity, inventory.REASON_RECEIVED_SCAN,
-                                        current_user.username, tracking, allow_negative=True)
+        change = inventory.adjust_stock(conn, item_id, quantity, inventory.REASON_RECEIVE,
+                                        current_user.username, tracking,
+                                        ref_type=inventory.REF_PACKAGE,
+                                        ref_id=inventory.package_ref(conn, tracking),
+                                        allow_negative=True)
         return jsonify({
             "success": True,
             "new_quantity": change.new_quantity
@@ -163,8 +166,8 @@ def quick_adjust(item_id):
         if action == 'oos':
             result = inventory.mark_out_of_stock(conn, item_id, user)
         else:
-            reason = inventory.REASON_SOLD if change < 0 else inventory.REASON_RECEIVED_SCAN
-            result = inventory.adjust_stock(conn, item_id, change, reason, user)
+            reason = inventory.REASON_CONSUMED if change < 0 else inventory.REASON_RECEIVE
+            result = inventory.adjust_stock(conn, item_id, change, reason, user, 'Scan screen')
         return jsonify({
             "success": True,
             "new_quantity": result.new_quantity,

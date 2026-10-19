@@ -54,6 +54,7 @@ Once a package is received, the items inside need to be organized. This is your 
     *   **Shelf**: Top / Middle / Bottom
     *   **Bin**: Bin A / Bin B
 *   **Stock Alerts**: define a "Low Stock Threshold" (e.g., 5 units). When you dip below this, RSCP sends a webhook alert to your chat app (Slack/Discord), as well as displaying them on the Inventory Overview page.
+*   **Stock History**: every change to an item's stock (sale, refund, sale edit, receiving, count, adjustment, import) is recorded as an entry on the item's edit page, with a link to the order, refund, package or audit it came from. Entries are never edited or deleted: to undo one, use **↩ Reverse**, which adds the opposite entry. Items with stock history can't be deleted; mark them as **Legacy** instead.
 
 ---
 

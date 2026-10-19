@@ -117,9 +117,10 @@ def test_link_package_to_item_restocks_received_units(conn):
     rcv.receive_scan(conn, 'LNK', 'admin')
     assert rcv.link_package_to_item(conn, 'LNK', 'L-1', 'admin') == 4
     assert inv.get_item(conn, item_id)['quantity'] == 5
-    tx = conn.execute('SELECT quantity_change, reason, user_id, source_tracking FROM inventory_transactions '
+    tx = conn.execute('SELECT delta, reason, user, note, ref_type, ref_id FROM inventory_movements '
                       'ORDER BY id DESC LIMIT 1').fetchone()
-    assert tuple(tx) == (4, 'Received from Scan', 'admin', 'LNK')
+    pkg_id = conn.execute("SELECT MIN(id) FROM packages WHERE tracking_number = 'LNK'").fetchone()[0]
+    assert tuple(tx) == (4, 'receive', 'admin', 'LNK', 'package', pkg_id)
     assert conn.execute("SELECT inventory_sku FROM product_mappings WHERE package_name = 'Box of things'").fetchone()[0] == 'L-1'
     assert conn.execute("SELECT sku FROM packages WHERE tracking_number = 'LNK'").fetchone()[0] == 'L-1'
 

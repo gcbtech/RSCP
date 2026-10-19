@@ -22,10 +22,11 @@ from app.services.pos_pricing import calculate_line_total, calculate_tax, round_
 
 logger = logging.getLogger(__name__)
 
-REASON_ORDER_DELETED = 'Order Deleted'
-REASON_EDIT_REMOVED = 'Sale Edit (item removed)'
-REASON_EDIT_QTY_DOWN = 'Sale Edit (qty decreased)'
-REASON_EDIT_QTY_UP = 'Sale Edit (qty increased)'
+# Stock movements recorded against the order: (reason code, note detail)
+REASON_ORDER_DELETED = (inventory.REASON_SALE_DELETE, 'sale deleted')
+REASON_EDIT_REMOVED = (inventory.REASON_SALE_EDIT, 'item removed')
+REASON_EDIT_QTY_DOWN = (inventory.REASON_SALE_EDIT, 'qty decreased')
+REASON_EDIT_QTY_UP = (inventory.REASON_SALE_EDIT, 'qty increased')
 
 
 class SaleError(Exception):
@@ -62,14 +63,16 @@ def _audit(conn, action, user, order_number, details, ip):
     ''', (action, user.id, user.username, 'order', str(order_number), json.dumps(details), ip))
 
 
-def _restock(conn, item_id, units, reason, user_ref, order_number):
-    """Put units back (or take them off when negative); skipped when the
-    inventory item no longer exists."""
+def _restock(conn, item_id, units, reason, user_ref, order_number, order_id):
+    """Put units back (or take them off when negative): one movement
+    referencing the order. reason is one of the REASON_* (code, detail)
+    pairs above. Skipped when the inventory item no longer exists."""
     if not item_id or not units:
         return 0
+    code, detail = reason
     try:
-        inventory.adjust_stock(conn, item_id, units, reason, user_ref, order_number,
-                               allow_negative=True)
+        inventory.adjust_stock(conn, item_id, units, code, user_ref, f"{order_number}: {detail}",
+                               ref_type=inventory.REF_ORDER, ref_id=order_id, allow_negative=True)
     except inventory.ItemNotFound:
         logger.warning(f"Order {order_number}: inventory item {item_id} no longer exists; stock not changed")
         return 0
@@ -114,7 +117,7 @@ def delete_order(conn, order_number, restore_inventory, user, ip=None):
                 units = line['quantity'] - line['restocked']
                 if units > 0:
                     restored += _restock(conn, line['inventory_item_id'], units,
-                                         REASON_ORDER_DELETED, str(user.id), order_number)
+                                         REASON_ORDER_DELETED, str(user.id), order_number, order_id)
             logger.info(f"Restored {restored} units to inventory for order {order_number}")
 
         # Foreign keys are not enforced, so nothing cascades on its own
@@ -257,7 +260,7 @@ def edit_sale(conn, order_id, lines, deleted_ids, user, *, new_date='', new_time
             if not old:
                 continue
             _restock(conn, old.get('inventory_item_id'), old['quantity'], REASON_EDIT_REMOVED,
-                     user.username, order_number)
+                     user.username, order_number, order_id)
             conn.execute('DELETE FROM pos_order_items WHERE id = ?', (del_id,))
             changes.append(f"Removed: {old['name']} x{old['quantity']}")
 
@@ -274,7 +277,7 @@ def edit_sale(conn, order_id, lines, deleted_ids, user, *, new_date='', new_time
             if returned:
                 _restock(conn, old.get('inventory_item_id'), returned,
                          REASON_EDIT_QTY_DOWN if returned > 0 else REASON_EDIT_QTY_UP,
-                         user.username, order_number)
+                         user.username, order_number, order_id)
 
             # Keep the line's own discount (it was part of what was charged)
             line_total = calculate_line_total(new_price, new_qty,

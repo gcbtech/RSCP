@@ -26,6 +26,7 @@ from app.services.item_images import (  # noqa: F401
 logger = logging.getLogger(__name__)
 
 QUICK_ADD_DEFAULT_AREA = 'Retail'  # Pre-selected Quick Add area (used only if it's a configured area)
+MOVEMENTS_SHOWN = 100  # latest stock-history entries on the edit page
 
 
 @inventory_bp.route('/low-stock')
@@ -253,6 +254,7 @@ def add_item():
             flash("Error adding item: prices, interval and alert threshold must be numbers.")
             return redirect(url_for('inventory.add_item'))
         f['quantity'] = quantity
+        f['source_tracking'] = request.form.get('source_tracking', '').strip() or None
 
         conn = get_db_connection()
         try:
@@ -368,7 +370,9 @@ def edit_item(item_id):
             flash("Item not found.")
             return redirect(url_for('inventory.list_items'))
 
-        transactions = inventory.item_transactions(conn, item_id)
+        movements = inventory.item_movements(conn, item_id, limit=MOVEMENTS_SHOWN)
+        movement_total = inventory.movement_count(conn, item_id)
+        legacy_transactions = inventory.legacy_transactions(conn, item_id)
 
         secondary_ids = {}
         try:
@@ -389,7 +393,9 @@ def edit_item(item_id):
 
         return render_template('inventory/add.html',
                                item=item,
-                               transactions=transactions,
+                               movements=movements,
+                               movement_total=movement_total,
+                               legacy_transactions=legacy_transactions,
                                edit_mode=True,
                                categories=CATEGORY_CODES,
                                secondary_ids=secondary_ids,
@@ -407,6 +413,8 @@ def delete_item(item_id):
     try:
         inventory.delete_item(conn, item_id)
         flash("Item deleted.")
+    except inventory.ItemHasHistory as e:
+        flash(str(e), "warning")
     except Exception as e:
         logger.error(f"Error deleting inventory item: {e}")
         flash(f"Error: {e}")
@@ -436,20 +444,22 @@ def toggle_legacy(item_id):
     return redirect(request.referrer or url_for('inventory.list_items'))
 
 
-@inventory_bp.route('/transaction/delete/<int:tx_id>', methods=['POST'])
+@inventory_bp.route('/movement/<int:movement_id>/reverse', methods=['POST'])
 @require_permission('inventory.manage')
-def delete_transaction(tx_id):
-    """Delete a transaction and revert the stock change."""
+def reverse_movement(movement_id):
+    """Undo a stock-history entry with an opposite entry (the ledger is
+    append-only: nothing is deleted)."""
     item_id = None
     conn = get_db_connection()
     try:
-        item_id = inventory.revert_transaction(conn, tx_id)
-        flash("Transaction reverted.")
-    except inventory.TransactionNotFound:
-        flash("Transaction not found.")
+        change = inventory.reverse_movement(conn, movement_id, current_user.username)
+        item_id = change.item_id
+        flash(f"Entry reversed: stock {change.old_quantity} → {change.new_quantity}.")
+    except inventory.InventoryError as e:
+        flash(str(e))
     except Exception as e:
-        logger.error(f"Error deleting transaction: {e}")
-        flash("Error reverting transaction.")
+        logger.error(f"Error reversing stock movement {movement_id}: {e}")
+        flash("Error reversing the entry.")
     finally:
         conn.close()
 
@@ -462,8 +472,9 @@ def delete_transaction(tx_id):
 def adjust_quantity(item_id):
     """Adjust quantity for an inventory item."""
     quantity_change = int(request.form.get('quantity_change', 0))
-    reason = request.form.get('reason', 'Sold/Consumed').strip()
+    reason, note = inventory.manual_reason(request.form.get('reason', 'Sold/Consumed'))
     source_tracking = request.form.get('source_tracking', '').strip() or None
+    note = ' / '.join(filter(None, (note, source_tracking))) or None
 
     if quantity_change == 0:
         flash("No change specified.")
@@ -471,7 +482,7 @@ def adjust_quantity(item_id):
 
     conn = get_db_connection()
     try:
-        inventory.adjust_stock(conn, item_id, quantity_change, reason, current_user.username, source_tracking)
+        inventory.adjust_stock(conn, item_id, quantity_change, reason, current_user.username, note)
         if quantity_change < 0:
             inventory.notify_if_low_stock(conn, item_id, load_config())
         action = "Added" if quantity_change > 0 else "Removed"
@@ -505,8 +516,9 @@ def add_stock(item_id):
             if qty_to_add < 1:
                 flash("Quantity to add must be at least 1.")
                 return redirect(url_for('inventory.add_stock', item_id=item_id))
-            inventory.adjust_stock(conn, item_id, qty_to_add, inventory.REASON_RECEIVED_SCAN,
-                                   current_user.username, tracking)
+            inventory.adjust_stock(conn, item_id, qty_to_add, inventory.REASON_RECEIVE,
+                                   current_user.username, tracking, ref_type=inventory.REF_PACKAGE,
+                                   ref_id=inventory.package_ref(conn, tracking))
             return redirect(url_for('main.scan_page', mode='receive'))
 
         # GET: Show confirmation form
