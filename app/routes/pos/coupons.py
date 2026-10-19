@@ -291,12 +291,20 @@ def toggle_coupon(coupon_id):
 @pos_bp.route('/coupons/<int:coupon_id>/delete', methods=['POST'])
 @require_permission('pos.manage')
 def delete_coupon(coupon_id):
-    """Delete a coupon."""
+    """Delete a coupon (never one that has been redeemed on a sale)."""
     conn = get_db_connection()
-    
-    conn.execute('DELETE FROM pos_coupon_items WHERE coupon_id = ?', (coupon_id,))
-    conn.execute('DELETE FROM pos_coupons WHERE id = ?', (coupon_id,))
-    conn.commit()
+    try:
+        used = conn.execute('SELECT 1 FROM pos_coupon_redemptions WHERE coupon_id = ? LIMIT 1',
+                            (coupon_id,)).fetchone()
+        if used:
+            flash('This coupon has been used on sales, so it is kept for their history. '
+                  'Deactivate it instead.')
+            return redirect(url_for('pos.coupons'))
+        conn.execute('DELETE FROM pos_coupon_items WHERE coupon_id = ?', (coupon_id,))
+        conn.execute('DELETE FROM pos_coupons WHERE id = ?', (coupon_id,))
+        conn.commit()
+    finally:
+        conn.close()
     
     flash('Coupon deleted.')
     return redirect(url_for('pos.coupons'))

@@ -565,7 +565,9 @@ def _read_conn(path):
             return get_request_db(), False
     except Exception:
         pass
-    return sqlite3.connect(path, timeout=10), True
+    conn = sqlite3.connect(path, timeout=10)
+    conn.execute('PRAGMA foreign_keys = ON')
+    return conn, True
 
 
 def _checked_this_request(path):
@@ -660,6 +662,7 @@ def write_raw(values, user=None):
     if user is None:
         user = _current_username()
     conn = sqlite3.connect(path, timeout=10, isolation_level=None)
+    conn.execute('PRAGMA foreign_keys = ON')
     try:
         conn.execute('BEGIN IMMEDIATE')
         try:

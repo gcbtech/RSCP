@@ -339,6 +339,15 @@ def claim_pairing_code(conn, code, register_id, register_name, user_id=None):
     token = secrets.token_hex(32)
     default_name = 'Customer Display' if role == 'display' else 'Staff Scanner'
 
+    # Make sure the register exists (pos_peripherals.register_id references
+    # it) and carries its friendly name
+    conn.execute(
+        '''INSERT INTO pos_registers (register_id, friendly_name)
+           VALUES (?, ?)
+           ON CONFLICT(register_id) DO UPDATE SET friendly_name = excluded.friendly_name''',
+        (register_id, register_name or 'Register')
+    )
+
     # Re-pairing a known peripheral (e.g. moving it to another register)
     # replaces its row and rotates its token.
     conn.execute(
@@ -350,14 +359,6 @@ def claim_pairing_code(conn, code, register_id, register_name, user_id=None):
          default_name, user_id)
     )
     conn.execute('DELETE FROM pos_pairing_codes WHERE code = ?', (code,))
-
-    # Make sure the register exists and carries its friendly name
-    conn.execute(
-        '''INSERT INTO pos_registers (register_id, friendly_name)
-           VALUES (?, ?)
-           ON CONFLICT(register_id) DO UPDATE SET friendly_name = excluded.friendly_name''',
-        (register_id, register_name or 'Register')
-    )
     conn.commit()
 
     return {'peripheral_id': peripheral_id, 'role': role}

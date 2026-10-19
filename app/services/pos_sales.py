@@ -117,7 +117,7 @@ def delete_order(conn, order_number, restore_inventory, user, ip=None):
                                          REASON_ORDER_DELETED, str(user.id), order_number)
             logger.info(f"Restored {restored} units to inventory for order {order_number}")
 
-        # Foreign keys are not enforced, so nothing cascades on its own
+        # Sales tables are ON DELETE RESTRICT: children go first, explicitly
         conn.execute('''DELETE FROM pos_refund_items
                         WHERE refund_id IN (SELECT id FROM pos_refunds WHERE order_id = ?)''', (order_id,))
         conn.execute('DELETE FROM pos_refunds WHERE order_id = ?', (order_id,))

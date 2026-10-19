@@ -429,8 +429,9 @@ def delete_package(conn, package_id):
     (tracking_number, item_name) or None."""
     with write_transaction(conn):
         pkg = conn.execute("SELECT tracking_number, item_name FROM packages WHERE id = ?", (package_id,)).fetchone()
-        conn.execute("DELETE FROM packages WHERE id = ?", (package_id,))
+        # history first: history.package_id is ON DELETE SET NULL
         conn.execute("DELETE FROM history WHERE package_id = ?", (package_id,))
+        conn.execute("DELETE FROM packages WHERE id = ?", (package_id,))
     return pkg
 
 

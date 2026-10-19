@@ -411,6 +411,8 @@ def delete_item(item_id):
     try:
         inventory.delete_item(conn, item_id)
         flash("Item deleted.")
+    except inventory.ItemHasSales as e:
+        flash(str(e), 'warning')
     except Exception as e:
         logger.error(f"Error deleting inventory item: {e}")
         flash(f"Error: {e}")

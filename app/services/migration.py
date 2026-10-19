@@ -1780,6 +1780,241 @@ def _m15_check_orders(conn):
         logger.info(f"[Schema v15] all {len(rows)} order(s) add up to their stored totals")
 
 
+# (table, column, parent table, parent column, action on orphans)
+#   'null'   keep the row, clear the dangling reference (sales, payments,
+#            refunds, drawer, audit and other records worth keeping)
+#   'delete' remove the row (non-financial child rows with no meaning left)
+_M16_ORPHANS = (
+    ('pos_orders', 'operator_id', 'users', 'id', 'null'),
+    ('pos_order_items', 'order_id', 'pos_orders', 'id', 'null'),
+    ('pos_order_items', 'inventory_item_id', 'inventory_items', 'id', 'null'),
+    ('pos_refunds', 'order_id', 'pos_orders', 'id', 'null'),
+    ('pos_refunds', 'manager_id', 'users', 'id', 'null'),
+    ('pos_refund_items', 'refund_id', 'pos_refunds', 'id', 'null'),
+    ('pos_refund_items', 'order_item_id', 'pos_order_items', 'id', 'null'),
+    ('pos_payments', 'order_id', 'pos_orders', 'id', 'null'),
+    ('pos_coupon_redemptions', 'coupon_id', 'pos_coupons', 'id', 'null'),
+    ('pos_coupon_redemptions', 'order_id', 'pos_orders', 'id', 'null'),
+    ('pos_coupon_redemptions', 'redeemed_by', 'users', 'id', 'null'),
+    ('drawer_sessions', 'opened_by', 'users', 'id', 'null'),
+    ('drawer_sessions', 'closed_by', 'users', 'id', 'null'),
+    ('pos_coupons', 'reward_item_id', 'inventory_items', 'id', 'null'),
+    ('pos_coupons', 'created_by', 'users', 'id', 'null'),
+    ('pos_audit_log', 'user_id', 'users', 'id', 'null'),
+    ('inventory_transactions', 'inventory_item_id', 'inventory_items', 'id', 'null'),
+    ('audit_records', 'session_id', 'audit_sessions', 'id', 'null'),
+    ('audit_records', 'item_id', 'inventory_items', 'id', 'null'),
+    ('history', 'package_id', 'packages', 'id', 'null'),
+    ('history', 'user_id', 'users', 'id', 'null'),
+    ('pos_held_orders', 'operator_id', 'users', 'id', 'null'),
+    ('pos_peripherals', 'paired_by', 'users', 'id', 'null'),
+    ('time_entries', 'edited_by', 'users', 'id', 'null'),
+    ('federation_transfers', 'peer_id', 'federation_peers', 'id', 'null'),
+    ('time_entries', 'user_id', 'users', 'id', 'delete'),
+    ('scheduled_shifts', 'user_id', 'users', 'id', 'delete'),
+    ('recurring_shift_rules', 'user_id', 'users', 'id', 'delete'),
+    ('user_pto_balances', 'user_id', 'users', 'id', 'delete'),
+    ('pto_requests', 'user_id', 'users', 'id', 'delete'),
+    ('pos_peripherals', 'register_id', 'pos_registers', 'register_id', 'delete'),
+    ('pos_coupon_items', 'coupon_id', 'pos_coupons', 'id', 'delete'),
+    ('pos_coupon_items', 'item_id', 'inventory_items', 'id', 'delete'),
+    ('notifications', 'user_id', 'users', 'id', 'delete'),
+)
+
+# Tables rebuilt by migration 16 for their REFERENCES / ON DELETE rules (the
+# money tables got theirs in migration 15). Child columns of 'null' orphan
+# rules are nullable.
+_M16_TABLES = {
+    # an item's stock ledger goes with the item (inventory.delete_item already
+    # deleted it explicitly)
+    'inventory_transactions': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE CASCADE,
+        quantity_change INTEGER NOT NULL,
+        reason TEXT DEFAULT 'Sold/Consumed',
+        user_id TEXT,
+        source_tracking TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    ''', {}, ()),
+    'audit_records': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER REFERENCES audit_sessions(id) ON DELETE CASCADE,
+        item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL,
+        sku TEXT,
+        name TEXT,
+        expected_qty INTEGER,
+        counted_qty INTEGER,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ''', {}, ()),
+    'history': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        package_id INTEGER REFERENCES packages(id) ON DELETE SET NULL,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        action TEXT NOT NULL,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        details TEXT
+    ''', {}, ()),
+    'pos_held_orders': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operator_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        cart_data TEXT NOT NULL,
+        note TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ''', {}, ()),
+    'pos_audit_log': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        action TEXT NOT NULL,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        user_name TEXT,
+        target_type TEXT,
+        target_id TEXT,
+        details TEXT,
+        ip_address TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ''', {}, ()),
+    'pos_peripherals': ('''
+        peripheral_id TEXT PRIMARY KEY,
+        register_id TEXT NOT NULL REFERENCES pos_registers(register_id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('display', 'scanner')),
+        token_hash TEXT UNIQUE NOT NULL,
+        pending_token TEXT,
+        friendly_name TEXT,
+        paired_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        paired_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_seen TIMESTAMP
+    ''', {}, ()),
+    'pos_coupon_items': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        coupon_id INTEGER NOT NULL REFERENCES pos_coupons(id) ON DELETE CASCADE,
+        item_id INTEGER NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE
+    ''', {}, ()),
+    # Timeclock rows belong to their user: deleting a user deletes them
+    # (orphans of deleted users are removed above).
+    'time_entries': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type TEXT DEFAULT 'shift',
+        clock_in DATETIME NOT NULL,
+        clock_out DATETIME,
+        notes TEXT,
+        edited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ''', {}, ()),
+    'scheduled_shifts': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        start_time DATETIME NOT NULL,
+        end_time DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ''', {}, ()),
+    'recurring_shift_rules': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        day_of_week INTEGER NOT NULL,
+        start_time TEXT NOT NULL,
+        end_time TEXT NOT NULL,
+        frequency TEXT DEFAULT 'weekly',
+        reference_date DATE
+    ''', {}, ()),
+    'user_pto_balances': ('''
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        balance_hours REAL DEFAULT 0.0
+    ''', {}, ()),
+    'pto_requests': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        request_type TEXT NOT NULL,
+        date DATE NOT NULL,
+        start_time TIME,
+        end_time TIME,
+        hours_requested REAL NOT NULL,
+        status TEXT DEFAULT 'pending',
+        admin_notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ''', {}, ()),
+    'notifications': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        message TEXT,
+        type TEXT DEFAULT 'info',
+        link TEXT,
+        is_read BOOLEAN DEFAULT 0,
+        read_at TIMESTAMP
+    ''', {}, ()),
+    'federation_transfers': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        direction TEXT NOT NULL,
+        peer_id INTEGER REFERENCES federation_peers(id) ON DELETE RESTRICT,
+        item_id INTEGER,
+        item_sku TEXT NOT NULL,
+        item_data TEXT NOT NULL,
+        quantity INTEGER NOT NULL DEFAULT 1,
+        status TEXT DEFAULT 'pending',
+        requested_by TEXT,
+        requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        approved_by TEXT,
+        approved_at TIMESTAMP,
+        expires_at TIMESTAMP,
+        notes TEXT
+    ''', {}, ()),
+}
+
+
+def _m16_table_exists(conn, name):
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                        (name,)).fetchone() is not None
+
+
+def _m16_foreign_keys(conn):
+    """Make the database's foreign keys enforceable (every connection now
+    runs PRAGMA foreign_keys = ON).
+
+    Orphans are dealt with first (counts logged per table/column): sales,
+    payments, refunds, drawer, audit and other records worth keeping keep
+    their row and lose only the dangling reference (denormalised sku/name/
+    user_name text stays); non-financial child rows (timeclock shifts, PTO and
+    balances of deleted users, pairings of deleted registers, coupon item
+    links, notifications) are deleted. Tables whose REFERENCES or ON DELETE
+    rules changed are rebuilt. Ends with PRAGMA foreign_key_check: anything
+    left aborts the migration (the transaction rolls back).
+    """
+    for table, (columns_sql, select_map, drop) in _M16_TABLES.items():
+        if _m16_table_exists(conn, table):
+            _rebuild_table(conn, table, columns_sql, select_map, drop, tag='v16')
+
+    total = 0
+    for table, col, parent, pcol, action in _M16_ORPHANS:
+        if not _m16_table_exists(conn, table):
+            continue
+        if col not in [r[1] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()]:
+            continue
+        if _m16_table_exists(conn, parent):
+            where = (f'"{col}" IS NOT NULL AND "{col}" NOT IN '
+                     f'(SELECT "{pcol}" FROM "{parent}" WHERE "{pcol}" IS NOT NULL)')
+        else:
+            where = f'"{col}" IS NOT NULL'
+        n = conn.execute(f'SELECT COUNT(*) FROM "{table}" WHERE {where}').fetchone()[0]
+        if not n:
+            continue
+        if action == 'delete':
+            conn.execute(f'DELETE FROM "{table}" WHERE {where}')
+            logger.warning(f"[Schema v16] {table}: deleted {n} row(s) whose {col} pointed at a missing {parent}")
+        else:
+            conn.execute(f'UPDATE "{table}" SET "{col}" = NULL WHERE {where}')
+            logger.warning(f"[Schema v16] {table}: cleared {col} on {n} row(s) pointing at a missing {parent} "
+                           f"(rows kept)")
+        total += n
+    logger.info(f"[Schema v16] {total} orphaned reference(s) handled")
+
+    problems = conn.execute('PRAGMA foreign_key_check').fetchall()
+    if problems:
+        sample = ', '.join(f'{r[0]} rowid {r[1]} -> {r[2]}' for r in problems[:20])
+        raise RuntimeError(f"[Schema v16] {len(problems)} foreign key violation(s) remain: {sample}")
+    logger.info("[Schema v16] PRAGMA foreign_key_check: clean")
+
+
 # Also used by app/jobs.py (CREATE ... IF NOT EXISTS), so a job started by a
 # timer before the web service has migrated still has somewhere to write.
 JOB_TABLES_SQL = (
@@ -1854,6 +2089,7 @@ SCHEMA_MIGRATIONS = [
     (13, 'job_status and job_markers tables (scheduled jobs)', _m13_job_status),
     (14, 'monitor_alerts table (email alerts)', _m14_monitor_alerts),
     (15, 'money as integer cents', _m15_money_to_cents),
+    (16, 'foreign keys: orphans handled, REFERENCES rebuilt, foreign_key_check', _m16_foreign_keys),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 assert len({v for v, _, _ in SCHEMA_MIGRATIONS}) == len(SCHEMA_MIGRATIONS), "duplicate schema version"
@@ -1923,6 +2159,12 @@ def run_migrations(db_path=None, target=None):
             version = 1
 
         conn = sqlite3.connect(db_path, timeout=30, isolation_level=None)
+        # Table rebuilds (v7, v10, v15, v16) need foreign keys OFF: the
+        # "12-step" ALTER procedure. It can only be changed outside a
+        # transaction, so it is set once for this connection; migration 16
+        # ends with PRAGMA foreign_key_check. Every other connection RSCP
+        # opens enforces foreign keys.
+        conn.execute('PRAGMA foreign_keys = OFF')
         try:
             # Always apply in version order, whatever order the list was edited in
             for step, description, fn in sorted(SCHEMA_MIGRATIONS, key=lambda m: m[0]):

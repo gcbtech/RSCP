@@ -68,6 +68,15 @@ class DuplicateSku(InventoryError):
         self.sku = sku
 
 
+class ItemHasSales(InventoryError):
+    """The item appears on recorded sales (pos_order_items references it,
+    ON DELETE RESTRICT): it is kept, and can be marked Legacy instead."""
+    def __init__(self, item_id=None):
+        super().__init__('This item has sales history, so it cannot be deleted. '
+                         'Mark it as Legacy instead.')
+        self.item_id = item_id
+
+
 class TransactionNotFound(InventoryError):
     def __init__(self, tx_id=None):
         super().__init__('Transaction not found')
@@ -484,8 +493,13 @@ def update_item(conn, item_id, fields):
 
 
 def delete_item(conn, item_id):
-    """Delete an item together with its stock ledger."""
+    """Delete an item together with its stock ledger (coupon item links go
+    with it; audit counts and coupon rewards keep their rows, unlinked).
+    Raises ItemHasSales when the item was ever sold."""
     with write_transaction(conn):
+        if conn.execute('SELECT 1 FROM pos_order_items WHERE inventory_item_id = ? LIMIT 1',
+                        (item_id,)).fetchone():
+            raise ItemHasSales(item_id)
         conn.execute('DELETE FROM inventory_transactions WHERE inventory_item_id = ?', (item_id,))
         conn.execute('DELETE FROM inventory_items WHERE id = ?', (item_id,))
 

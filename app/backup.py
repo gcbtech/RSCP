@@ -271,8 +271,10 @@ def backup_database(src_db, dest):
     tmp = _tmp_name(os.path.dirname(dest), os.path.basename(dest))
     try:
         src = sqlite3.connect(src_db, timeout=30)
+        src.execute('PRAGMA foreign_keys = ON')
         try:
             dst = sqlite3.connect(tmp)
+            dst.execute('PRAGMA foreign_keys = ON')
             try:
                 src.backup(dst)
                 # One self-contained file (no -wal sidecar needed to read it)
