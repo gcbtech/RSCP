@@ -9,6 +9,7 @@ from app.utils.permissions import require_permission
 
 from app.routes.inventory import inventory_bp
 from app.services.db import get_db_connection
+from app.services import money
 from app.services import inventory
 
 logger = logging.getLogger(__name__)
@@ -115,7 +116,7 @@ def audit_scan():
                           (session_id, item['id'])).fetchone()
                           
     response_data = {
-        'item': dict(item),
+        'item': money.dollar_fields(item),   # JSON edge: prices in dollars
         'mode': sess['mode'],
         'prev_count': record['counted_qty'] if record else 0
     }

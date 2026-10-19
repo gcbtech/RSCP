@@ -29,10 +29,10 @@ def _db(app):
     return get_db_connection(app.config['DATABASE'])
 
 
-def _add_items(app, *skus, price=10.0, qty=100):
+def _add_items(app, *skus, price=1000, qty=100):
     conn = _db(app)
     for sku in skus:
-        conn.execute('INSERT INTO inventory_items (sku, name, sell_price, quantity) VALUES (?, ?, ?, ?)',
+        conn.execute('INSERT INTO inventory_items (sku, name, sell_price_cents, quantity) VALUES (?, ?, ?, ?)',
                      (sku, f'{sku} item', price, qty))
     conn.commit()
     conn.close()
@@ -246,7 +246,7 @@ def test_scanner_quantity_delta_does_not_clobber_register_add(fresh_app, pair):
     register.post('/pos/cart/add', data={'sku': 'AAA'}, headers=_reg_headers(**JSON))
     resp = scanner.post(f'/pos/cart/update/{aaa}', data={'quantity_delta': '1'}, headers=_scan_headers(token))
     assert resp.get_json()['items'][0]['quantity'] == 3
-    assert _line(fresh_app, 'AAA')['line_total'] == pytest.approx(30.0)
+    assert _line(fresh_app, 'AAA')['line_total_cents'] == 3000
 
 
 def test_clear_from_stale_view_is_refused(fresh_app, pair):

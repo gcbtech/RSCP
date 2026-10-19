@@ -90,9 +90,48 @@ def delete_user_action(username):
     elif username.lower() == 'admin':
         flash("Cannot delete the built-in Admin account.")
     else:
-        delete_user(username)
-        flash(f"User {username} deleted.")
+        flash(_delete_user_checked(username))
     return redirect(url_for('admin.admin_panel', tab='settings'))
+
+
+# Records that must stay attributed to their user (ON DELETE RESTRICT)
+_SALES_HISTORY_REFS = (('pos_orders', 'operator_id'), ('pos_refunds', 'manager_id'),
+                       ('pos_coupon_redemptions', 'redeemed_by'),
+                       ('drawer_sessions', 'opened_by'), ('drawer_sessions', 'closed_by'))
+# Timeclock rows belong to the user and are deleted with the account (ON DELETE CASCADE)
+_TIMECLOCK_TABLES = ('time_entries', 'scheduled_shifts', 'recurring_shift_rules',
+                     'pto_requests', 'user_pto_balances')
+
+
+def _delete_user_checked(username):
+    """Delete a user unless sales records point at them; returns the message to show."""
+    from app.services.db import get_db_connection
+    conn = get_db_connection()
+    try:
+        row = conn.execute('SELECT id FROM users WHERE username = ?', (username,)).fetchone()
+        if not row:
+            return f"User {username} not found."
+        uid = row['id']
+        for table, col in _SALES_HISTORY_REFS:
+            if conn.execute(f'SELECT 1 FROM {table} WHERE {col} = ? LIMIT 1', (uid,)).fetchone():
+                return (f"User {username} has sales history (sales, refunds or cash drawer sessions), "
+                        f"so the account is kept to keep those records attributed. Reset their password "
+                        f"and remove their roles instead.")
+        timeclock = sum(conn.execute(f'SELECT COUNT(*) FROM {t} WHERE user_id = ?', (uid,)).fetchone()[0]
+                        for t in _TIMECLOCK_TABLES)
+    finally:
+        conn.close()
+    delete_user(username)
+    check = get_db_connection()
+    try:
+        gone = check.execute('SELECT 1 FROM users WHERE username = ?', (username,)).fetchone() is None
+    finally:
+        check.close()
+    if not gone:
+        return f"User {username} could not be deleted."
+    if timeclock:
+        return f"User {username} deleted, with their {timeclock} timeclock record(s)."
+    return f"User {username} deleted."
 
 
 @admin_bp.route('/set_user_admin/<username>/<action>', methods=['POST'])

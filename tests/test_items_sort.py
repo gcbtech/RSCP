@@ -40,26 +40,26 @@ def app():
         
         # Insert items with distinct created_at times (Oldest first, Middle, Newest)
         conn.execute('''
-            INSERT INTO inventory_items (sku, name, sell_price, quantity, created_at)
+            INSERT INTO inventory_items (sku, name, sell_price_cents, quantity, created_at)
             VALUES (?, ?, ?, ?, ?)
-        ''', ('ITEM1', 'Item Oldest', 10.0, 5, '2026-05-21 09:00:00'))
+        ''', ('ITEM1', 'Item Oldest', 1000, 5, '2026-05-21 09:00:00'))
         
         conn.execute('''
-            INSERT INTO inventory_items (sku, name, sell_price, quantity, created_at)
+            INSERT INTO inventory_items (sku, name, sell_price_cents, quantity, created_at)
             VALUES (?, ?, ?, ?, ?)
-        ''', ('ITEM2', 'Item Middle', 15.0, 10, '2026-05-21 09:30:00'))
+        ''', ('ITEM2', 'Item Middle', 1500, 10, '2026-05-21 09:30:00'))
         
         conn.execute('''
-            INSERT INTO inventory_items (sku, name, sell_price, quantity, created_at)
+            INSERT INTO inventory_items (sku, name, sell_price_cents, quantity, created_at)
             VALUES (?, ?, ?, ?, ?)
-        ''', ('ITEM3', 'Item Newest', 20.0, 15, '2026-05-21 10:00:00'))
+        ''', ('ITEM3', 'Item Newest', 2000, 15, '2026-05-21 10:00:00'))
 
         # Item whose search term ('arduino') lives ONLY in keywords, not in
         # name/sku/location/secondary_ids. Regression guard for keyword search.
         conn.execute('''
-            INSERT INTO inventory_items (sku, name, sell_price, quantity, keywords, created_at)
+            INSERT INTO inventory_items (sku, name, sell_price_cents, quantity, keywords, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
-        ''', ('KW1', 'Blue Widget', 5.0, 3, 'arduino, raspberry pi', '2026-05-21 11:00:00'))
+        ''', ('KW1', 'Blue Widget', 500, 3, 'arduino, raspberry pi', '2026-05-21 11:00:00'))
 
         # Three items sharing location_area='Retail' but differing sub-location.
         # Two are in the SAME full location (Retail/Slatwall) and must group

@@ -37,23 +37,23 @@
     </td>
     {% if has_permission(current_user, 'inventory.manage') %}
     <td class="col-cost">
-        ${{ "%.2f"|format(item.buy_price or 0) }}
+        ${{ (item.buy_price_cents or 0)|dollars }}
     </td>
     {% endif %}
     <td>
         <div class="d-flex align-items-center gap-2">
-            {% if item.sell_price and item.buy_price and item.sell_price < item.buy_price %} <span
-                class="text-danger fw-bold" title="Sell Price is less than Cost!">${{ "%.2f"|format(item.sell_price or
-                0) }} ⚠️</span>
+            {% if item.sell_price_cents and item.buy_price_cents and item.sell_price_cents < item.buy_price_cents %} <span
+                class="text-danger fw-bold" title="Sell Price is less than Cost!">${{ (item.sell_price_cents or
+                0)|dollars }} ⚠️</span>
                 {% else %}
-                <span>${{ "%.2f"|format(item.sell_price or 0) }}</span>
+                <span>${{ (item.sell_price_cents or 0)|dollars }}</span>
                 {% endif %}
 
-                {% if item.sell_price and item.buy_price and item.sell_price > 0 %}
-                {% set margin = ((item.sell_price - item.buy_price) / item.sell_price) * 100 %}
+                {% if item.sell_price_cents and item.buy_price_cents and item.sell_price_cents > 0 %}
+                {% set margin = ((item.sell_price_cents - item.buy_price_cents) / item.sell_price_cents) * 100 %}
                 {% set markup = 0 %}
-                {% if item.buy_price > 0 %}
-                {% set markup = ((item.sell_price - item.buy_price) / item.buy_price) * 100 %}
+                {% if item.buy_price_cents > 0 %}
+                {% set markup = ((item.sell_price_cents - item.buy_price_cents) / item.buy_price_cents) * 100 %}
                 {% endif %}
 
                 {% set pref_val = config.get('PREFERRED_MARGIN_PERCENT', 30)|float %}
@@ -80,7 +80,7 @@
                 {% endif %}
                 {% endif %}
 
-                {% if not item.sell_price or item.sell_price == 0 %}
+                {% if not item.sell_price_cents or item.sell_price_cents == 0 %}
                 <span class="badge bg-warning text-dark" title="Price not set">No Price</span>
                 {% endif %}
         </div>

@@ -96,6 +96,7 @@ def _eod_claim(db_path, today, now):
     'interrupted'      as above, already reported
     """
     conn = sqlite3.connect(db_path, timeout=30, isolation_level=None)
+    conn.execute('PRAGMA foreign_keys = ON')
     try:
         conn.execute('BEGIN IMMEDIATE')
         try:
@@ -128,6 +129,7 @@ def _set_marker(conn, name, value, now):
 
 def _eod_write_marker(db_path, value, now):
     conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute('PRAGMA foreign_keys = ON')
     try:
         if value is None:
             conn.execute('DELETE FROM job_markers WHERE name = ?', (EOD_MARKER,))
@@ -358,6 +360,7 @@ def create_tables(conn):
 
 def _status_conn(db_path):
     conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute('PRAGMA foreign_keys = ON')
     conn.row_factory = sqlite3.Row
     create_tables(conn)
     return conn
@@ -405,6 +408,7 @@ def read_status(db_path=None):
     """{job name: row dict} from job_status ({} if it can't be read)."""
     try:
         conn = sqlite3.connect(_db_path(db_path), timeout=10)
+        conn.execute('PRAGMA foreign_keys = ON')
         conn.row_factory = sqlite3.Row
         try:
             rows = conn.execute('SELECT * FROM job_status').fetchall()

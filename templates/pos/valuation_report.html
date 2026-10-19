@@ -62,7 +62,7 @@
                 <div class="card border-primary border-start border-3 h-100">
                     <div class="card-body">
                         <h6 class="text-muted text-uppercase small">Total Cost Value</h6>
-                        <h3 class="fw-bold text-primary">${{ "%.2f"|format(total_cost) }}</h3>
+                        <h3 class="fw-bold text-primary">${{ total_cost_cents|dollars }}</h3>
                         <small class="text-muted">Asset Value</small>
                     </div>
                 </div>
@@ -71,7 +71,7 @@
                 <div class="card border-success border-start border-3 h-100">
                     <div class="card-body">
                         <h6 class="text-muted text-uppercase small">Total Retail Value</h6>
-                        <h3 class="fw-bold text-success">${{ "%.2f"|format(total_retail) }}</h3>
+                        <h3 class="fw-bold text-success">${{ total_retail_cents|dollars }}</h3>
                         <small class="text-muted">Potential Revenue</small>
                     </div>
                 </div>
@@ -80,7 +80,7 @@
                 <div class="card border-info border-start border-3 h-100">
                     <div class="card-body">
                         <h6 class="text-muted text-uppercase small">Potential Profit</h6>
-                        <h3 class="fw-bold text-info">${{ "%.2f"|format(potential_profit) }}</h3>
+                        <h3 class="fw-bold text-info">${{ potential_profit_cents|dollars }}</h3>
                         <small class="text-muted">Retail - Cost</small>
                     </div>
                 </div>
@@ -117,15 +117,15 @@
                         </thead>
                         <tbody>
                             {% for cat in categories %}
-                            {% set cat_margin = ((cat.retail_value - cat.cost_value) / cat.retail_value * 100) if
-                            cat.retail_value > 0 else 0 %}
+                            {% set cat_margin = ((cat.retail_value_cents - cat.cost_value_cents) / cat.retail_value_cents * 100) if
+                            cat.retail_value_cents > 0 else 0 %}
                             <tr>
                                 <td class="ps-3 font-monospace fw-bold">{{ cat.code }}</td>
                                 <td>{{ cat.description }}</td>
                                 <td class="text-center">{{ cat.count }}</td>
                                 <td class="text-center">{{ cat.qty }}</td>
-                                <td class="text-end">${{ "%.2f"|format(cat.cost_value) }}</td>
-                                <td class="text-end fw-bold text-success">${{ "%.2f"|format(cat.retail_value) }}</td>
+                                <td class="text-end">${{ cat.cost_value_cents|dollars }}</td>
+                                <td class="text-end fw-bold text-success">${{ cat.retail_value_cents|dollars }}</td>
                                 <td class="text-end pe-3">{{ "%.1f"|format(cat_margin) }}%</td>
                             </tr>
                             {% endfor %}
@@ -134,8 +134,8 @@
                             <tr>
                                 <td colspan="3" class="text-end">totals:</td>
                                 <td class="text-center">{{ categories|sum(attribute='qty') }}</td>
-                                <td class="text-end">${{ "%.2f"|format(total_cost) }}</td>
-                                <td class="text-end">${{ "%.2f"|format(total_retail) }}</td>
+                                <td class="text-end">${{ total_cost_cents|dollars }}</td>
+                                <td class="text-end">${{ total_retail_cents|dollars }}</td>
                                 <td></td>
                             </tr>
                         </tfoot>

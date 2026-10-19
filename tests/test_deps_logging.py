@@ -196,7 +196,7 @@ def test_xlsx_import_with_numeric_cells(fresh_app, fresh_client):
     assert row is not None
     assert row['name'] == 'Widget'
     assert row['quantity'] == 5
-    assert row['buy_price'] == 2.5 and row['sell_price'] == 9.99
+    assert row['buy_price_cents'] == 250 and row['sell_price_cents'] == 999
     assert '12345678905' in row['secondary_ids']
     assert _item(fresh_app, 'NO-NAME') is None
 

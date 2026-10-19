@@ -10,7 +10,7 @@ from flask_login import current_user, login_required
 
 from app.routes.pos import pos_bp, REFUND_REASONS
 from app.services.db import get_db_connection, get_request_db
-from app.services import pos_refunds
+from app.services import money, pos_refunds
 from app.services.pos_ledger import REFUND_METHODS, default_refund_method, order_payments
 
 logger = logging.getLogger(__name__)
@@ -282,6 +282,6 @@ def refund_process():
     finally:
         conn.close()
 
-    flash(f'Refund of ${result.amount:.2f} processed successfully '
+    flash(f'Refund of {money.fmt(result.amount_cents)} processed successfully '
           f'({REFUND_METHODS.get(result.refund_method, result.refund_method)}).')
     return redirect(url_for('pos.refund_order', order_number=result.order_number))

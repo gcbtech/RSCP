@@ -177,6 +177,17 @@ def create_app(test_config=None):
     app.jinja_env.filters['format_date'] = format_date_filter
     app.jinja_env.filters['local_time'] = local_time_filter
 
+    # Money is stored and passed around as integer cents (app/services/money.py);
+    # templates format it: {{ order.total_cents|dollars }} -> 19.99,
+    # {{ x_cents|money }} -> $19.99, {{ x_cents|dollars_grouped }} -> 1,234.56.
+    from app.services import money as _money
+    app.jinja_env.filters['dollars'] = _money.dollars
+    app.jinja_env.filters['dollars_grouped'] = _money.dollars_grouped
+    app.jinja_env.filters['whole_dollars_grouped'] = _money.whole_dollars_grouped
+    app.jinja_env.filters['money'] = _money.fmt
+    # a dollar number for <input value> / data attributes (1999 -> 19.99, 2000 -> 20.0)
+    app.jinja_env.filters['dollar_number'] = _money.to_dollars
+
     # {{ value|js }} -> a JavaScript string/number literal that is safe inside
     # an HTML attribute such as onclick="f({{ value|js }})". Plain HTML
     # escaping is NOT enough there: the browser decodes &#39; back to ' before

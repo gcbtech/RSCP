@@ -37,13 +37,13 @@ def app():
             VALUES (?, ?, ?, ?, ?)
         ''', (1, 'testuser', 'pbkdf2:sha256:somehash', 1, '["super_admin"]'))
         conn.execute('''
-            INSERT INTO inventory_items (sku, name, sell_price, quantity, keywords)
+            INSERT INTO inventory_items (sku, name, sell_price_cents, quantity, keywords)
             VALUES (?, ?, ?, ?, ?)
-        ''', ('BULK1', 'Bulk Item 1', 10.0, 5, 'old1, old2'))
+        ''', ('BULK1', 'Bulk Item 1', 1000, 5, 'old1, old2'))
         conn.execute('''
-            INSERT INTO inventory_items (sku, name, sell_price, quantity, keywords)
+            INSERT INTO inventory_items (sku, name, sell_price_cents, quantity, keywords)
             VALUES (?, ?, ?, ?, ?)
-        ''', ('BULK2', 'Bulk Item 2', 15.0, 10, 'old3'))
+        ''', ('BULK2', 'Bulk Item 2', 1500, 10, 'old3'))
         conn.commit()
         conn.close()
         

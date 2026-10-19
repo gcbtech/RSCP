@@ -156,7 +156,8 @@ def test_migration_6_imports_config_json_and_pos_settings(tmp_path, monkeypatch,
     conn.execute('CREATE TABLE pos_settings (key TEXT PRIMARY KEY, value TEXT)')
     conn.executemany('INSERT INTO pos_settings VALUES (?, ?)', [
         ('TAX_RATE', '0.0825'), ('CASH_DISCOUNT_ENABLED', 'true'), ('ALLOW_HOLD_ORDERS', 'false'),
-        ('POS_DEFAULT_REPORT_TIMEFRAME', '90'), ('CASH_DISCOUNT_AMOUNT', 'abc')])
+        ('POS_DEFAULT_REPORT_TIMEFRAME', '90'), ('REQUIRE_MANAGER_VOID', 'maybe'),
+        ('CASH_DISCOUNT_AMOUNT', '3')])
     for _ in range(2):  # idempotent
         conn.execute('BEGIN IMMEDIATE')
         migration._m6_settings_store(conn)
@@ -176,8 +177,10 @@ def test_migration_6_imports_config_json_and_pos_settings(tmp_path, monkeypatch,
     assert rows['CASH_DISCOUNT_ENABLED'] is True
     assert rows['ALLOW_HOLD_ORDERS'] is False
     assert rows['POS_DEFAULT_REPORT_TIMEFRAME'] == 90
-    assert 'CASH_DISCOUNT_AMOUNT' not in rows
-    assert pos_rows == 5                                      # legacy stores left alone
+    assert 'REQUIRE_MANAGER_VOID' not in rows                 # invalid: default applies
+    # no longer a registered key (schema v15 converts it to CASH_DISCOUNT_PERCENT/_CENTS): kept as-is
+    assert rows['CASH_DISCOUNT_AMOUNT'] == '3'
+    assert pos_rows == 6                                      # legacy stores left alone
     assert json.loads(cfg.read_text()) == legacy
 
 
@@ -313,17 +316,15 @@ def test_location_labels_and_options_from_form(fresh_app, fresh_client, st):
 def test_restoring_pre_v6_backup_applies_its_config_json(fresh_app, fresh_client, st, tmp_path, monkeypatch):
     import io
     import zipfile
-    # A "2.x" backup: the live schema minus the settings tables, at user_version 5.
+    # A "2.x" backup: a database at schema v5 (no settings tables yet).
+    from app.services import migration
     old_db = str(tmp_path / 'old.db')
-    src = sqlite3.connect(fresh_app.config['DATABASE'])
-    dst = sqlite3.connect(old_db)
-    src.backup(dst)
-    src.close()
-    dst.execute('DROP TABLE settings')
-    dst.execute('DROP TABLE settings_meta')
-    dst.execute('PRAGMA user_version = 5')
-    dst.commit()
-    dst.close()
+    migration.run_migrations(old_db, target=5)
+    conn = sqlite3.connect(old_db)
+    conn.execute("INSERT INTO users (id, username, password_hash, is_admin, roles) "
+                 "VALUES (1, 'admin', 'x', 1, '[\"super_admin\"]')")
+    conn.commit()
+    conn.close()
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, 'w') as zf:
         zf.write(old_db, 'rscp.db')
@@ -347,13 +348,10 @@ EMAIL_INGEST_KEYS = ('EMAIL_INGEST_ENABLED', 'IMAP_SERVER', 'EMAIL_USER', 'EMAIL
 
 
 def _db_copy_at(fresh_app, path, version):
-    src = sqlite3.connect(fresh_app.config['DATABASE'])
-    dst = sqlite3.connect(path)
-    src.backup(dst)
-    src.close()
-    dst.execute(f'PRAGMA user_version = {int(version)}')
-    dst.commit()
-    return dst
+    """A database whose schema really is at `version` (migrations run only that far)."""
+    from app.services import migration
+    migration.run_migrations(path, target=version)
+    return sqlite3.connect(path)
 
 
 def test_migration_12_deletes_email_ingest_settings_only(fresh_app, tmp_path):
@@ -390,10 +388,7 @@ def test_upgrade_from_2x_does_not_keep_email_ingest_settings(fresh_app, tmp_path
     from app import paths
     from app.services import migration
     db = str(tmp_path / 'v5.db')
-    conn = _db_copy_at(fresh_app, db, 5)
-    conn.execute('DROP TABLE settings')
-    conn.execute('DROP TABLE settings_meta')
-    conn.commit()
+    conn = _db_copy_at(fresh_app, db, 5)   # no settings tables at v5
     conn.close()
     cfg = tmp_path / 'config.json'
     cfg.write_text(json.dumps({'SECRET_KEY': 'k', 'ORG_NAME': 'Old Shop', 'EMAIL_INGEST_ENABLED': True,
@@ -420,10 +415,11 @@ SSO_ROWS = [('SSO_ENABLED', 'true'), ('SSO_CLIENT_ID', '"client-123.apps.googleu
 
 def _v21_with(fresh_app, tmp_path, rows):
     db = str(tmp_path / 'v21.db')
-    conn = _db_copy_at(fresh_app, db, 21)
+    conn = _db_copy_at(fresh_app, db, 21)   # the real schema just before migration 22
     conn.executemany("INSERT OR REPLACE INTO settings (key, value, updated_by) VALUES (?, ?, 'test')", rows)
-    conn.execute("INSERT INTO users (id, username, password_hash, is_admin, roles) "
-                 "VALUES (7, 'boss2', 'x', 1, '[\"super_admin\"]')")
+    conn.executemany("INSERT INTO users (id, username, password_hash, is_admin, roles) VALUES (?, ?, 'x', ?, ?)",
+                     [(1, 'admin', 1, '["super_admin"]'), (2, 'cashier', 0, '["operator"]'),
+                      (3, 'manager', 0, '["pos_admin"]'), (7, 'boss2', 1, '["super_admin"]')])
     conn.commit()
     conn.close()
     return db
@@ -520,9 +516,10 @@ def test_upgrade_from_2x_config_json_drops_sso(fresh_app, tmp_path, monkeypatch)
     from app import paths
     from app.services import migration
     db = str(tmp_path / 'v5.db')
-    conn = _db_copy_at(fresh_app, db, 5)
-    conn.execute('DROP TABLE settings')
-    conn.execute('DROP TABLE settings_meta')
+    conn = _db_copy_at(fresh_app, db, 5)   # no settings tables at v5
+    # 2.x accounts: an is_admin admin (migration 9 gives it super_admin) and staff
+    conn.executemany("INSERT INTO users (id, username, password_hash, is_admin, roles) VALUES (?, ?, 'x', ?, ?)",
+                     [(1, 'admin', 1, '[]'), (2, 'cashier', 0, '["user"]')])
     conn.commit()
     conn.close()
     cfg = tmp_path / 'config.json'

@@ -1,63 +1,43 @@
+"""Tax and percentage rounding (integer cents, half-up).
+
+With a 7.25% tax and a 7.25% cash discount the two must cancel exactly:
+cash total == subtotal for every subtotal (the "extra penny" bug)."""
 import unittest
-import sys
-import os
 from unittest.mock import patch
 
-# Add parent directory to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from app.routes.pos.core import calculate_tax, calculate_percentage
 
-from app.routes.pos.core import round_money, calculate_tax, calculate_percentage
 
 class TestRoundingFix(unittest.TestCase):
     def test_calculate_percentage_basic(self):
-        """Verify that calculate_percentage calculates percentage using Decimal and ROUND_HALF_UP."""
-        # 6.00 * 7.25% should evaluate to exactly 0.44
-        self.assertEqual(calculate_percentage(6.00, 7.25), 0.44)
-        
-        # 26.00 * 7.25% should evaluate to 1.89
-        # (26.00 * 0.0725 = 1.885, which should round up to 1.89)
-        self.assertEqual(calculate_percentage(26.00, 7.25), 1.89)
-        
-        # 50.00 * 7.25% should evaluate to 3.63
-        # (50.00 * 0.0725 = 3.625, which should round up to 3.63)
-        self.assertEqual(calculate_percentage(50.00, 7.25), 3.63)
+        """calculate_percentage rounds half-up on exact cents."""
+        # $6.00 * 7.25% = 43.5 cents -> 44
+        self.assertEqual(calculate_percentage(600, 7.25), 44)
+        # $26.00 * 7.25% = 188.5 cents -> 189
+        self.assertEqual(calculate_percentage(2600, 7.25), 189)
+        # $50.00 * 7.25% = 362.5 cents -> 363
+        self.assertEqual(calculate_percentage(5000, 7.25), 363)
 
     @patch('app.routes.pos.core.get_tax_rate', return_value=0.0725)
     def test_tax_and_discount_parity(self, mock_get_tax_rate):
-        """Verify that tax and cash discount calculations match exactly, eliminating the extra penny."""
-        rate = 7.25  # 7.25% tax and cash discount
-        
-        # Let's test all subtotals from $1.00 to $100.00 that previously failed
-        test_subtotals = [6.00, 26.00, 50.00, 54.00, 66.00, 70.00, 74.00, 94.00, 98.00]
-        
-        for subtotal in test_subtotals:
+        """Tax and cash discount at the same rate match exactly (no extra penny)."""
+        rate = 7.25
+        for subtotal in [600, 2600, 5000, 5400, 6600, 7000, 7400, 9400, 9800]:
             tax = calculate_tax(subtotal)
             discount = calculate_percentage(subtotal, rate)
-            
-            # The tax and percentage discount calculations must be identical
-            self.assertEqual(tax, discount, f"Mismatched tax ({tax}) and discount ({discount}) on subtotal {subtotal}")
-            
-            total_before_discount = round_money(subtotal + tax)
-            cash_total = round_money(total_before_discount - discount)
-            
-            # With equal tax and cash discount, the cash total must equal the subtotal
-            self.assertEqual(cash_total, subtotal, f"Discrepancy found! Subtotal: {subtotal}, Cash Total: {cash_total}")
+            self.assertEqual(tax, discount, f"Mismatched tax ({tax}) and discount ({discount}) on {subtotal}")
+            self.assertEqual(subtotal + tax - discount, subtotal)
 
     @patch('app.routes.pos.core.get_tax_rate', return_value=0.0725)
     def test_all_subtotals_up_to_100(self, mock_get_tax_rate):
-        """Exhaustively verify all subtotals from $0.01 to $100.00 have zero penny discrepancy."""
+        """Every subtotal from $0.01 to $100.00 has zero penny discrepancy."""
         rate = 7.25
-        for i in range(1, 10001):
-            subtotal = i / 100.0
+        for subtotal in range(1, 10001):
             tax = calculate_tax(subtotal)
             discount = calculate_percentage(subtotal, rate)
-            
             self.assertEqual(tax, discount, f"Mismatch at {subtotal}")
-            
-            total_before_discount = round_money(subtotal + tax)
-            cash_total = round_money(total_before_discount - discount)
-            
-            self.assertEqual(cash_total, subtotal, f"Mismatch at {subtotal}")
+            self.assertEqual(subtotal + tax - discount, subtotal, f"Mismatch at {subtotal}")
+
 
 if __name__ == '__main__':
     unittest.main()

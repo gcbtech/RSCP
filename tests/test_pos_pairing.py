@@ -50,9 +50,10 @@ class PairingV3TestCase(unittest.TestCase):
             )
             self.user_id = cur.lastrowid
             conn.execute('''
-                INSERT INTO inventory_items (sku, name, sell_price, quantity, sale_enabled, sale_price, sale_start, sale_end, sale_end_on_stock)
+                INSERT INTO inventory_items (sku, name, sell_price_cents, quantity, sale_enabled, sale_price_cents,
+                                             sale_start, sale_end, sale_end_on_stock)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', ('TEST-SKU', 'Test Item', 10.0, 5, 0, 5.0, None, None, 0))
+            ''', ('TEST-SKU', 'Test Item', 1000, 5, 0, 500, None, None, 0))
             conn.commit()
             conn.close()
 
@@ -384,8 +385,9 @@ class PairingV3TestCase(unittest.TestCase):
             set_pos_setting('TAX_RATE', '0.10')
             set_pos_setting('CASH_DISCOUNT_ENABLED', 'true')
             set_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
-            set_pos_setting('CASH_DISCOUNT_AMOUNT', '5')
+            set_pos_setting('CASH_DISCOUNT_PERCENT', '5')
 
+            # a cart saved in dollars (before schema v15): upgraded on load
             conn = get_db_connection()
             cart = pos_registers.empty_cart()
             cart['items'].append({'sku': 'TEST-SKU', 'name': 'Test Item', 'quantity': 10,

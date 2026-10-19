@@ -118,9 +118,9 @@
                         </td>
                         <td>
                             {% if coupon.discount_type in ['order_percent', 'item_percent', 'bogo_percent'] %}
-                            {{ coupon.discount_value|int }}% off
+                            {{ coupon.discount_percent|int }}% off
                             {% elif coupon.discount_type in ['order_dollar', 'item_dollar'] %}
-                            ${{ "%.2f"|format(coupon.discount_value) }} off
+                            ${{ coupon.discount_cents|dollars }} off
                             {% elif coupon.discount_type == 'bogo_free' %}
                             Buy {{ coupon.buy_quantity }} Get 1 Free
                             {% elif coupon.discount_type == 'bogo_cross' %}

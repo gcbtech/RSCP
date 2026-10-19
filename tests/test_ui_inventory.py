@@ -24,11 +24,11 @@ def seeded(fresh_app):
     with fresh_app.app_context():
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute('INSERT INTO inventory_items (sku, name, sell_price, quantity) VALUES (?, ?, ?, ?)',
-                    ('UI-SKU-1', 'UI Widget', 9.99, 25))
+        cur.execute('INSERT INTO inventory_items (sku, name, sell_price_cents, quantity) VALUES (?, ?, ?, ?)',
+                    ('UI-SKU-1', 'UI Widget', 999, 25))
         item_id = cur.lastrowid
-        cur.execute('INSERT INTO inventory_items (sku, name, sell_price, quantity, alert_enabled, alert_threshold) '
-                    'VALUES (?, ?, ?, ?, ?, ?)', ('UI-SKU-LOW', 'UI Low Widget', 5.0, 1, 1, 5))
+        cur.execute('INSERT INTO inventory_items (sku, name, sell_price_cents, quantity, alert_enabled, '
+                    'alert_threshold) VALUES (?, ?, ?, ?, ?, ?)', ('UI-SKU-LOW', 'UI Low Widget', 500, 1, 1, 5))
         cur.execute("INSERT INTO audit_sessions (user_id, mode, status) VALUES ('admin', 'shelf', 'active')")
         active_id = cur.lastrowid
         cur.execute("INSERT INTO audit_sessions (user_id, mode, status, end_time) "

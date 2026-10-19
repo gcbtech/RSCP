@@ -77,30 +77,30 @@ def get_tax_rate():
 # from here (sales, checkout, tests). calculate_tax / compute_cart_totals read
 # the current settings through get_tax_rate / get_pos_setting in this module.
 from app.services.pos_pricing import (  # noqa: E402,F401
-    round_money, calculate_percentage, calculate_line_total, PricingConfig,
+    calculate_percentage, calculate_line_total, line_total_for, PricingConfig,
 )
 from app.services import pos_pricing  # noqa: E402
 
 
-def calculate_tax(subtotal):
-    """Calculate tax amount for a given subtotal at the current tax rate."""
-    return pos_pricing.calculate_tax(subtotal, get_tax_rate())
+def calculate_tax(subtotal_cents):
+    """Tax (cents) on a subtotal (cents) at the current tax rate."""
+    return pos_pricing.calculate_tax(subtotal_cents, get_tax_rate())
 
 
 def pricing_config():
     """The current pricing settings (tax rate, cash discount) for pos_pricing."""
+    from app.services import settings as settings_store
     enabled = get_pos_setting('CASH_DISCOUNT_ENABLED', 'false') == 'true'
-    amount = 0.0
+    percent, cents = 0.0, 0
     if enabled:
-        try:
-            amount = float(get_pos_setting('CASH_DISCOUNT_AMOUNT', '0') or 0)
-        except (TypeError, ValueError):
-            amount = 0.0
+        percent = settings_store.get('CASH_DISCOUNT_PERCENT') or 0.0
+        cents = settings_store.get('CASH_DISCOUNT_CENTS') or 0
     return PricingConfig(
         tax_rate=get_tax_rate(),
         cash_discount_enabled=enabled,
-        cash_discount_amount=amount,
         cash_discount_type=get_pos_setting('CASH_DISCOUNT_TYPE', 'percent') if enabled else 'percent',
+        cash_discount_percent=percent,
+        cash_discount_cents=cents,
     )
 
 
@@ -232,7 +232,7 @@ def _refreshing_coupon(fn, conn):
     """Wrap a cart change so an applied coupon is re-evaluated against the
     resulting cart, in the same transaction.
 
-    The cart stores the coupon's dollar discount from when it was applied;
+    The cart stores the coupon's discount (cents) from when it was applied;
     without this, removing an item (or a scanner adding one) left the old
     amount on screen while checkout recomputed it, so checkout kept refusing
     with "the cart changed". A coupon that no longer qualifies is removed
@@ -243,10 +243,10 @@ def _refreshing_coupon(fn, conn):
         coupon = cart.get('applied_coupon')
         if coupon and coupon.get('code'):
             items = cart.get('items') or []
-            subtotal = sum(item.get('line_total', 0) for item in items)
+            subtotal = pos_pricing.cart_subtotal(items)
             check = pos_pricing.evaluate_coupon(coupon['code'], items, subtotal, conn, cart=cart)
             if check.get('valid'):
-                coupon['discount'] = check['discount_amount']
+                coupon['discount_cents'] = check['discount_cents']
             else:
                 cart['applied_coupon'] = None
                 flash(f"Coupon {coupon['code']} removed: {check.get('error', 'no longer applies')}")
@@ -406,7 +406,7 @@ def search_inventory(query, limit=10):
         where_clause = " AND ".join(search_conditions)
         
         sql = f'''
-            SELECT id, sku, name, quantity, sell_price, image_url
+            SELECT id, sku, name, quantity, sell_price_cents, image_url
             FROM inventory_items 
             WHERE COALESCE(is_legacy, 0) = 0 AND {where_clause}
             ORDER BY name ASC

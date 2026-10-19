@@ -115,8 +115,8 @@
                                             <small class="text-muted">{{ item.sku }}</small>
                                         </td>
                                         <td class="text-muted text-decoration-line-through">${{
-                                            "%.2f"|format(item.sell_price) }}</td>
-                                        <td class="text-success fw-bold">${{ "%.2f"|format(item.sale_price) }}</td>
+                                            item.sell_price_cents|dollars }}</td>
+                                        <td class="text-success fw-bold">${{ item.sale_price_cents|dollars }}</td>
                                         <td>
                                             {% if item.sale_start %}
                                             <div class="small">Start: {{ item.sale_start|replace('T', ' ') }}</div>

@@ -108,7 +108,7 @@
     <div class="container-fluid pb-5">
         {% set show_drawer = false %}
         {% include 'pos/_sales_summary.html' %}
-        <p class="text-muted small">Average order: ${{ "%.2f"|format((report.sales_total / report.order_count) if report.order_count else 0) }}</p>
+        <p class="text-muted small">Average order: ${{ ((report.sales_total_cents / report.order_count) if report.order_count else 0)|dollars }}</p>
 
         <div class="row g-4">
             <!-- Activity Chart -->
@@ -123,11 +123,11 @@
                         {% if activity_data %}
                         <div style="height: 200px; display: flex; align-items: flex-end; gap: 3px;">
                             {% for a in activity_data %}
-                            {% set height_pct = (a.amount / max_activity_revenue * 100) if max_activity_revenue > 0 else
+                            {% set height_pct = (a.amount_cents / max_activity_revenue_cents * 100) if max_activity_revenue_cents > 0 else
                             0 %}
                             <div class="flex-fill bg-primary bg-opacity-75 rounded-top"
                                 style="height: {{ height_pct }}%; min-height: 4px;"
-                                title="{{ a.label }} — ${{ '%.2f'|format(a.amount) }} ({{ a.count }} orders)">
+                                title="{{ a.label }} — ${{ a.amount_cents|dollars }} ({{ a.count }} orders)">
                             </div>
                             {% endfor %}
                         </div>
@@ -154,7 +154,7 @@
                                     <tr>
                                         <td>{{ a.label }}</td>
                                         <td class="text-center">{{ a.count }}</td>
-                                        <td class="text-end">${{ "%.2f"|format(a.amount) }}</td>
+                                        <td class="text-end">${{ a.amount_cents|dollars }}</td>
                                     </tr>
                                     {% endfor %}
                                 </tbody>
@@ -194,7 +194,7 @@
                                         </td>
                                         <td>{{ item.name }}</td>
                                         <td class="text-center">{{ item.qty }}</td>
-                                        <td class="text-end pe-3">${{ "%.2f"|format(item.total) }}</td>
+                                        <td class="text-end pe-3">${{ item.total_cents|dollars }}</td>
                                     </tr>
                                     {% endfor %}
                                 </tbody>

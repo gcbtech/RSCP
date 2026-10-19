@@ -18,9 +18,9 @@ def _set_tax(app, rate):
         settings.set('TAX_RATE', rate)
 
 
-def _add_item(app, sku='WIDGET', price=10.0, qty=10):
+def _add_item(app, sku='WIDGET', price=1000, qty=10):
     conn = _db(app)
-    cur = conn.execute('INSERT INTO inventory_items (sku, name, sell_price, quantity) VALUES (?, ?, ?, ?)',
+    cur = conn.execute('INSERT INTO inventory_items (sku, name, sell_price_cents, quantity) VALUES (?, ?, ?, ?)',
                        (sku, f'{sku} item', price, qty))
     conn.commit()
     item_id = cur.lastrowid
@@ -28,13 +28,13 @@ def _add_item(app, sku='WIDGET', price=10.0, qty=10):
     return item_id
 
 
-def _put_cart(client, item_id, price=10.0, qty=1, sku='WIDGET'):
+def _put_cart(client, item_id, price=1000, qty=1, sku='WIDGET'):
     with client.session_transaction() as sess:
         sess['pos_cart'] = {
             'items': [{'inventory_item_id': item_id, 'sku': sku, 'name': f'{sku} item',
-                       'quantity': qty, 'unit_price': price, 'discount_amount': 0,
-                       'discount_type': None, 'line_total': round(price * qty, 2)}],
-            'discount_amount': 0, 'discount_type': None, 'discount_reason': '',
+                       'quantity': qty, 'unit_price_cents': price, 'discount_type': None,
+                       'discount_percent': 0, 'discount_cents': 0, 'line_total_cents': price * qty}],
+            'discount_type': None, 'discount_percent': 0, 'discount_cents': 0, 'discount_reason': '',
         }
 
 
@@ -67,7 +67,7 @@ def test_checkout_records_once_per_token(fresh_app, fresh_client):
     fresh_client.post('/pos/checkout/process', data=form)
     orders = _orders(fresh_app)
     assert len(orders) == 1
-    assert orders[0]['total'] == pytest.approx(10.70)
+    assert orders[0]['total_cents'] == 1070
     conn = _db(fresh_app)
     assert conn.execute('SELECT quantity FROM inventory_items WHERE id = ?', (item,)).fetchone()[0] == 9
     conn.close()
@@ -102,7 +102,7 @@ def test_order_numbers_count_past_999(fresh_app):
     prefix = f"POS-{date.today().strftime('%Y%m%d')}"
     conn = _db(fresh_app)
     for n in ('998', '999', '1000'):
-        conn.execute("INSERT INTO pos_orders (order_number, status, subtotal, tax_rate, tax_amount, total, "
+        conn.execute("INSERT INTO pos_orders (order_number, status, subtotal_cents, tax_rate, tax_amount_cents, total_cents, "
                      "payment_method, operator_id) VALUES (?, 'completed', 0, 0, 0, 0, 'card', 1)",
                      (f'{prefix}-{n}',))
     conn.commit()
@@ -114,20 +114,20 @@ def test_order_numbers_count_past_999(fresh_app):
 
 def _seed_discounted_order(app):
     """Two $100 lines, $20 (10%) order discount, 7% tax: paid $192.60."""
-    item = _add_item(app, 'GADGET', 100.0, 5)
+    item = _add_item(app, 'GADGET', 10000, 5)
     conn = _db(app)
     cur = conn.execute('''
-        INSERT INTO pos_orders (order_number, status, subtotal, tax_rate, tax_amount,
-                                discount_amount, discount_type, total, payment_method, payment_details,
+        INSERT INTO pos_orders (order_number, status, subtotal_cents, tax_rate, tax_amount_cents,
+                                discount_amount_cents, discount_type, total_cents, payment_method, payment_details,
                                 operator_id)
-        VALUES ('POS-T-001', 'completed', 200, 0.07, 12.60, 20, 'percent', 192.60, 'card', '{}', 1)
+        VALUES ('POS-T-001', 'completed', 20000, 0.07, 1260, 2000, 'percent', 19260, 'card', '{}', 1)
     ''')
     order_id = cur.lastrowid
     ids = []
     for _ in range(2):
         c = conn.execute('''INSERT INTO pos_order_items (order_id, inventory_item_id, sku, name, quantity,
-                                                        unit_price, line_total)
-                            VALUES (?, ?, 'GADGET', 'GADGET item', 1, 100, 100)''', (order_id, item))
+                                                        unit_price_cents, line_total_cents)
+                            VALUES (?, ?, 'GADGET', 'GADGET item', 1, 10000, 10000)''', (order_id, item))
         ids.append(c.lastrowid)
     conn.commit()
     conn.close()
@@ -136,10 +136,11 @@ def _seed_discounted_order(app):
 
 def _refund_total(app, order_id):
     conn = _db(app)
-    t = conn.execute('SELECT COALESCE(SUM(amount), 0) FROM pos_refunds WHERE order_id = ?', (order_id,)).fetchone()[0]
+    t = conn.execute('SELECT COALESCE(SUM(amount_cents), 0) FROM pos_refunds WHERE order_id = ?',
+                     (order_id,)).fetchone()[0]
     status = conn.execute('SELECT status FROM pos_orders WHERE id = ?', (order_id,)).fetchone()[0]
     conn.close()
-    return round(t, 2), status
+    return t, status
 
 
 def test_partial_refund_pays_share_of_what_was_paid(fresh_app, fresh_client):
@@ -148,13 +149,13 @@ def test_partial_refund_pays_share_of_what_was_paid(fresh_app, fresh_client):
     fresh_client.post('/pos/refunds/process', data={
         'order_id': order_id, 'refund_type': 'partial', 'reason': 'customer_changed_mind',
         'item_id': [str(line1)], f'quantity_{line1}': '1'})
-    assert _refund_total(fresh_app, order_id) == (96.30, 'partial_refund')
+    assert _refund_total(fresh_app, order_id) == (9630, 'partial_refund')
 
     fresh_client.post('/pos/refunds/process', data={
         'order_id': order_id, 'refund_type': 'partial', 'reason': 'customer_changed_mind',
         'item_id': [str(line2)], f'quantity_{line2}': '1'})
     # Never more than was paid, and no stray cent left behind
-    assert _refund_total(fresh_app, order_id) == (192.60, 'refunded')
+    assert _refund_total(fresh_app, order_id) == (19260, 'refunded')
 
 
 # --- sale edits -------------------------------------------------------------
@@ -167,18 +168,18 @@ def test_editing_a_sale_keeps_its_discount(fresh_app, fresh_client):
         'item_price': ['100', '100'], 'item_name': ['Renamed', 'GADGET item'],
         'item_sku': ['GADGET', 'GADGET']})
     order = _orders(fresh_app)[0]
-    assert order['total'] == pytest.approx(192.60)
-    assert order['discount_amount'] == pytest.approx(20.0)
+    assert order['total_cents'] == 19260
+    assert order['discount_amount_cents'] == 2000
 
 
 def test_editing_a_refunded_sale_is_refused(fresh_app, fresh_client):
     order_id, (line1, _l2) = _seed_discounted_order(fresh_app)
     conn = _db(fresh_app)
-    conn.execute("INSERT INTO pos_refunds (order_id, refund_type, amount, reason, manager_id) "
+    conn.execute("INSERT INTO pos_refunds (order_id, refund_type, amount_cents, reason, manager_id) "
                  "VALUES (?, 'partial', 1, 'other', 1)", (order_id,))
     conn.commit()
     conn.close()
     login(fresh_client, 1)
     fresh_client.post(f'/pos/management/edit-sale/{order_id}', data={
         'item_id': [str(line1)], 'item_quantity': ['5'], 'item_price': ['1'], 'item_name': ['x']})
-    assert _orders(fresh_app)[0]['total'] == pytest.approx(192.60)
+    assert _orders(fresh_app)[0]['total_cents'] == 19260

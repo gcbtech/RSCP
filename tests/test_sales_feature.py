@@ -30,9 +30,10 @@ class TestSalesFeature(unittest.TestCase):
         # Create test item
         conn = get_db_connection()
         conn.execute('''
-            INSERT INTO inventory_items (sku, name, sell_price, quantity, sale_enabled, sale_price, sale_start, sale_end, sale_end_on_stock)
+            INSERT INTO inventory_items (sku, name, sell_price_cents, quantity, sale_enabled, sale_price_cents,
+                                         sale_start, sale_end, sale_end_on_stock)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', ('TEST-SKU', 'Test Item', 10.0, 5, 0, 5.0, None, None, 0))
+        ''', ('TEST-SKU', 'Test Item', 1000, 5, 0, 500, None, None, 0))
         conn.commit()
         conn.close()
 
@@ -48,7 +49,7 @@ class TestSalesFeature(unittest.TestCase):
         """Test item price when sale is disabled."""
         from app.routes.inventory.core import get_inventory_item
         item = get_inventory_item('TEST-SKU')
-        self.assertEqual(item['current_price'], 10.0)
+        self.assertEqual(item['current_price_cents'], 1000)
         self.assertFalse(item['is_on_sale'])
 
     def test_get_inventory_item_sale(self):
@@ -60,7 +61,7 @@ class TestSalesFeature(unittest.TestCase):
         
         from app.routes.inventory.core import get_inventory_item
         item = get_inventory_item('TEST-SKU')
-        self.assertEqual(item['current_price'], 5.0)
+        self.assertEqual(item['current_price_cents'], 500)
         self.assertTrue(item['is_on_sale'])
 
     def test_sale_dates_future(self):
@@ -74,7 +75,7 @@ class TestSalesFeature(unittest.TestCase):
         
         from app.routes.inventory.core import get_inventory_item
         item = get_inventory_item('TEST-SKU')
-        self.assertEqual(item['current_price'], 10.0) # Should be regular price
+        self.assertEqual(item['current_price_cents'], 1000) # Should be regular price
         self.assertFalse(item['is_on_sale'])
 
     def test_sale_dates_active(self):
@@ -89,7 +90,7 @@ class TestSalesFeature(unittest.TestCase):
         
         from app.routes.inventory.core import get_inventory_item
         item = get_inventory_item('TEST-SKU')
-        self.assertEqual(item['current_price'], 5.0)
+        self.assertEqual(item['current_price_cents'], 500)
         self.assertTrue(item['is_on_sale'])
 
 if __name__ == '__main__':

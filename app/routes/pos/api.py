@@ -8,6 +8,7 @@ from flask_login import current_user, login_required
 
 from app.routes.pos import pos_bp
 from app.routes.pos.core import search_inventory, get_inventory_item
+from app.services import money
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +21,8 @@ def api_search():
     if len(query) < 2:
         return jsonify({'items': []})
     
-    items = search_inventory(query, limit=10)
+    # JSON edge: prices in dollars (sell_price), as the page script expects
+    items = [money.dollar_fields(i) for i in search_inventory(query, limit=10)]
     
     # Add stock status
     for item in items:
@@ -41,6 +43,7 @@ def api_item(sku):
     
     if not item:
         return jsonify({'error': 'Item not found'}), 404
+    item = money.dollar_fields(item)   # JSON edge: dollars
     
     # Add stock status
     if item['quantity'] <= 0:
@@ -95,8 +98,9 @@ def api_validate_manager():
 def api_cart():
     """Get current cart state with authoritative totals."""
     from app.routes.pos.core import get_cart, compute_cart_totals
+    from app.services.pos_pricing import totals_json
 
-    totals = compute_cart_totals(get_cart())
+    totals = totals_json(compute_cart_totals(get_cart()))
     # Backward-compatible aliases for older consumers
     totals['tax_rate'] = totals['tax_rate_pct']
     totals['total'] = totals['card_total']
