@@ -1,6 +1,6 @@
 # RSCP - Receive, Scan, Check, Process
 
-A self-hosted package and shipment management system for tracking incoming packages, deliveries, returns, and inventory.
+A self-hosted business management system for small shops. It covers package receiving, inventory with full stock history, and point of sale with customer displays and handheld scanners. It also has sales reports and an employee timeclock. It runs on Python/Flask with SQLite and installs with a single script.
 
 [![Tests](https://github.com/gcbtech/RSCP/actions/workflows/tests.yml/badge.svg)](https://github.com/gcbtech/RSCP/actions/workflows/tests.yml)
 [![Stable](https://img.shields.io/github/v/release/gcbtech/RSCP?label=stable)](https://github.com/gcbtech/RSCP/releases/latest)
@@ -35,6 +35,11 @@ A self-hosted package and shipment management system for tracking incoming packa
 - **Inventory Reports** - Valuation, turnover rate, and low stock reports
 - **End of Day** - Automated EOD email summaries with Z-Report data
 - **Visual Charts** - Interactive graphs for sales trends and category performance
+
+### ⏱️ Timeclock
+- **Clock In/Out** - Staff clock in and out, with breaks
+- **Schedules & PTO** - Shifts, recurring schedules, PTO requests and balances
+- **Timesheets** - Manager review and edits, with pay-period exports
 
 ### 🛠️ System
 - **Multi-User** - Role-based authentication (Admin/Manager/Staff)
