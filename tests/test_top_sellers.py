@@ -45,40 +45,44 @@ def app():
                      ('admin', 'pbkdf2:sha256:somehash', '["super_admin"]'))
 
         items = [
-            # id, sku, name, qty, area, aisle, buy, legacy
-            (1, 'RSCP-PRI-0000-0001', 'Laptop A', 5, 'Retail', 'Laptops', 100.0, 0),
-            (2, 'RSCP-SEC-0000-0002', 'Server B', 0, 'Retail', 'Servers', 200.0, 1),
-            (3, 'RSCP-ASC-0000-0003', 'Cable C', 50, 'Build', 'None', 1.0, 0),
+            # id, sku, name, qty, area, aisle, buy (cents), legacy
+            (1, 'RSCP-PRI-0000-0001', 'Laptop A', 5, 'Retail', 'Laptops', 10000, 0),
+            (2, 'RSCP-SEC-0000-0002', 'Server B', 0, 'Retail', 'Servers', 20000, 1),
+            (3, 'RSCP-ASC-0000-0003', 'Cable C', 50, 'Build', 'None', 100, 0),
         ]
         conn.executemany('''INSERT INTO inventory_items
-            (id, sku, name, quantity, location_area, location_aisle, buy_price, is_legacy)
+            (id, sku, name, quantity, location_area, location_aisle, buy_price_cents, is_legacy)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)''', items)
 
-        def order(oid, days_ago, lines, discount=0.0, tax_rate=0.0):
+        def order(oid, days_ago, lines, discount=0, tax_rate=0.0):
             subtotal = sum(qty * price for *_, qty, price in lines)
-            tax = round((subtotal - discount) * tax_rate, 2)
-            conn.execute('''INSERT INTO pos_orders (id, order_number, subtotal, tax_rate, tax_amount, discount_amount,
-                            total, payment_method, operator_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'cash', 1, ?)''',
+            tax = round((subtotal - discount) * tax_rate)
+            conn.execute('''INSERT INTO pos_orders (id, order_number, subtotal_cents, tax_rate, tax_amount_cents,
+                            discount_amount_cents, total_cents, payment_method, operator_id, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, 'cash', 1, ?)''',
                          (oid, f'ORD-{oid}', subtotal, tax_rate, tax, discount, subtotal - discount + tax,
                           utc_at_local_noon(days_ago)))
             for line_id, inv_id, sku, name, qty, price in lines:
                 conn.execute('''INSERT INTO pos_order_items (id, order_id, inventory_item_id, sku, name, quantity,
-                                unit_price, line_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
+                                unit_price_cents, line_total_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?)''',
                              (line_id, oid, inv_id, sku, name, qty, price, qty * price))
 
         # $320 of items, $32 order discount, 8% tax on $288 = $23.04 -> total $311.04
-        order(1, 1, [(11, 1, 'RSCP-PRI-0000-0001', 'Laptop A', 2, 150.0),
-                     (12, 3, 'RSCP-ASC-0000-0003', 'Cable C', 10, 2.0)], discount=32.0, tax_rate=0.08)
-        order(2, 1, [(21, 1, 'RSCP-PRI-0000-0001', 'Laptop A', 1, 150.0),
-                     (22, 2, 'RSCP-SEC-0000-0002', 'Server B', 1, 400.0)])
-        order(3, 1, [(31, None, 'CUSTOM-1', 'Mystery Box', 1, 50.0)])
-        order(4, 1, [(41, 999, 'RSCP-PRI-0000-0999', 'Old Thing', 1, 30.0)])   # inventory item since deleted
-        order(5, 4, [(51, 1, 'RSCP-PRI-0000-0001', 'Laptop A', 1, 150.0)])      # previous period
-        order(6, 10, [(61, 3, 'RSCP-ASC-0000-0003', 'Cable C', 99, 2.0)])       # outside both periods
+        order(1, 1, [(11, 1, 'RSCP-PRI-0000-0001', 'Laptop A', 2, 15000),
+                     (12, 3, 'RSCP-ASC-0000-0003', 'Cable C', 10, 200)], discount=3200, tax_rate=0.08)
+        order(2, 1, [(21, 1, 'RSCP-PRI-0000-0001', 'Laptop A', 1, 15000),
+                     (22, 2, 'RSCP-SEC-0000-0002', 'Server B', 1, 40000)])
+        order(3, 1, [(31, None, 'CUSTOM-1', 'Mystery Box', 1, 5000)])
+        # an inventory item deleted before foreign keys were enforced: schema
+        # v16 cleared the dangling id, the line keeps its (non-CUSTOM) sku
+        order(4, 1, [(41, None, 'RSCP-PRI-0000-0999', 'Old Thing', 1, 3000)])
+        order(5, 4, [(51, 1, 'RSCP-PRI-0000-0001', 'Laptop A', 1, 15000)])      # previous period
+        order(6, 10, [(61, 3, 'RSCP-ASC-0000-0003', 'Cable C', 99, 200)])       # outside both periods
 
-        conn.execute('''INSERT INTO pos_refunds (id, order_id, refund_type, amount, reason, manager_id)
-                        VALUES (1, 2, 'partial', 150.0, 'defective', 1)''')
-        conn.execute('INSERT INTO pos_refund_items (refund_id, order_item_id, quantity, amount) VALUES (1, 21, 1, 150.0)')
+        conn.execute('''INSERT INTO pos_refunds (id, order_id, refund_type, amount_cents, reason, manager_id)
+                        VALUES (1, 2, 'partial', 15000, 'defective', 1)''')
+        conn.execute('INSERT INTO pos_refund_items (refund_id, order_item_id, quantity, amount_cents) '
+                     'VALUES (1, 21, 1, 15000)')
         conn.commit()
         conn.close()
 
@@ -117,24 +121,25 @@ def test_metrics(app):
     a = by_name['Laptop A']
     assert (a['qty_sold'], a['refunded_qty'], a['net_qty']) == (3, 1, 2)
     # Order 1's 10% discount is spread over its lines: $300 list -> $270 charged; order 2 adds $150; refund -$150
-    assert a['list_revenue'] == 450 and a['gross_revenue'] == pytest.approx(420) and a['discounts'] == pytest.approx(30)
-    assert a['net_revenue'] == pytest.approx(270) and a['profit'] == pytest.approx(70)
+    assert a['list_revenue_cents'] == 45000 and a['gross_revenue_cents'] == pytest.approx(42000)
+    assert a['discounts_cents'] == pytest.approx(3000)
+    assert a['net_revenue_cents'] == pytest.approx(27000) and a['profit_cents'] == pytest.approx(7000)
     assert round(a['margin'], 1) == 25.9
     assert a['orders'] == 2 and a['prev_qty'] == 1 and a['qty_change_pct'] == 100
     assert a['category_name'] == 'Primary' and a['location'] == 'Retail › Laptops'
     assert a['days_cover'] == pytest.approx(5 / (2 / 3))
 
     assert by_name['Cable C']['location'] == 'Build'            # literal 'None' aisle is treated as blank
-    assert by_name['Cable C']['net_revenue'] == pytest.approx(18)
-    assert by_name['Old Thing']['kind'] == 'deleted' and by_name['Old Thing']['profit'] is None
+    assert by_name['Cable C']['net_revenue_cents'] == pytest.approx(1800)
+    assert by_name['Old Thing']['kind'] == 'deleted' and by_name['Old Thing']['profit_cents'] is None
     assert by_name['Mystery Box']['kind'] == 'custom'
 
     s = data['summary']
     assert s['net_units'] == 15 and s['orders'] == 4
-    assert s['discounts'] == pytest.approx(32) and s['tax'] == pytest.approx(23.04)
-    assert s['total_incl_tax'] == pytest.approx(311.04 + 550 + 50 + 30)
-    assert s['net_revenue'] == pytest.approx(918 - 150)
-    assert s['profit'] == pytest.approx(70 + 200 + 8) and s['uncosted_items'] == 2
+    assert s['discounts_cents'] == pytest.approx(3200) and s['tax_cents'] == pytest.approx(2304)
+    assert s['total_incl_tax_cents'] == pytest.approx(31104 + 55000 + 5000 + 3000)
+    assert s['net_revenue_cents'] == pytest.approx(91800 - 15000)
+    assert s['profit_cents'] == pytest.approx(7000 + 20000 + 800) and s['uncosted_items'] == 2
     assert s['prev_units'] == 1 and s['range_days'] == 3
     assert [i['name'] for i in data['items']][:2] == ['Cable C', 'Laptop A']   # sorted by net qty
 
@@ -146,14 +151,14 @@ def test_totals_match_custom_report(app):
         top = generate_top_sellers_data(START, TODAY, {})
         custom = generate_custom_report_data(START, TODAY)
     s, c = top['summary'], custom['summary']
-    assert s['total_incl_tax'] == pytest.approx(c['gross_sales'])                    # "Overall Total"
-    assert s['gross_revenue'] == pytest.approx(c['gross_sales'] - c['total_tax'])    # "Sales (ex. tax)"
-    assert s['tax'] == pytest.approx(c['total_tax'])
+    assert s['total_incl_tax_cents'] == pytest.approx(c['gross_sales_cents'])            # "Overall Total"
+    assert s['gross_revenue_cents'] == pytest.approx(c['gross_sales_cents'] - c['total_tax_cents'])
+    assert s['tax_cents'] == pytest.approx(c['total_tax_cents'])
     assert s['orders'] == c['total_orders']
     # The Custom Report's item table shows the same rows and figures
-    expected = sorted(((i['name'], i['net_qty'], round(i['net_revenue'], 2)) for i in top['items']),
+    expected = sorted(((i['name'], i['net_qty'], round(i['net_revenue_cents'])) for i in top['items']),
                       key=lambda t: -t[2])[:10]
-    assert [(i['name'], i['qty'], round(i['total'], 2)) for i in custom['top_items']] == expected
+    assert [(i['name'], i['qty'], round(i['total_cents'])) for i in custom['top_items']] == expected
 
 
 def test_default_page(client):

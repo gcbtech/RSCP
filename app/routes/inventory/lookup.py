@@ -10,6 +10,7 @@ from flask_login import login_required
 
 from app.routes.inventory import inventory_bp
 from app.services.db import get_db_connection
+from app.services import money
 from app.routes.inventory.core import get_inventory_item
 
 logger = logging.getLogger(__name__)
@@ -55,9 +56,9 @@ def lookup_search():
                 'name': item.get('name', ''),
                 'sku': item.get('sku', ''),
                 'image_url': item.get('image_url', ''),
-                'sell_price': item.get('current_price') or item.get('sell_price'),
+                'sell_price': money.to_dollars(item.get('current_price_cents') or item.get('sell_price_cents')),
                 'is_on_sale': item.get('is_on_sale', False),
-                'regular_price': item.get('regular_price') or item.get('sell_price'),
+                'regular_price': money.to_dollars(item.get('regular_price_cents') or item.get('sell_price_cents')),
                 'upc': secondary_ids.get('upc', ''),
                 'part_number': secondary_ids.get('part_number', ''),
                 'quantity': item.get('quantity', 0),
@@ -85,8 +86,8 @@ def lookup_search():
         where_clause = ' AND '.join(conditions)
 
         results = conn.execute(f'''
-            SELECT id, sku, name, image_url, sell_price, secondary_ids,
-                   sale_enabled, sale_price, sale_start, sale_end,
+            SELECT id, sku, name, image_url, sell_price_cents, secondary_ids,
+                   sale_enabled, sale_price_cents, sale_start, sale_end,
                    quantity, alert_threshold, location_area, location_aisle, location_shelf, location_bin
             FROM inventory_items
             WHERE COALESCE(is_legacy, 0) = 0
@@ -109,9 +110,9 @@ def lookup_search():
                     pass
 
                 # Sale logic
-                current_price = row_dict.get('sell_price')
+                current_price = row_dict.get('sell_price_cents')
                 is_on_sale = False
-                if row_dict.get('sale_enabled') and row_dict.get('sale_price'):
+                if row_dict.get('sale_enabled') and row_dict.get('sale_price_cents'):
                     try:
                         start_valid = True
                         end_valid = True
@@ -124,7 +125,7 @@ def lookup_search():
                             if now > end_dt:
                                 end_valid = False
                         if start_valid and end_valid:
-                            current_price = row_dict['sale_price']
+                            current_price = row_dict['sale_price_cents']
                             is_on_sale = True
                     except (ValueError, TypeError):
                         pass
@@ -139,9 +140,9 @@ def lookup_search():
                     'name': row_dict.get('name', ''),
                     'sku': row_dict.get('sku', ''),
                     'image_url': row_dict.get('image_url', ''),
-                    'sell_price': current_price,
+                    'sell_price': money.to_dollars(current_price),
                     'is_on_sale': is_on_sale,
-                    'regular_price': row_dict.get('sell_price'),
+                    'regular_price': money.to_dollars(row_dict.get('sell_price_cents')),
                     'upc': secondary_ids.get('upc', ''),
                     'part_number': secondary_ids.get('part_number', ''),
                     'quantity': row_dict.get('quantity', 0),

@@ -49,9 +49,9 @@ def app():
         
         # 2. Inventory Item
         conn.execute('''
-            INSERT INTO inventory_items (id, sku, name, sell_price, quantity)
+            INSERT INTO inventory_items (id, sku, name, sell_price_cents, quantity)
             VALUES (?, ?, ?, ?, ?)
-        ''', (1, 'TEST1', 'Test Item 1', 10.0, 5))
+        ''', (1, 'TEST1', 'Test Item 1', 1000, 5))
         
         conn.commit()
         conn.close()

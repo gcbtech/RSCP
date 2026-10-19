@@ -1,30 +1,30 @@
 """
 POS payments ledger and cash drawer sessions.
 
-pos_payments holds one row per tender on a sale:
-  amount        what that tender paid toward the sale (sums to the order total)
-  tendered      cash handed over (cash rows only)
-  change_given  cash handed back (cash rows only)
+pos_payments holds one row per tender on a sale (all integer cents):
+  amount_cents        what that tender paid toward the sale (sums to the order total)
+  tendered_cents      cash handed over (cash rows only)
+  change_given_cents  cash handed back (cash rows only)
 
 pos_orders.payment_details (JSON) is still written for compatibility, but
-reports, receipts and drawer counts read the ledger.
+reports, receipts and drawer counts read the ledger. Its money keys are
+cents too: tendered_cents, change_cents, cash_discount_cents, cash_cents,
+cards_cents, total_tendered_cents (schema v15 converted older rows).
 """
 import json
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_HALF_UP
 
 REFUND_METHODS = {'cash': 'Cash', 'card': 'Card'}
 
 
-def money(value, default=0.0):
-    """Round half-up to cents; `default` for anything that is not a finite number."""
+def cents(value, default=0):
+    """An int of cents from a stored cents value; `default` for anything else."""
+    if value is None or isinstance(value, bool):
+        return default
     try:
-        d = Decimal(str(value))
-    except Exception:
+        return int(value)
+    except (TypeError, ValueError):
         return default
-    if not d.is_finite():
-        return default
-    return float(d.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
 
 
 def utc_now_str():
@@ -40,7 +40,7 @@ def parse_details(raw):
 
 
 def allocate_payments(method, details, total):
-    """Ledger rows [(method, amount, tendered, change_given)] for a sale.
+    """Ledger rows [(method, amount, tendered, change_given)] in cents for a sale.
 
     cash  -> one cash row for the total; tendered/change as recorded
     split -> card rows as given (capped at what is left of the total), then
@@ -49,29 +49,29 @@ def allocate_payments(method, details, total):
     other -> one row of that method for the total
     """
     details = details if isinstance(details, dict) else {}
-    total = money(total)
+    total = cents(total)
     if method == 'cash':
-        tendered = money(details.get('tendered'), None)
+        tendered = cents(details.get('tendered_cents'), None)
         if tendered is None or tendered < total:
             tendered = total
-        return [('cash', total, tendered, money(tendered - total))]
+        return [('cash', total, tendered, tendered - total)]
     if method == 'split':
         rows = []
         remaining = total
-        cards = details.get('cards')
+        cards = details.get('cards_cents')
         for c in (cards if isinstance(cards, list) else []):
-            c = money(c, None)
+            c = cents(c, None)
             if c is None or c <= 0:
                 continue
             applied = min(c, remaining)
-            rows.append(('card', applied, None, 0.0))
-            remaining = money(remaining - applied)
-        handed = max(money(details.get('cash', 0)), 0.0)
+            rows.append(('card', applied, None, 0))
+            remaining -= applied
+        handed = max(cents(details.get('cash_cents', 0)), 0)
         if remaining > 0 or handed > 0:
             tendered = max(handed, remaining)
-            rows.append(('cash', remaining, tendered, money(tendered - remaining)))
+            rows.append(('cash', remaining, tendered, tendered - remaining))
         return rows
-    return [(method or 'card', total, None, 0.0)]
+    return [(method or 'card', total, None, 0)]
 
 
 def write_payments(conn, order_id, rows, created_at=None):
@@ -80,26 +80,27 @@ def write_payments(conn, order_id, rows, created_at=None):
         row = conn.execute('SELECT created_at FROM pos_orders WHERE id = ?', (order_id,)).fetchone()
         created_at = row[0] if row and row[0] else utc_now_str()
     for method, amount, tendered, change in rows:
-        conn.execute('''INSERT INTO pos_payments (order_id, method, amount, tendered, change_given, created_at)
+        conn.execute('''INSERT INTO pos_payments (order_id, method, amount_cents, tendered_cents,
+                                                  change_given_cents, created_at)
                         VALUES (?, ?, ?, ?, ?, ?)''', (order_id, method, amount, tendered, change, created_at))
 
 
 def rebuild_order_payments(conn, order_id):
     """Re-derive an order's ledger rows from its current total (after a sale edit)."""
-    order = conn.execute('SELECT payment_method, payment_details, total, created_at FROM pos_orders WHERE id = ?',
-                         (order_id,)).fetchone()
+    order = conn.execute('SELECT payment_method, payment_details, total_cents, created_at '
+                         'FROM pos_orders WHERE id = ?', (order_id,)).fetchone()
     if not order:
         return
-    existing = conn.execute('SELECT method, amount, tendered FROM pos_payments WHERE order_id = ? ORDER BY id',
-                            (order_id,)).fetchall()
+    existing = conn.execute('SELECT method, amount_cents, tendered_cents FROM pos_payments '
+                            'WHERE order_id = ? ORDER BY id', (order_id,)).fetchall()
     details = parse_details(order[1])
     if existing and order[0] == 'split':
         # Keep the card amounts actually charged; cash covers the rest
         details = dict(details)
-        details['cards'] = [r[1] for r in existing if r[0] == 'card']
+        details['cards_cents'] = [r[1] for r in existing if r[0] == 'card']
         cash = [r[2] for r in existing if r[0] == 'cash']
         if cash:
-            details['cash'] = cash[0] or 0
+            details['cash_cents'] = cash[0] or 0
     conn.execute('DELETE FROM pos_payments WHERE order_id = ?', (order_id,))
     write_payments(conn, order_id, allocate_payments(order[0], details, order[2]), created_at=order[3])
 
@@ -107,7 +108,8 @@ def rebuild_order_payments(conn, order_id):
 def order_payments(conn, order_id):
     """Ledger rows for an order, as dicts (receipts)."""
     return [dict(r) for r in conn.execute(
-        'SELECT method, amount, tendered, change_given FROM pos_payments WHERE order_id = ? ORDER BY id',
+        'SELECT method, amount_cents, tendered_cents, change_given_cents FROM pos_payments '
+        'WHERE order_id = ? ORDER BY id',
         (order_id,)).fetchall()]
 
 
@@ -131,51 +133,51 @@ def get_open_session(conn, register_id=None):
 
 
 def cash_movements(conn, start_utc, end_utc):
-    """(cash applied to sales, cash refunded) between two UTC timestamps (inclusive)."""
+    """(cash applied to sales, cash refunded) in cents between two UTC timestamps (inclusive)."""
     cash_in = conn.execute('''
-        SELECT COALESCE(SUM(p.amount), 0) FROM pos_payments p
+        SELECT COALESCE(SUM(p.amount_cents), 0) FROM pos_payments p
         JOIN pos_orders o ON o.id = p.order_id
         WHERE p.method = 'cash' AND o.status != 'held' AND o.created_at BETWEEN ? AND ?
     ''', (start_utc, end_utc)).fetchone()[0]
     cash_out = conn.execute('''
-        SELECT COALESCE(SUM(r.amount), 0) FROM pos_refunds r
+        SELECT COALESCE(SUM(r.amount_cents), 0) FROM pos_refunds r
         LEFT JOIN pos_orders o ON o.id = r.order_id
         WHERE COALESCE(r.refund_method, CASE WHEN o.payment_method = 'card' THEN 'card' ELSE 'cash' END) = 'cash'
           AND r.created_at BETWEEN ? AND ?
     ''', (start_utc, end_utc)).fetchone()[0]
-    return money(cash_in), money(cash_out)
+    return int(cash_in), int(cash_out)
 
 
 def session_figures(conn, drawer_session):
     """Expected cash for a drawer session (live while it is open).
 
     expected = opening float + cash applied to sales - cash refunds, over the
-    session's window. over_short = counted - expected once counted.
+    session's window. over_short = counted - expected once counted. All cents.
     """
     s = dict(drawer_session)
     end = s['closed_at'] or utc_now_str()
     cash_in, cash_out = cash_movements(conn, s['opened_at'], end)
-    expected = money((s['opening_float'] or 0) + cash_in - cash_out)
-    s['cash_sales'] = cash_in
-    s['cash_refunds'] = cash_out
+    expected = (s['opening_float_cents'] or 0) + cash_in - cash_out
+    s['cash_sales_cents'] = cash_in
+    s['cash_refunds_cents'] = cash_out
     s['is_open'] = s['closed_at'] is None
     if s['is_open']:
-        s['expected_cash'] = expected
+        s['expected_cash_cents'] = expected
     return s
 
 
-def open_session(conn, user_id, opening_float, register_id=None, notes=''):
+def open_session(conn, user_id, opening_float_cents, register_id=None, notes=''):
     """Open a drawer session. Returns its id, or None if one is already open."""
     if get_open_session(conn, register_id) is not None:
         return None
-    cur = conn.execute('''INSERT INTO drawer_sessions (register_id, opened_at, opened_by, opening_float, notes)
+    cur = conn.execute('''INSERT INTO drawer_sessions (register_id, opened_at, opened_by, opening_float_cents, notes)
                           VALUES (?, ?, ?, ?, ?)''',
-                       (register_id, utc_now_str(), user_id, money(opening_float), notes or None))
+                       (register_id, utc_now_str(), user_id, cents(opening_float_cents), notes or None))
     return cur.lastrowid
 
 
-def close_session(conn, session_id, user_id, counted_cash, notes=''):
-    """Close an open session: store expected, counted and over/short. Returns the figures."""
+def close_session(conn, session_id, user_id, counted_cash_cents, notes=''):
+    """Close an open session: store expected, counted and over/short (cents). Returns the figures."""
     row = conn.execute('SELECT * FROM drawer_sessions WHERE id = ? AND closed_at IS NULL',
                        (session_id,)).fetchone()
     if row is None:
@@ -184,15 +186,16 @@ def close_session(conn, session_id, user_id, counted_cash, notes=''):
     s = dict(row)
     s['closed_at'] = closed_at
     cash_in, cash_out = cash_movements(conn, s['opened_at'], closed_at)
-    expected = money((s['opening_float'] or 0) + cash_in - cash_out)
-    counted = money(counted_cash)
-    over_short = money(counted - expected)
+    expected = (s['opening_float_cents'] or 0) + cash_in - cash_out
+    counted = cents(counted_cash_cents)
+    over_short = counted - expected
     combined_notes = '\n'.join(n for n in (s.get('notes'), notes) if n) or None
     conn.execute('''UPDATE drawer_sessions
-                    SET closed_at = ?, closed_by = ?, counted_cash = ?, expected_cash = ?, over_short = ?, notes = ?
+                    SET closed_at = ?, closed_by = ?, counted_cash_cents = ?, expected_cash_cents = ?,
+                        over_short_cents = ?, notes = ?
                     WHERE id = ?''', (closed_at, user_id, counted, expected, over_short, combined_notes, session_id))
-    return {'expected_cash': expected, 'counted_cash': counted, 'over_short': over_short,
-            'cash_sales': cash_in, 'cash_refunds': cash_out}
+    return {'expected_cash_cents': expected, 'counted_cash_cents': counted, 'over_short_cents': over_short,
+            'cash_sales_cents': cash_in, 'cash_refunds_cents': cash_out}
 
 
 def sessions_between(conn, start_utc, end_utc):

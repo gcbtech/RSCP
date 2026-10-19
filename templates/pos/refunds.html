@@ -148,7 +148,7 @@
                     {% endif %}
                 </div>
                 <div class="text-end">
-                    <div class="fw-bold">${{ "%.2f"|format(order.total) }}</div>
+                    <div class="fw-bold">${{ order.total_cents|dollars }}</div>
                     <small class="text-muted">{{ order.created_at | local_time }} • {{ order.operator_name }}</small>
                 </div>
                 <a href="{{ url_for('pos.refund_order', order_number=order.order_number) }}"

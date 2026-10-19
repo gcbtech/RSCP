@@ -28,10 +28,12 @@
                 <span class="badge bg-danger ms-2">SALE</span>
                 {% endif %}
             </div>
-            {% if item.discount_amount %}
-            <small class="text-warning">-${{ "%.2f"|format(item.discount_amount) }} off</small>
+            {% if item.discount_type == 'percent' and item.discount_percent %}
+            <small class="text-warning">-${{ "%.2f"|format(item.discount_percent) }} off</small>
+            {% elif item.discount_type == 'fixed' and item.discount_cents %}
+            <small class="text-warning">-${{ item.discount_cents|dollars }} off</small>
             {% endif %}
-            {% if not item.sell_price or item.sell_price <= 0 %} <small class="text-danger fw-bold">⚠️ No
+            {% if not item.sell_price_cents or item.sell_price_cents <= 0 %} <small class="text-danger fw-bold">⚠️ No
                 price set!</small>
                 {% endif %}
                 {% if item.stock_quantity is defined and item.quantity > item.stock_quantity %}
@@ -50,13 +52,13 @@
             </form>
         </div>
         <div
-            class="cart-item-price {% if not item.sell_price or item.sell_price <= 0 %}text-danger{% endif %}">
+            class="cart-item-price {% if not item.sell_price_cents or item.sell_price_cents <= 0 %}text-danger{% endif %}">
             {% if item.is_on_sale %}
             <small class="text-muted text-decoration-line-through d-block" style="font-size: 0.8rem;">
-                ${{ "%.2f"|format(item.regular_price * item.quantity) }}
+                ${{ (item.regular_price_cents * item.quantity)|dollars }}
             </small>
             {% endif %}
-            ${{ "%.2f"|format(item.line_total) }}
+            ${{ item.line_total_cents|dollars }}
         </div>
         <form action="{{ url_for('pos.cart_remove', line_id=item.line_id) }}" method="POST" class="d-inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
@@ -78,27 +80,27 @@
 <div class="totals">
     <div class="totals-row">
         <span>Subtotal</span>
-        <span>${{ "%.2f"|format(subtotal) }}</span>
+        <span>${{ subtotal_cents|dollars }}</span>
     </div>
-    {% if order_discount > 0 %}
+    {% if order_discount_cents > 0 %}
     <div class="totals-row text-warning">
         <span>Discount</span>
-        <span>-${{ "%.2f"|format(order_discount) }}</span>
+        <span>-${{ order_discount_cents|dollars }}</span>
     </div>
     {% endif %}
-    {% if cart.get('applied_coupon') and cart['applied_coupon'].get('discount', 0) > 0 %}
+    {% if cart.get('applied_coupon') and cart['applied_coupon'].get('discount_cents', 0) > 0 %}
     <div class="totals-row" style="color: #16a34a;">
         <span>🎟️ Coupon ({{ cart['applied_coupon']['code'] }})</span>
-        <span>-${{ "%.2f"|format(cart['applied_coupon']['discount']) }}</span>
+        <span>-${{ cart['applied_coupon']['discount_cents']|dollars }}</span>
     </div>
     {% endif %}
     <div class="totals-row">
         <span>Tax ({{ "%.2f"|format(tax_rate) }}%)</span>
-        <span>${{ "%.2f"|format(tax_amount) }}</span>
+        <span>${{ tax_amount_cents|dollars }}</span>
     </div>
     <div class="totals-row grand-total">
         <span>Total</span>
-        <span>${{ "%.2f"|format(total) }}</span>
+        <span>${{ total_cents|dollars }}</span>
     </div>
 </div>
 
@@ -113,7 +115,7 @@
         title="Print a preview / pick-list before completing the sale">Preview</a>
     <a href="{{ url_for('pos.checkout') }}"
         class="pos-btn pos-btn-success text-decoration-none text-center">
-        Checkout (${{ "%.2f"|format(total) }})
+        Checkout (${{ total_cents|dollars }})
     </a>
 </div>
 
@@ -133,7 +135,7 @@
                     <div class="row g-2">
                         <div class="col-4">
                             <input type="number" name="discount_amount" class="form-control" step="0.01"
-                                min="0" value="{{ cart['discount_amount'] or '' }}" placeholder="Amount">
+                                min="0" value="{% if cart['discount_type'] == 'percent' %}{{ cart['discount_percent'] or '' }}{% elif cart['discount_cents'] %}{{ cart['discount_cents']|dollar_number }}{% endif %}" placeholder="Amount">
                         </div>
                         <div class="col-3">
                             <select name="discount_type" class="form-select">
@@ -166,7 +168,7 @@
                 <div class="mt-2 text-center">
                     <span class="badge bg-success">
                         ✓ {{ cart['applied_coupon']['name'] }} (-${{
-                        "%.2f"|format(cart['applied_coupon']['discount']) }})
+                        cart['applied_coupon'].get('discount_cents', 0)|dollars }})
                     </span>
                     <button type="button" class="btn btn-sm btn-outline-danger ms-1"
                         data-action="removeCoupon">×</button>

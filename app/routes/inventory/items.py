@@ -14,7 +14,7 @@ from app.utils.permissions import require_permission
 
 from app.routes.inventory import inventory_bp, CATEGORY_CODES
 from app.routes.inventory.core import generate_sku, validate_location
-from app.services import inventory, item_images
+from app.services import inventory, item_images, money
 from app.services.db import get_db_connection
 from app.services.data_manager import load_config
 # Re-exported: other modules (system_migrations) and tests import these here.
@@ -49,10 +49,9 @@ def _bulk_edit_changes(form):
     for col in ('buy_price', 'sell_price'):
         val = form.get(col, '').strip()
         if val:
-            try:
-                changes[col] = float(val)
-            except ValueError:
-                pass
+            cents = money.parse(val)
+            if cents is not None:
+                changes[f'{col}_cents'] = cents
     keywords = form.get('keywords', '').strip()
     if keywords:
         changes['keywords'] = keywords
@@ -176,9 +175,14 @@ def _item_form(form):
 
 
 def _convert_numbers(f, form):
-    """Price / interval / threshold strings -> numbers (ValueError on junk)."""
-    f['buy_price'] = float(f['buy_price']) if f['buy_price'] else None
-    f['sell_price'] = float(f['sell_price']) if f['sell_price'] else None
+    """Price / interval / threshold strings -> numbers (ValueError on junk).
+    Prices become buy_price_cents / sell_price_cents."""
+    for col in ('buy_price', 'sell_price'):
+        raw = f[col]
+        cents = money.parse(raw) if raw else None
+        if raw and cents is None:
+            raise ValueError(f'invalid price {raw!r}')
+        f[f'{col}_cents'] = cents
     f['resupply_interval'] = int(f['resupply_interval']) if f['resupply_interval'] else None
     f['alert_threshold'] = int(form.get('alert_threshold', 0) or 0)
     return f
@@ -407,6 +411,8 @@ def delete_item(item_id):
     try:
         inventory.delete_item(conn, item_id)
         flash("Item deleted.")
+    except inventory.ItemHasSales as e:
+        flash(str(e), 'warning')
     except Exception as e:
         logger.error(f"Error deleting inventory item: {e}")
         flash(f"Error: {e}")
@@ -578,8 +584,8 @@ def export_inventory_csv():
             cat_code,
             item['quantity'],
             location,
-            item['buy_price'],
-            item['sell_price'],
+            money.to_dollars(item['buy_price_cents']),
+            money.to_dollars(item['sell_price_cents']),
             item['supplier']
         ])
         

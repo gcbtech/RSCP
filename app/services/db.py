@@ -36,6 +36,10 @@ def get_db_connection(path=None):
         
     conn = sqlite3.connect(path, timeout=10)
     conn.row_factory = sqlite3.Row
+    # Enforce the schema's REFERENCES clauses (SQLite leaves them off per
+    # connection unless asked). Every connection RSCP opens does this; only the
+    # schema migration runner turns it off, for its table rebuilds.
+    conn.execute('PRAGMA foreign_keys = ON')
     # Enable WAL mode for better concurrency (only needs to be set once per DB)
     # WAL mode doesn't work with :memory: databases
     if path != ':memory:':

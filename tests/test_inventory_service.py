@@ -164,14 +164,15 @@ def test_generate_sku_sequence(conn):
 
 
 def test_find_item_by_code_and_sale_pricing(conn):
-    _item(conn, sku='S1', upc='999', sell_price=10.0)
-    conn.execute("UPDATE inventory_items SET sale_enabled = 1, sale_price = 7.5, "
+    _item(conn, sku='S1', upc='999', sell_price_cents=1000)
+    conn.execute("UPDATE inventory_items SET sale_enabled = 1, sale_price_cents = 750, "
                  "sale_start = '2026-01-01T00:00', sale_end = '2026-01-31T23:59'")
     conn.commit()
     during = inv.find_item_by_code(conn, '999', now=datetime(2026, 1, 15))
-    assert during['sku'] == 'S1' and during['is_on_sale'] and during['current_price'] == 7.5
+    assert during['sku'] == 'S1' and during['is_on_sale'] and during['current_price_cents'] == 750
     after = inv.find_item_by_code(conn, 'S1', now=datetime(2026, 2, 1))
-    assert not after['is_on_sale'] and after['current_price'] == 10.0 and after['regular_price'] == 10.0
+    assert not after['is_on_sale'] and after['current_price_cents'] == 1000
+    assert after['regular_price_cents'] == 1000
     assert inv.find_item_by_code(conn, 'nope') is None
 
 
@@ -188,9 +189,9 @@ def test_toggle_legacy_and_delete(conn):
 
 def test_bulk_update_items(conn):
     a, b = _item(conn, sku='A'), _item(conn, sku='B')
-    assert inv.bulk_update_items(conn, [a, b], {'alert_threshold': 4, 'sell_price': 2.5}) == 2
-    rows = conn.execute('SELECT alert_enabled, alert_threshold, sell_price FROM inventory_items').fetchall()
-    assert [tuple(r) for r in rows] == [(1, 4, 2.5), (1, 4, 2.5)]
+    assert inv.bulk_update_items(conn, [a, b], {'alert_threshold': 4, 'sell_price_cents': 250}) == 2
+    rows = conn.execute('SELECT alert_enabled, alert_threshold, sell_price_cents FROM inventory_items').fetchall()
+    assert [tuple(r) for r in rows] == [(1, 4, 250), (1, 4, 250)]
     with pytest.raises(ValueError):
         inv.bulk_update_items(conn, [a], {'quantity': 100})
     assert inv.bulk_update_items(conn, [a], {}) == 0
@@ -230,7 +231,8 @@ def test_import_items(conn):
     assert (result.added, result.updated, result.skipped) == (1, 1, 1)
     assert len(result.errors) == 1 and result.errors[0].startswith('Row 5 Error')
     new = conn.execute("SELECT * FROM inventory_items WHERE sku = 'NEW-1'").fetchone()
-    assert new['quantity'] == 4 and new['buy_price'] == 1.5 and json.loads(new['secondary_ids']) == {'upc': '42'}
+    assert new['quantity'] == 4 and new['buy_price_cents'] == 150
+    assert json.loads(new['secondary_ids']) == {'upc': '42'}
     assert _ledger(conn, new['id']) == [(4, 'CSV Import', 'admin', None)]
     old = inv.get_item(conn, existing)
     assert old['name'] == 'Old Renamed' and old['quantity'] == 5

@@ -1274,6 +1274,747 @@ def _m12_drop_email_ingest_settings(conn):
         conn.execute("UPDATE settings_meta SET token = lower(hex(randomblob(16))) WHERE id = 1")
 
 
+# --- v15 / v16: money as integer cents, then enforced foreign keys -----------
+# Both are self-contained on purpose (frozen copies of the conversion rules):
+# later changes to app code must not change what these steps do.
+
+def _rebuild_table(conn, table, columns_sql, select_map, drop=(), tag='v15'):
+    """The SQLite "12-step" table rebuild (https://www.sqlite.org/lang_altertable.html
+    #otheralter), steps 3-8; the runner keeps foreign_keys OFF and the
+    transaction open, and migration 16 runs PRAGMA foreign_key_check.
+
+    columns_sql  the new table's column and constraint definitions
+    select_map   {new column: SQL expression over the old table's columns}
+                 for columns that are not copied as-is by name
+    drop         old columns intentionally not copied (replaced via select_map)
+
+    The table keeps its name, every row keeps its id/rowid, indexes and
+    triggers are re-created from their stored SQL, and the AUTOINCREMENT
+    high-water mark is kept. The old table is never renamed (that would
+    rewrite REFERENCES in other tables); the new one is renamed into place.
+    A column this code does not know about (added by hand, or by a version
+    that never shipped here) is carried over as it is, with a warning, so no
+    data is lost. An index that cannot be re-created (it named a replaced
+    column) is skipped with a warning; a trigger that cannot is an error.
+    """
+    tmp = f'{table}__{tag}'
+    old_info = conn.execute(f'PRAGMA table_info("{table}")').fetchall()   # cid,name,type,notnull,dflt,pk
+    old_cols = [r[1] for r in old_info]
+    if not old_cols:
+        return False
+    conn.execute(f'DROP TABLE IF EXISTS "{tmp}"')
+    conn.execute(f'CREATE TABLE "{tmp}" ({columns_sql})')
+    new_cols = [r[1] for r in conn.execute(f'PRAGMA table_info("{tmp}")').fetchall()]
+    unknown = [r for r in old_info if r[1] not in new_cols and r[1] not in drop]
+    if unknown:
+        logger.warning(f"[Schema {tag}] {table}: keeping unexpected column(s) "
+                       f"{[r[1] for r in unknown]} as they are")
+        for _cid, name, ctype, _notnull, dflt, _pk in unknown:
+            conn.execute(f'ALTER TABLE "{tmp}" ADD COLUMN "{name}" {ctype or ""}'
+                         + (f' DEFAULT {dflt}' if dflt is not None else ''))
+            new_cols.append(name)
+    targets, exprs = [], []
+    for col in new_cols:
+        if col in select_map:
+            targets.append(f'"{col}"')
+            exprs.append(select_map[col])
+        elif col in old_cols:
+            targets.append(f'"{col}"')
+            exprs.append(f'"{col}"')
+    extras = [r[0] for r in conn.execute(
+        "SELECT sql FROM sqlite_master WHERE tbl_name = ? AND type IN ('index', 'trigger') "
+        "AND sql IS NOT NULL", (table,)).fetchall()]
+    seq = None
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'").fetchone():
+        seq = conn.execute('SELECT seq FROM sqlite_sequence WHERE name = ?', (table,)).fetchone()
+    conn.execute(f'INSERT INTO "{tmp}" ({", ".join(targets)}) SELECT {", ".join(exprs)} FROM "{table}"')
+    conn.execute(f'DROP TABLE "{table}"')
+    conn.execute(f'ALTER TABLE "{tmp}" RENAME TO "{table}"')
+    for sql in extras:
+        try:
+            conn.execute(sql)
+        except sqlite3.OperationalError as e:
+            if not sql.lstrip().upper().startswith(('CREATE INDEX', 'CREATE UNIQUE INDEX')):
+                raise
+            logger.warning(f"[Schema {tag}] {table}: index not re-created ({e}): {sql}")
+    if seq:
+        conn.execute('DELETE FROM sqlite_sequence WHERE name = ?', (table,))
+        conn.execute(f'INSERT INTO sqlite_sequence (name, seq) VALUES (?, MAX(?, (SELECT COALESCE(MAX(rowid), 0) '
+                     f'FROM "{table}")))', (table, seq[0]))
+    return True
+
+
+def _m15_cents(value):
+    """Stored dollars (REAL, int or text) -> int cents, half-up; None for NULL,
+    blank or junk. Decimal(str(x)) so 19.995 -> 2000 and 0.1+0.2 -> 30."""
+    from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        d = Decimal(str(value).strip().replace('$', '').replace(',', ''))
+    except (InvalidOperation, ValueError):
+        return None
+    if not d.is_finite():
+        return None
+    return int(d.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP) * 100)
+
+
+def _m15_cart(cart):
+    """A cart dict saved in dollars -> cents (same rules as
+    pos_pricing.upgrade_legacy_cart, frozen here). Returns True if changed."""
+    if not isinstance(cart, dict):
+        return False
+    changed = False
+
+    def discount(d):
+        raw = d.pop('discount_amount', 0)
+        dtype = d.get('discount_type')
+        d['discount_percent'] = 0
+        d['discount_cents'] = 0
+        if not dtype or not raw:
+            d['discount_type'] = None
+            return
+        if dtype == 'percent':
+            try:
+                d['discount_percent'] = float(raw)
+            except (TypeError, ValueError):
+                d['discount_type'] = None
+        else:
+            d['discount_type'] = 'fixed'
+            d['discount_cents'] = _m15_cents(raw) or 0
+
+    for item in cart.get('items') or []:
+        if not isinstance(item, dict):
+            continue
+        for key in ('unit_price', 'regular_price', 'sell_price', 'line_total'):
+            if key in item:
+                value = item.pop(key)
+                if f'{key}_cents' not in item:
+                    cents = _m15_cents(value)
+                    if cents is None and key in ('unit_price', 'line_total'):
+                        cents = 0
+                    item[f'{key}_cents'] = cents
+                changed = True
+        if 'discount_amount' in item:
+            discount(item)
+            changed = True
+    if 'discount_amount' in cart:
+        discount(cart)
+        changed = True
+    coupon = cart.get('applied_coupon')
+    if isinstance(coupon, dict) and 'discount' in coupon:
+        coupon.setdefault('discount_cents', _m15_cents(coupon.pop('discount')) or 0)
+        changed = True
+    return changed
+
+
+# payment_details JSON keys that held dollars
+_M15_DETAIL_KEYS = ('tendered', 'change', 'cash_discount', 'cash', 'total_tendered')
+
+_M15_TABLES = {
+    'inventory_items': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        sku TEXT UNIQUE NOT NULL,
+        name TEXT NOT NULL,
+        quantity INTEGER DEFAULT 0,
+        location_area TEXT,
+        location_aisle TEXT,
+        location_shelf TEXT,
+        location_bin TEXT,
+        asin TEXT,
+        image_url TEXT,
+        source_url TEXT,
+        buy_price_cents INTEGER,
+        sell_price_cents INTEGER,
+        supplier TEXT,
+        first_stock_date TEXT,
+        resupply_interval INTEGER,
+        keywords TEXT,
+        secondary_ids TEXT,
+        description TEXT,
+        notes TEXT,
+        addon_1 BOOLEAN DEFAULT 0,
+        addon_2 BOOLEAN DEFAULT 0,
+        alert_enabled BOOLEAN DEFAULT 0,
+        alert_threshold INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        additional_images TEXT,
+        sale_price_cents INTEGER DEFAULT 0,
+        sale_start TEXT,
+        sale_end TEXT,
+        sale_enabled BOOLEAN DEFAULT 0,
+        sale_end_on_stock BOOLEAN DEFAULT 0,
+        is_legacy BOOLEAN DEFAULT 0,
+        attention_snoozed_until TEXT
+    ''', {
+        'buy_price_cents': 'rscp_cents(buy_price)',
+        'sell_price_cents': 'rscp_cents(sell_price)',
+        'sale_price_cents': 'rscp_cents(sale_price)',
+    }, ('buy_price', 'sell_price', 'sale_price')),
+
+    # Sales tables: ON DELETE RESTRICT everywhere (a sale and everything
+    # hanging off it is never removed by a cascade). Columns pointing at a
+    # parent are nullable so migration 16 can detach orphans instead of
+    # deleting financial rows.
+    'pos_orders': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_number TEXT UNIQUE NOT NULL,
+        status TEXT DEFAULT 'completed',
+        subtotal_cents INTEGER NOT NULL,
+        tax_rate REAL NOT NULL,
+        tax_amount_cents INTEGER NOT NULL,
+        discount_amount_cents INTEGER DEFAULT 0,
+        discount_type TEXT,
+        discount_reason TEXT,
+        total_cents INTEGER NOT NULL,
+        payment_method TEXT NOT NULL,
+        payment_details TEXT,
+        operator_id INTEGER REFERENCES users(id) ON DELETE RESTRICT,
+        terminal_id TEXT DEFAULT 'POS-1',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        checkout_token TEXT,
+        cash_discount_cents INTEGER DEFAULT 0
+    ''', {
+        'subtotal_cents': 'COALESCE(rscp_cents(subtotal), 0)',
+        'tax_rate': 'COALESCE(tax_rate, 0)',
+        'tax_amount_cents': 'COALESCE(rscp_cents(tax_amount), 0)',
+        'discount_amount_cents': 'COALESCE(rscp_cents(discount_amount), 0)',
+        'total_cents': 'COALESCE(rscp_cents(total), 0)',
+        'cash_discount_cents': 'COALESCE(rscp_cents(cash_discount), 0)',
+    }, ('subtotal', 'tax_amount', 'discount_amount', 'total', 'cash_discount')),
+
+    # discount_amount held the line discount AS ENTERED: a percent when
+    # discount_type was 'percent', else dollars. It is split in two.
+    'pos_order_items': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER REFERENCES pos_orders(id) ON DELETE RESTRICT,
+        inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE RESTRICT,
+        sku TEXT NOT NULL,
+        name TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        unit_price_cents INTEGER NOT NULL,
+        discount_type TEXT,
+        discount_percent REAL DEFAULT 0,
+        discount_cents INTEGER DEFAULT 0,
+        line_total_cents INTEGER NOT NULL
+    ''', {
+        'unit_price_cents': 'COALESCE(rscp_cents(unit_price), 0)',
+        'discount_type': ("CASE WHEN discount_type IS NULL OR discount_type = '' THEN NULL "
+                          "WHEN discount_type = 'percent' THEN 'percent' ELSE 'fixed' END"),
+        'discount_percent': ("CASE WHEN discount_type = 'percent' THEN COALESCE(CAST(discount_amount AS REAL), 0) "
+                             "ELSE 0 END"),
+        'discount_cents': ("CASE WHEN discount_type IS NOT NULL AND discount_type NOT IN ('', 'percent') "
+                           "THEN COALESCE(rscp_cents(discount_amount), 0) ELSE 0 END"),
+        'line_total_cents': 'COALESCE(rscp_cents(line_total), 0)',
+    }, ('unit_price', 'discount_amount', 'line_total')),
+
+    'pos_refunds': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER REFERENCES pos_orders(id) ON DELETE RESTRICT,
+        refund_type TEXT NOT NULL,
+        amount_cents INTEGER NOT NULL,
+        reason TEXT NOT NULL,
+        reason_notes TEXT,
+        items_restocked INTEGER DEFAULT 0,
+        items_damaged INTEGER DEFAULT 0,
+        manager_id INTEGER REFERENCES users(id) ON DELETE RESTRICT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        refund_method TEXT,
+        tax_refunded_cents INTEGER
+    ''', {
+        'amount_cents': 'COALESCE(rscp_cents(amount), 0)',
+        'tax_refunded_cents': 'rscp_cents(tax_refunded)',
+    }, ('amount', 'tax_refunded')),
+
+    'pos_refund_items': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        refund_id INTEGER REFERENCES pos_refunds(id) ON DELETE RESTRICT,
+        order_item_id INTEGER REFERENCES pos_order_items(id) ON DELETE RESTRICT,
+        quantity INTEGER NOT NULL,
+        amount_cents INTEGER NOT NULL,
+        restock_action TEXT DEFAULT 'none'
+    ''', {
+        'amount_cents': 'COALESCE(rscp_cents(amount), 0)',
+    }, ('amount',)),
+
+    # discount_value was dollars for the *_dollar types and a percent for the
+    # rest: split in two.
+    'pos_coupons': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        code TEXT UNIQUE NOT NULL,
+        coupon_type TEXT NOT NULL,
+        discount_type TEXT NOT NULL,
+        discount_cents INTEGER,
+        discount_percent REAL,
+        buy_quantity INTEGER DEFAULT 1,
+        get_quantity INTEGER DEFAULT 1,
+        reward_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL,
+        min_purchase_cents INTEGER,
+        max_uses INTEGER,
+        current_uses INTEGER DEFAULT 0,
+        start_date TEXT,
+        end_date TEXT,
+        cannot_combine BOOLEAN DEFAULT 0,
+        active BOOLEAN DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL
+    ''', {
+        'discount_cents': ("CASE WHEN discount_type IN ('order_dollar', 'item_dollar') "
+                           "THEN COALESCE(rscp_cents(discount_value), 0) END"),
+        'discount_percent': ("CASE WHEN discount_type NOT IN ('order_dollar', 'item_dollar') "
+                             "THEN CAST(discount_value AS REAL) END"),
+        'min_purchase_cents': 'rscp_cents(min_purchase)',
+    }, ('discount_value', 'min_purchase')),
+
+    'pos_coupon_redemptions': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        coupon_id INTEGER REFERENCES pos_coupons(id) ON DELETE RESTRICT,
+        order_id INTEGER REFERENCES pos_orders(id) ON DELETE RESTRICT,
+        serial_used TEXT,
+        discount_applied_cents INTEGER,
+        redeemed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        redeemed_by INTEGER REFERENCES users(id) ON DELETE RESTRICT
+    ''', {
+        'discount_applied_cents': 'rscp_cents(discount_applied)',
+    }, ('discount_applied',)),
+
+    'pos_payments': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER REFERENCES pos_orders(id) ON DELETE RESTRICT,
+        method TEXT NOT NULL,
+        amount_cents INTEGER NOT NULL,
+        tendered_cents INTEGER,
+        change_given_cents INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ''', {
+        'amount_cents': 'COALESCE(rscp_cents(amount), 0)',
+        'tendered_cents': 'rscp_cents(tendered)',
+        'change_given_cents': 'COALESCE(rscp_cents(change_given), 0)',
+    }, ('amount', 'tendered', 'change_given')),
+
+    # register_id stays a plain TEXT tag: registers are never deleted and most
+    # sessions have none.
+    'drawer_sessions': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        register_id TEXT,
+        opened_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        opened_by INTEGER REFERENCES users(id) ON DELETE RESTRICT,
+        opening_float_cents INTEGER NOT NULL DEFAULT 0,
+        closed_at TIMESTAMP,
+        closed_by INTEGER REFERENCES users(id) ON DELETE RESTRICT,
+        counted_cash_cents INTEGER,
+        expected_cash_cents INTEGER,
+        over_short_cents INTEGER,
+        notes TEXT
+    ''', {
+        'opening_float_cents': 'COALESCE(rscp_cents(opening_float), 0)',
+        'counted_cash_cents': 'rscp_cents(counted_cash)',
+        'expected_cash_cents': 'rscp_cents(expected_cash)',
+        'over_short_cents': 'rscp_cents(over_short)',
+    }, ('opening_float', 'counted_cash', 'expected_cash', 'over_short')),
+}
+
+
+def _m15_money_to_cents(conn):
+    """Store every money amount as INTEGER cents in *_cents columns.
+
+    Every money column (item prices, orders, order lines, refunds, coupons,
+    redemptions, the payments ledger, drawer sessions) is rebuilt as an
+    INTEGER *_cents column: cents = Decimal(str(value)) rounded half-up to the
+    cent, never int(x * 100). Percent values (tax rate, percent discounts) are
+    not money and keep their REAL columns. Mixed columns are split: an order
+    line's discount_amount (a percent or dollars, by discount_type) becomes
+    discount_percent / discount_cents, a coupon's discount_value becomes
+    discount_cents (*_dollar types) / discount_percent.
+
+    JSON holding dollars is converted too: carts on registers and held
+    orders, and the money keys of pos_orders.payment_details (tendered ->
+    tendered_cents, ...). Settings: POS_MAX_DISCOUNT_AMOUNT -> POS_MAX_DISCOUNT_CENTS,
+    CASH_DISCOUNT_AMOUNT -> CASH_DISCOUNT_PERCENT or CASH_DISCOUNT_CENTS
+    (by CASH_DISCOUNT_TYPE).
+
+    The stored order total stays the truth: an order whose converted parts do
+    not add up to its converted total is logged (never changed). Values that
+    are not numbers are logged and stored as NULL (0 where the column is
+    NOT NULL).
+    """
+    import json as _json
+    bad = []
+
+    def rscp_cents(value):
+        cents = _m15_cents(value)
+        if cents is None and value is not None and str(value).strip() != '':
+            bad.append(value)
+        return cents
+
+    conn.create_function('rscp_cents', 1, rscp_cents, deterministic=True)
+
+    for table, (columns_sql, select_map, drop) in _M15_TABLES.items():
+        if _rebuild_table(conn, table, columns_sql, select_map, drop):
+            logger.info(f"[Schema v15] {table}: money columns now integer cents")
+    if bad:
+        logger.warning(f"[Schema v15] {len(bad)} stored money value(s) were not numbers and became NULL/0: "
+                       f"{bad[:20]!r}")
+
+    # Carts held on registers and parked as held orders
+    carts = 0
+    for table, key, col in (('pos_registers', 'register_id', 'cart_json'),
+                            ('pos_held_orders', 'id', 'cart_data')):
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone():
+            continue
+        for row_key, raw in conn.execute(f'SELECT {key}, {col} FROM {table}').fetchall():
+            try:
+                cart = _json.loads(raw) if raw else None
+            except (TypeError, ValueError):
+                logger.warning(f"[Schema v15] {table} {row_key}: cart is not JSON; left unchanged")
+                continue
+            if _m15_cart(cart):
+                conn.execute(f'UPDATE {table} SET {col} = ? WHERE {key} = ?', (_json.dumps(cart), row_key))
+                carts += 1
+    logger.info(f"[Schema v15] converted {carts} saved cart(s) to cents")
+
+    # payment_details JSON on orders
+    details_converted = 0
+    for oid, raw in conn.execute("SELECT id, payment_details FROM pos_orders "
+                                 "WHERE payment_details IS NOT NULL AND payment_details != ''").fetchall():
+        try:
+            details = _json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(details, dict):
+            continue
+        changed = False
+        for k in _M15_DETAIL_KEYS:
+            if k in details:
+                details[f'{k}_cents'] = _m15_cents(details.pop(k)) or 0
+                changed = True
+        if 'cards' in details:
+            cards = details.pop('cards')
+            details['cards_cents'] = [_m15_cents(c) or 0 for c in (cards if isinstance(cards, list) else [])]
+            changed = True
+        if changed:
+            conn.execute('UPDATE pos_orders SET payment_details = ? WHERE id = ?', (_json.dumps(details), oid))
+            details_converted += 1
+    logger.info(f"[Schema v15] converted payment details of {details_converted} order(s) to cents")
+
+    _m15_settings(conn)
+    _m15_check_orders(conn)
+
+
+def _m15_settings(conn):
+    import json as _json
+    if not conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'").fetchone():
+        return
+    stored = {k: v for k, v in conn.execute(
+        "SELECT key, value FROM settings WHERE key IN "
+        "('POS_MAX_DISCOUNT_AMOUNT', 'CASH_DISCOUNT_AMOUNT', 'CASH_DISCOUNT_TYPE')").fetchall()}
+
+    def decoded(key):
+        try:
+            return _json.loads(stored[key])
+        except (TypeError, ValueError):
+            return stored[key]
+
+    def put(key, value):
+        conn.execute("INSERT OR REPLACE INTO settings (key, value, updated_at, updated_by) "
+                     "VALUES (?, ?, CURRENT_TIMESTAMP, 'migration')", (key, _json.dumps(value)))
+
+    changed = False
+    if 'POS_MAX_DISCOUNT_AMOUNT' in stored:
+        cents = _m15_cents(decoded('POS_MAX_DISCOUNT_AMOUNT'))
+        if cents is not None:
+            put('POS_MAX_DISCOUNT_CENTS', cents)
+        conn.execute("DELETE FROM settings WHERE key = 'POS_MAX_DISCOUNT_AMOUNT'")
+        changed = True
+    if 'CASH_DISCOUNT_AMOUNT' in stored:
+        amount = decoded('CASH_DISCOUNT_AMOUNT')
+        dtype = decoded('CASH_DISCOUNT_TYPE') if 'CASH_DISCOUNT_TYPE' in stored else 'percent'
+        if dtype == 'fixed':
+            cents = _m15_cents(amount)
+            if cents is not None:
+                put('CASH_DISCOUNT_CENTS', cents)
+        else:
+            try:
+                put('CASH_DISCOUNT_PERCENT', float(amount))
+            except (TypeError, ValueError):
+                pass
+        conn.execute("DELETE FROM settings WHERE key = 'CASH_DISCOUNT_AMOUNT'")
+        changed = True
+    if changed:
+        logger.info("[Schema v15] money settings converted to cents")
+        conn.execute("UPDATE settings_meta SET token = lower(hex(randomblob(16))) WHERE id = 1")
+
+
+def _m15_check_orders(conn):
+    """Log (never fix) orders whose converted parts do not add up: lines vs
+    subtotal, discounts + tax vs total, payments vs total. Sales edited after
+    the fact legitimately differ (their coupon/cash discount scale down)."""
+    rows = conn.execute('''
+        SELECT o.id, o.order_number, o.subtotal_cents, o.discount_amount_cents, o.tax_amount_cents,
+               o.total_cents, o.cash_discount_cents,
+               (SELECT COALESCE(SUM(line_total_cents), 0) FROM pos_order_items WHERE order_id = o.id) AS lines,
+               (SELECT COUNT(*) FROM pos_order_items WHERE order_id = o.id) AS line_count,
+               (SELECT COALESCE(SUM(discount_applied_cents), 0) FROM pos_coupon_redemptions
+                 WHERE order_id = o.id) AS coupon,
+               (SELECT SUM(amount_cents) FROM pos_payments WHERE order_id = o.id) AS paid
+        FROM pos_orders o
+    ''').fetchall()
+    mismatched = []
+    for (oid, number, subtotal, discount, tax, total, cash_discount, lines, line_count, coupon, paid) in rows:
+        problems = []
+        if line_count and lines != subtotal:
+            problems.append(f'lines {lines} != subtotal {subtotal}')
+        expected = max(0, subtotal - (discount or 0) - (coupon or 0)) + tax - (cash_discount or 0)
+        if expected != total:
+            problems.append(f'subtotal - discounts + tax = {expected} != total {total}')
+        if paid is not None and paid != total:
+            problems.append(f'payments {paid} != total {total}')
+        if problems:
+            mismatched.append(f"{number}: {'; '.join(problems)}")
+    if mismatched:
+        logger.warning(f"[Schema v15] {len(mismatched)} order(s) whose converted parts do not add up "
+                       f"to the stored total (the stored total is kept): " + ' | '.join(mismatched[:50]))
+    else:
+        logger.info(f"[Schema v15] all {len(rows)} order(s) add up to their stored totals")
+
+
+# (table, column, parent table, parent column, action on orphans)
+#   'null'   keep the row, clear the dangling reference (sales, payments,
+#            refunds, drawer, audit and other records worth keeping)
+#   'delete' remove the row (non-financial child rows with no meaning left)
+_M16_ORPHANS = (
+    ('pos_orders', 'operator_id', 'users', 'id', 'null'),
+    ('pos_order_items', 'order_id', 'pos_orders', 'id', 'null'),
+    ('pos_order_items', 'inventory_item_id', 'inventory_items', 'id', 'null'),
+    ('pos_refunds', 'order_id', 'pos_orders', 'id', 'null'),
+    ('pos_refunds', 'manager_id', 'users', 'id', 'null'),
+    ('pos_refund_items', 'refund_id', 'pos_refunds', 'id', 'null'),
+    ('pos_refund_items', 'order_item_id', 'pos_order_items', 'id', 'null'),
+    ('pos_payments', 'order_id', 'pos_orders', 'id', 'null'),
+    ('pos_coupon_redemptions', 'coupon_id', 'pos_coupons', 'id', 'null'),
+    ('pos_coupon_redemptions', 'order_id', 'pos_orders', 'id', 'null'),
+    ('pos_coupon_redemptions', 'redeemed_by', 'users', 'id', 'null'),
+    ('drawer_sessions', 'opened_by', 'users', 'id', 'null'),
+    ('drawer_sessions', 'closed_by', 'users', 'id', 'null'),
+    ('pos_coupons', 'reward_item_id', 'inventory_items', 'id', 'null'),
+    ('pos_coupons', 'created_by', 'users', 'id', 'null'),
+    ('pos_audit_log', 'user_id', 'users', 'id', 'null'),
+    ('inventory_transactions', 'inventory_item_id', 'inventory_items', 'id', 'null'),
+    ('audit_records', 'session_id', 'audit_sessions', 'id', 'null'),
+    ('audit_records', 'item_id', 'inventory_items', 'id', 'null'),
+    ('history', 'package_id', 'packages', 'id', 'null'),
+    ('history', 'user_id', 'users', 'id', 'null'),
+    ('pos_held_orders', 'operator_id', 'users', 'id', 'null'),
+    ('pos_peripherals', 'paired_by', 'users', 'id', 'null'),
+    ('time_entries', 'edited_by', 'users', 'id', 'null'),
+    ('federation_transfers', 'peer_id', 'federation_peers', 'id', 'null'),
+    ('time_entries', 'user_id', 'users', 'id', 'delete'),
+    ('scheduled_shifts', 'user_id', 'users', 'id', 'delete'),
+    ('recurring_shift_rules', 'user_id', 'users', 'id', 'delete'),
+    ('user_pto_balances', 'user_id', 'users', 'id', 'delete'),
+    ('pto_requests', 'user_id', 'users', 'id', 'delete'),
+    ('pos_peripherals', 'register_id', 'pos_registers', 'register_id', 'delete'),
+    ('pos_coupon_items', 'coupon_id', 'pos_coupons', 'id', 'delete'),
+    ('pos_coupon_items', 'item_id', 'inventory_items', 'id', 'delete'),
+    ('notifications', 'user_id', 'users', 'id', 'delete'),
+)
+
+# Tables rebuilt by migration 16 for their REFERENCES / ON DELETE rules (the
+# money tables got theirs in migration 15). Child columns of 'null' orphan
+# rules are nullable.
+_M16_TABLES = {
+    # an item's stock ledger goes with the item (inventory.delete_item already
+    # deleted it explicitly)
+    'inventory_transactions': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE CASCADE,
+        quantity_change INTEGER NOT NULL,
+        reason TEXT DEFAULT 'Sold/Consumed',
+        user_id TEXT,
+        source_tracking TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    ''', {}, ()),
+    'audit_records': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id INTEGER REFERENCES audit_sessions(id) ON DELETE CASCADE,
+        item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL,
+        sku TEXT,
+        name TEXT,
+        expected_qty INTEGER,
+        counted_qty INTEGER,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ''', {}, ()),
+    'history': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        package_id INTEGER REFERENCES packages(id) ON DELETE SET NULL,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        action TEXT NOT NULL,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        details TEXT
+    ''', {}, ()),
+    'pos_held_orders': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        operator_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        cart_data TEXT NOT NULL,
+        note TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ''', {}, ()),
+    'pos_audit_log': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        action TEXT NOT NULL,
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        user_name TEXT,
+        target_type TEXT,
+        target_id TEXT,
+        details TEXT,
+        ip_address TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ''', {}, ()),
+    'pos_peripherals': ('''
+        peripheral_id TEXT PRIMARY KEY,
+        register_id TEXT NOT NULL REFERENCES pos_registers(register_id) ON DELETE CASCADE,
+        role TEXT NOT NULL CHECK (role IN ('display', 'scanner')),
+        token_hash TEXT UNIQUE NOT NULL,
+        pending_token TEXT,
+        friendly_name TEXT,
+        paired_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        paired_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_seen TIMESTAMP
+    ''', {}, ()),
+    'pos_coupon_items': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        coupon_id INTEGER NOT NULL REFERENCES pos_coupons(id) ON DELETE CASCADE,
+        item_id INTEGER NOT NULL REFERENCES inventory_items(id) ON DELETE CASCADE
+    ''', {}, ()),
+    # Timeclock rows belong to their user: deleting a user deletes them
+    # (orphans of deleted users are removed above).
+    'time_entries': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        type TEXT DEFAULT 'shift',
+        clock_in DATETIME NOT NULL,
+        clock_out DATETIME,
+        notes TEXT,
+        edited_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ''', {}, ()),
+    'scheduled_shifts': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        start_time DATETIME NOT NULL,
+        end_time DATETIME NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ''', {}, ()),
+    'recurring_shift_rules': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        day_of_week INTEGER NOT NULL,
+        start_time TEXT NOT NULL,
+        end_time TEXT NOT NULL,
+        frequency TEXT DEFAULT 'weekly',
+        reference_date DATE
+    ''', {}, ()),
+    'user_pto_balances': ('''
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        balance_hours REAL DEFAULT 0.0
+    ''', {}, ()),
+    'pto_requests': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        request_type TEXT NOT NULL,
+        date DATE NOT NULL,
+        start_time TIME,
+        end_time TIME,
+        hours_requested REAL NOT NULL,
+        status TEXT DEFAULT 'pending',
+        admin_notes TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    ''', {}, ()),
+    'notifications': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        message TEXT,
+        type TEXT DEFAULT 'info',
+        link TEXT,
+        is_read BOOLEAN DEFAULT 0,
+        read_at TIMESTAMP
+    ''', {}, ()),
+    'federation_transfers': ('''
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        direction TEXT NOT NULL,
+        peer_id INTEGER REFERENCES federation_peers(id) ON DELETE RESTRICT,
+        item_id INTEGER,
+        item_sku TEXT NOT NULL,
+        item_data TEXT NOT NULL,
+        quantity INTEGER NOT NULL DEFAULT 1,
+        status TEXT DEFAULT 'pending',
+        requested_by TEXT,
+        requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        approved_by TEXT,
+        approved_at TIMESTAMP,
+        expires_at TIMESTAMP,
+        notes TEXT
+    ''', {}, ()),
+}
+
+
+def _m16_table_exists(conn, name):
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                        (name,)).fetchone() is not None
+
+
+def _m16_foreign_keys(conn):
+    """Make the database's foreign keys enforceable (every connection now
+    runs PRAGMA foreign_keys = ON).
+
+    Orphans are dealt with first (counts logged per table/column): sales,
+    payments, refunds, drawer, audit and other records worth keeping keep
+    their row and lose only the dangling reference (denormalised sku/name/
+    user_name text stays); non-financial child rows (timeclock shifts, PTO and
+    balances of deleted users, pairings of deleted registers, coupon item
+    links, notifications) are deleted. Tables whose REFERENCES or ON DELETE
+    rules changed are rebuilt. Ends with PRAGMA foreign_key_check: anything
+    left aborts the migration (the transaction rolls back).
+    """
+    for table, (columns_sql, select_map, drop) in _M16_TABLES.items():
+        if _m16_table_exists(conn, table):
+            _rebuild_table(conn, table, columns_sql, select_map, drop, tag='v16')
+
+    total = 0
+    for table, col, parent, pcol, action in _M16_ORPHANS:
+        if not _m16_table_exists(conn, table):
+            continue
+        if col not in [r[1] for r in conn.execute(f'PRAGMA table_info("{table}")').fetchall()]:
+            continue
+        if _m16_table_exists(conn, parent):
+            where = (f'"{col}" IS NOT NULL AND "{col}" NOT IN '
+                     f'(SELECT "{pcol}" FROM "{parent}" WHERE "{pcol}" IS NOT NULL)')
+        else:
+            where = f'"{col}" IS NOT NULL'
+        n = conn.execute(f'SELECT COUNT(*) FROM "{table}" WHERE {where}').fetchone()[0]
+        if not n:
+            continue
+        if action == 'delete':
+            conn.execute(f'DELETE FROM "{table}" WHERE {where}')
+            logger.warning(f"[Schema v16] {table}: deleted {n} row(s) whose {col} pointed at a missing {parent}")
+        else:
+            conn.execute(f'UPDATE "{table}" SET "{col}" = NULL WHERE {where}')
+            logger.warning(f"[Schema v16] {table}: cleared {col} on {n} row(s) pointing at a missing {parent} "
+                           f"(rows kept)")
+        total += n
+    logger.info(f"[Schema v16] {total} orphaned reference(s) handled")
+
+    problems = conn.execute('PRAGMA foreign_key_check').fetchall()
+    if problems:
+        sample = ', '.join(f'{r[0]} rowid {r[1]} -> {r[2]}' for r in problems[:20])
+        raise RuntimeError(f"[Schema v16] {len(problems)} foreign key violation(s) remain: {sample}")
+    logger.info("[Schema v16] PRAGMA foreign_key_check: clean")
+
+
 # Also used by app/jobs.py (CREATE ... IF NOT EXISTS), so a job started by a
 # timer before the web service has migrated still has somewhere to write.
 JOB_TABLES_SQL = (
@@ -1347,6 +2088,8 @@ SCHEMA_MIGRATIONS = [
     (12, 'drop email-ingest settings (feature removed)', _m12_drop_email_ingest_settings),
     (13, 'job_status and job_markers tables (scheduled jobs)', _m13_job_status),
     (14, 'monitor_alerts table (email alerts)', _m14_monitor_alerts),
+    (15, 'money as integer cents', _m15_money_to_cents),
+    (16, 'foreign keys: orphans handled, REFERENCES rebuilt, foreign_key_check', _m16_foreign_keys),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 assert len({v for v, _, _ in SCHEMA_MIGRATIONS}) == len(SCHEMA_MIGRATIONS), "duplicate schema version"
@@ -1382,12 +2125,14 @@ def _user_version(db_path):
         conn.close()
 
 
-def run_migrations(db_path=None):
-    """Bring the database fully up to date. Raises on failure.
+def run_migrations(db_path=None, target=None):
+    """Bring the database fully up to date (or only up to schema version
+    `target`, for tests that need an older schema). Raises on failure.
 
     Safe to call from every worker at startup: cheap (one PRAGMA read) when
     the schema is already current.
     """
+    latest = LATEST_SCHEMA_VERSION if target is None else int(target)
     if db_path is None:
         db_path = DB_PATH
         try:  # honour a test/app-configured DATABASE, like get_db_connection()
@@ -1395,12 +2140,12 @@ def run_migrations(db_path=None):
             db_path = current_app.config.get('DATABASE', DB_PATH)
         except RuntimeError:
             pass
-    if db_path != ':memory:' and _user_version(db_path) >= LATEST_SCHEMA_VERSION:
+    if db_path != ':memory:' and _user_version(db_path) >= latest:
         return
 
     with _MigrationLock(db_path):
         version = _user_version(db_path)
-        if version >= LATEST_SCHEMA_VERSION:
+        if version >= latest:
             return  # another worker finished while we waited for the lock
 
         if version < 1:
@@ -1414,22 +2159,28 @@ def run_migrations(db_path=None):
             version = 1
 
         conn = sqlite3.connect(db_path, timeout=30, isolation_level=None)
+        # Table rebuilds (v7, v10, v15, v16) need foreign keys OFF: the
+        # "12-step" ALTER procedure. It can only be changed outside a
+        # transaction, so it is set once for this connection; migration 16
+        # ends with PRAGMA foreign_key_check. Every other connection RSCP
+        # opens enforces foreign keys.
+        conn.execute('PRAGMA foreign_keys = OFF')
         try:
             # Always apply in version order, whatever order the list was edited in
-            for target, description, fn in sorted(SCHEMA_MIGRATIONS, key=lambda m: m[0]):
-                if target <= version:
+            for step, description, fn in sorted(SCHEMA_MIGRATIONS, key=lambda m: m[0]):
+                if step <= version or step > latest:
                     continue
-                logger.info(f"[Schema] Migrating to v{target}: {description}")
+                logger.info(f"[Schema] Migrating to v{step}: {description}")
                 conn.execute('BEGIN IMMEDIATE')
                 try:
                     fn(conn)
-                    conn.execute(f'PRAGMA user_version = {int(target)}')
+                    conn.execute(f'PRAGMA user_version = {int(step)}')
                     conn.execute('COMMIT')
                 except Exception:
                     conn.execute('ROLLBACK')
-                    logger.exception(f"[Schema] Migration to v{target} ({description}) FAILED")
+                    logger.exception(f"[Schema] Migration to v{step} ({description}) FAILED")
                     raise
-                version = target
+                version = step
         finally:
             conn.close()
         logger.info(f"[Schema] Database is at schema v{version}")

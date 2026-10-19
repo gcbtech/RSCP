@@ -8,7 +8,7 @@ from flask import request, redirect, url_for, flash, render_template, jsonify
 from flask_login import login_required, current_user
 
 from app.routes.pos import pos_bp
-from app.services import pos_sales
+from app.services import money, pos_sales
 from app.services.db import get_db_connection
 from app.services.inventory import ItemNotFound
 
@@ -56,10 +56,14 @@ def add_sale():
     if not sku or not price:
         flash('SKU and Price are required.')
         return redirect(url_for('pos.sales_manager'))
-        
+    price_cents = money.parse(price)
+    if price_cents is None:
+        flash('Invalid sale price.')
+        return redirect(url_for('pos.sales_manager'))
+
     conn = get_db_connection()
     try:
-        pos_sales.start_item_sale(conn, sku, price, start, end, end_on_stock)
+        pos_sales.start_item_sale(conn, sku, price_cents, start, end, end_on_stock)
         flash(f'Sale enabled for {sku}')
     except ItemNotFound:
         flash(f'Item not found: {sku}')

@@ -449,14 +449,14 @@
                                 <label class="form-label">Buy Price</label>
                                 <input type="number" step="0.01" name="buy_price" id="buyPriceInput"
                                     class="form-control"
-                                    value="{{ item.buy_price if edit_mode and item.buy_price else (prefill.buy_price if prefill and prefill.buy_price else '') }}"
+                                    value="{{ item.buy_price_cents|dollar_number if edit_mode and item.buy_price_cents else (prefill.buy_price if prefill and prefill.buy_price else '') }}"
                                     placeholder="0.00" data-input="updateSuggestedPrice">
                             </div>
                             <div class="col-md-6 mb-2">
                                 <label class="form-label">Sell Price</label>
                                 <input type="number" step="0.01" name="sell_price" id="sellPriceInput"
                                     class="form-control"
-                                    value="{{ item.sell_price if edit_mode and item.sell_price else (prefill.sell_price if prefill and prefill.sell_price else '') }}"
+                                    value="{{ item.sell_price_cents|dollar_number if edit_mode and item.sell_price_cents else (prefill.sell_price if prefill and prefill.sell_price else '') }}"
                                     placeholder="0.00">
                             </div>
                             <div class="col-md-6 mb-2">

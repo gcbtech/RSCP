@@ -16,7 +16,7 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 from functools import wraps
 
-from app.services import throttle
+from app.services import money, throttle
 from app.services.db import get_db_connection
 from app.services.data_manager import load_config
 from app.utils.proxy import get_client_ip
@@ -83,8 +83,8 @@ def get_public_inventory():
                     id,
                     sku,
                     name,
-                    sell_price,
-                    sale_price,
+                    sell_price_cents,
+                    sale_price_cents,
                     sale_enabled,
                     sale_start,
                     sale_end,
@@ -109,7 +109,7 @@ def get_public_inventory():
             import json
             for row in rows:
                 # Compute effective price (handle sale pricing server-side)
-                price = row['sell_price'] or 0
+                price_cents = row['sell_price_cents'] or 0
                 
                 if row['sale_enabled']:
                     try:
@@ -126,8 +126,8 @@ def get_public_inventory():
                             if now > end_dt:
                                 end_valid = False
                         
-                        if start_valid and end_valid and row['sale_price']:
-                            price = row['sale_price']
+                        if start_valid and end_valid and row['sale_price_cents']:
+                            price_cents = row['sale_price_cents']
                     except (ValueError, TypeError):
                         pass  # Use regular price if sale date parsing fails
                 
@@ -142,7 +142,8 @@ def get_public_inventory():
                     'id': row['id'],
                     'sku': row['sku'],
                     'name': row['name'],
-                    'price': round(price, 2) if price else 0,
+                    # dollars, as the storefront has always received them (19.99, 10.0; 0 when unpriced)
+                    'price': money.to_dollars(price_cents) if price_cents else 0,
                     'quantity': row['quantity'],
                     'image_url': row['image_url'],
                     'category': row['location_aisle'],

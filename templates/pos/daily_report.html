@@ -111,11 +111,11 @@
                         {% if hourly %}
                         <div style="height: 200px; display: flex; align-items: flex-end; gap: 4px;">
                             {% for h in hourly %}
-                            {% set height_pct = (h.amount / max_hourly_revenue * 100) if max_hourly_revenue > 0 else 0
+                            {% set height_pct = (h.amount_cents / max_hourly_revenue_cents * 100) if max_hourly_revenue_cents > 0 else 0
                             %}
                             <div class="flex-fill bg-primary bg-opacity-75 rounded-top"
                                 style="height: {{ height_pct }}%; min-height: 4px;"
-                                title="{{ h.hour }}:00 - ${{ '%.2f'|format(h.amount) }} ({{ h.count }} orders)">
+                                title="{{ h.hour }}:00 - ${{ h.amount_cents|dollars }} ({{ h.count }} orders)">
 
                             </div>
                             {% endfor %}
@@ -159,7 +159,7 @@
                                         </td>
                                         <td>{{ item.name }}</td>
                                         <td class="text-center">{{ item.qty }}</td>
-                                        <td class="text-end pe-3">${{ "%.2f"|format(item.total) }}</td>
+                                        <td class="text-end pe-3">${{ item.total_cents|dollars }}</td>
                                     </tr>
                                     {% endfor %}
                                 </tbody>

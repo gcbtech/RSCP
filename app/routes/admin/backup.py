@@ -34,6 +34,7 @@ def export_backup():
         # Connect to active DB and safely perform online backup to the temp DB file
         src_conn = get_db_connection()
         dest_conn = sqlite3.connect(temp_db_path)
+        dest_conn.execute('PRAGMA foreign_keys = ON')
         with dest_conn:
             src_conn.backup(dest_conn)
         dest_conn.close()
@@ -167,6 +168,7 @@ def _extract_to_temp(zf, member, suffix=''):
 def _schema_version(path):
     import sqlite3
     conn = sqlite3.connect(path)
+    conn.execute('PRAGMA foreign_keys = ON')
     try:
         return conn.execute('PRAGMA user_version').fetchone()[0]
     finally:
@@ -178,6 +180,7 @@ def _check_backup_db(path):
     import sqlite3
     try:
         conn = sqlite3.connect(path)
+        conn.execute('PRAGMA foreign_keys = ON')
         try:
             if conn.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                 return "the database in the backup is corrupt."
@@ -212,13 +215,16 @@ def _restore_database(src_path):
     safety_copy = os.path.join(backup_dir, f'pre-restore-{stamp}.db')
 
     live = sqlite3.connect(DB_PATH, timeout=30)
+    live.execute('PRAGMA foreign_keys = ON')
     try:
         dest = sqlite3.connect(safety_copy)
+        dest.execute('PRAGMA foreign_keys = ON')
         with dest:
             live.backup(dest)
         dest.close()
 
         src = sqlite3.connect(src_path)
+        src.execute('PRAGMA foreign_keys = ON')
         try:
             src.backup(live)
         finally:

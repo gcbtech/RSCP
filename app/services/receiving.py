@@ -196,7 +196,7 @@ def receive_scan(conn, raw, user, inventory_enabled=False, conf=None):
                 inv = {
                     'id': item['id'], 'sku': item['sku'], 'name': item['name'],
                     'quantity': item['quantity'], 'image_url': item['image_url'],
-                    'sell_price': item['sell_price'], 'location': _location(item),
+                    'sell_price_cents': item['sell_price_cents'], 'location': _location(item),
                 }
                 return ScanResult('inventory', tracking, [], [], inv, None)
         return ScanResult('unknown', tracking, [], [], None, None)
@@ -429,8 +429,9 @@ def delete_package(conn, package_id):
     (tracking_number, item_name) or None."""
     with write_transaction(conn):
         pkg = conn.execute("SELECT tracking_number, item_name FROM packages WHERE id = ?", (package_id,)).fetchone()
-        conn.execute("DELETE FROM packages WHERE id = ?", (package_id,))
+        # history first: history.package_id is ON DELETE SET NULL
         conn.execute("DELETE FROM history WHERE package_id = ?", (package_id,))
+        conn.execute("DELETE FROM packages WHERE id = ?", (package_id,))
     return pkg
 
 

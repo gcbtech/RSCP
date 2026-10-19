@@ -93,7 +93,7 @@
                             </span>
                         </td>
                         <td>{{ order.payment_method }}</td>
-                        <td class="text-end fw-bold">${{ "%.2f"|format(order.total) }}</td>
+                        <td class="text-end fw-bold">${{ order.total_cents|dollars }}</td>
                         <td>
                             <a href="{{ url_for('pos.receipt', order_number=order.order_number) }}"
                                 class="btn btn-sm btn-outline-primary">View</a>

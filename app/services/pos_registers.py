@@ -43,7 +43,9 @@ CONNECTED_WINDOW_SECONDS = 15
 # under CONNECTED_WINDOW_SECONDS minus the slowest poll interval (5s).
 LAST_SEEN_WRITE_SECONDS = 4
 
-EMPTY_CART = {'items': [], 'discount_amount': 0, 'discount_type': None, 'discount_reason': ''}
+# Money in carts is integer cents (see app/services/pos_pricing.py).
+EMPTY_CART = {'items': [], 'discount_type': None, 'discount_percent': 0, 'discount_cents': 0,
+              'discount_reason': ''}
 
 VALID_ROLES = ('display', 'scanner')
 
@@ -122,8 +124,11 @@ def normalize_cart(cart):
         cart = empty_cart()
     if not isinstance(cart.get('items'), list):
         cart['items'] = []
-    cart.setdefault('discount_amount', 0)
+    from app.services.pos_pricing import upgrade_legacy_cart
+    upgrade_legacy_cart(cart)   # carts saved before v15 held dollars
     cart.setdefault('discount_type', None)
+    cart.setdefault('discount_percent', 0)
+    cart.setdefault('discount_cents', 0)
     cart.setdefault('discount_reason', '')
     ensure_line_ids(cart)
     return cart
@@ -334,6 +339,15 @@ def claim_pairing_code(conn, code, register_id, register_name, user_id=None):
     token = secrets.token_hex(32)
     default_name = 'Customer Display' if role == 'display' else 'Staff Scanner'
 
+    # Make sure the register exists (pos_peripherals.register_id references
+    # it) and carries its friendly name
+    conn.execute(
+        '''INSERT INTO pos_registers (register_id, friendly_name)
+           VALUES (?, ?)
+           ON CONFLICT(register_id) DO UPDATE SET friendly_name = excluded.friendly_name''',
+        (register_id, register_name or 'Register')
+    )
+
     # Re-pairing a known peripheral (e.g. moving it to another register)
     # replaces its row and rotates its token.
     conn.execute(
@@ -345,14 +359,6 @@ def claim_pairing_code(conn, code, register_id, register_name, user_id=None):
          default_name, user_id)
     )
     conn.execute('DELETE FROM pos_pairing_codes WHERE code = ?', (code,))
-
-    # Make sure the register exists and carries its friendly name
-    conn.execute(
-        '''INSERT INTO pos_registers (register_id, friendly_name)
-           VALUES (?, ?)
-           ON CONFLICT(register_id) DO UPDATE SET friendly_name = excluded.friendly_name''',
-        (register_id, register_name or 'Register')
-    )
     conn.commit()
 
     return {'peripheral_id': peripheral_id, 'role': role}

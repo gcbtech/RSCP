@@ -34,10 +34,10 @@
                     {% if current.notes %}&bull; {{ current.notes }}{% endif %}</p>
                 <table class="table table-sm mb-3" style="max-width: 420px;">
                     <tbody>
-                        <tr><td>Starting float</td><td class="text-end">${{ "%.2f"|format(current.opening_float or 0) }}</td></tr>
-                        <tr><td>+ Cash sales</td><td class="text-end">${{ "%.2f"|format(current.cash_sales) }}</td></tr>
-                        <tr><td>&minus; Cash refunds</td><td class="text-end">${{ "%.2f"|format(current.cash_refunds) }}</td></tr>
-                        <tr class="fw-bold"><td>Expected in drawer now</td><td class="text-end">${{ "%.2f"|format(current.expected_cash) }}</td></tr>
+                        <tr><td>Starting float</td><td class="text-end">${{ (current.opening_float_cents or 0)|dollars }}</td></tr>
+                        <tr><td>+ Cash sales</td><td class="text-end">${{ current.cash_sales_cents|dollars }}</td></tr>
+                        <tr><td>&minus; Cash refunds</td><td class="text-end">${{ current.cash_refunds_cents|dollars }}</td></tr>
+                        <tr class="fw-bold"><td>Expected in drawer now</td><td class="text-end">${{ current.expected_cash_cents|dollars }}</td></tr>
                     </tbody>
                 </table>
                 <form action="{{ url_for('pos.drawer_close') }}" method="POST" class="row g-2 align-items-end"
@@ -112,13 +112,13 @@
                                 <td class="ps-3">{{ s.id }}</td>
                                 <td class="small">{{ s.opened_at | local_time }}<br><span class="text-muted">{{ s.opened_by_name or '' }}</span></td>
                                 <td class="small">{{ s.closed_at | local_time }}<br><span class="text-muted">{{ s.closed_by_name or '' }}</span></td>
-                                <td class="text-end">${{ "%.2f"|format(s.opening_float or 0) }}</td>
-                                <td class="text-end">${{ "%.2f"|format(s.expected_cash or 0) }}</td>
-                                <td class="text-end">${{ "%.2f"|format(s.counted_cash or 0) }}</td>
+                                <td class="text-end">${{ (s.opening_float_cents or 0)|dollars }}</td>
+                                <td class="text-end">${{ (s.expected_cash_cents or 0)|dollars }}</td>
+                                <td class="text-end">${{ (s.counted_cash_cents or 0)|dollars }}</td>
                                 <td class="text-end pe-3 fw-bold">
-                                    {% set d = s.over_short or 0 %}
-                                    {% if d > 0.004 %}<span class="text-warning">+${{ "%.2f"|format(d) }}</span>
-                                    {% elif d < -0.004 %}<span class="text-danger">&minus;${{ "%.2f"|format(-d) }}</span>
+                                    {% set d_cents = s.over_short_cents or 0 %}
+                                    {% if d_cents > 0 %}<span class="text-warning">+${{ d_cents|dollars }}</span>
+                                    {% elif d_cents < 0 %}<span class="text-danger">&minus;${{ (-d_cents)|dollars }}</span>
                                     {% else %}<span class="text-success">$0.00</span>{% endif %}
                                 </td>
                             </tr>

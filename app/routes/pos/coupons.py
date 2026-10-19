@@ -10,6 +10,7 @@ from datetime import datetime
 from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify, session
 from flask_login import login_required, current_user
 
+from app.services import money
 from app.services.db import get_db_connection
 from app.services.data_manager import load_config
 
@@ -18,6 +19,29 @@ logger = logging.getLogger(__name__)
 # Use the existing pos_bp from core
 from app.routes.pos.core import pos_bp
 from app.utils.permissions import require_permission
+
+
+def _money_or_none(raw):
+    """Cents for an optional dollar field; blank -> None. ValueError on junk."""
+    raw = (raw or '').strip()
+    if not raw:
+        return None
+    cents = money.parse(raw)
+    if cents is None:
+        raise ValueError(f'invalid amount {raw!r}')
+    return cents
+
+
+def _coupon_value(discount_type, raw):
+    """(discount_cents, discount_percent) for a coupon's value as typed: dollars
+    for the *_dollar types, a percent for the others. ValueError on junk."""
+    raw = '0' if raw is None or str(raw).strip() == '' else str(raw).strip()
+    if (discount_type or '').endswith('_dollar'):
+        cents = money.parse(raw)
+        if cents is None:
+            raise ValueError(f'invalid amount {raw!r}')
+        return cents, None
+    return None, float(raw)
 
 
 def generate_serial_code(prefix="SAVE"):
@@ -64,7 +88,7 @@ def create_coupon():
             name = request.form.get('name', '').strip()
             coupon_type = request.form.get('coupon_type', 'generic')
             discount_type = request.form.get('discount_type', 'order_percent')
-            discount_value = float(request.form.get('discount_value', 0))
+            discount_cents, discount_percent = _coupon_value(discount_type, request.form.get('discount_value', 0))
             
             # Generate or use provided code
             if coupon_type == 'serialized':
@@ -89,8 +113,7 @@ def create_coupon():
                 reward_item_id = int(reward_item_id)
             
             # Limits
-            min_purchase = request.form.get('min_purchase', '').strip()
-            min_purchase = float(min_purchase) if min_purchase else None
+            min_purchase = _money_or_none(request.form.get('min_purchase', ''))
             
             max_uses = request.form.get('max_uses', '').strip()
             max_uses = int(max_uses) if max_uses else None
@@ -105,13 +128,13 @@ def create_coupon():
             # Insert coupon
             cursor = conn.execute('''
                 INSERT INTO pos_coupons (
-                    name, code, coupon_type, discount_type, discount_value,
+                    name, code, coupon_type, discount_type, discount_cents, discount_percent,
                     buy_quantity, get_quantity, reward_item_id,
-                    min_purchase, max_uses, start_date, end_date,
+                    min_purchase_cents, max_uses, start_date, end_date,
                     cannot_combine, created_by
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                name, code, coupon_type, discount_type, discount_value,
+                name, code, coupon_type, discount_type, discount_cents, discount_percent,
                 buy_quantity, get_quantity, reward_item_id,
                 min_purchase, max_uses, start_date, end_date,
                 1 if cannot_combine else 0, current_user.id
@@ -167,7 +190,8 @@ def edit_coupon(coupon_id):
     if request.method == 'POST':
         try:
             name = request.form.get('name', '').strip()
-            discount_value = float(request.form.get('discount_value', 0))
+            discount_cents, discount_percent = _coupon_value(coupon['discount_type'],
+                                                             request.form.get('discount_value', 0))
             
             # BOGO fields
             buy_quantity = int(request.form.get('buy_quantity', 1) or 1)
@@ -177,8 +201,7 @@ def edit_coupon(coupon_id):
                 reward_item_id = int(reward_item_id)
             
             # Limits
-            min_purchase = request.form.get('min_purchase', '').strip()
-            min_purchase = float(min_purchase) if min_purchase else None
+            min_purchase = _money_or_none(request.form.get('min_purchase', ''))
             
             max_uses = request.form.get('max_uses', '').strip()
             max_uses = int(max_uses) if max_uses else None
@@ -193,13 +216,13 @@ def edit_coupon(coupon_id):
             # Update coupon (can't change code or type after creation)
             conn.execute('''
                 UPDATE pos_coupons SET
-                    name = ?, discount_value = ?,
+                    name = ?, discount_cents = ?, discount_percent = ?,
                     buy_quantity = ?, get_quantity = ?, reward_item_id = ?,
-                    min_purchase = ?, max_uses = ?, start_date = ?, end_date = ?,
+                    min_purchase_cents = ?, max_uses = ?, start_date = ?, end_date = ?,
                     cannot_combine = ?
                 WHERE id = ?
             ''', (
-                name, discount_value,
+                name, discount_cents, discount_percent,
                 buy_quantity, get_quantity, reward_item_id,
                 min_purchase, max_uses, start_date, end_date,
                 1 if cannot_combine else 0, coupon_id
@@ -268,12 +291,20 @@ def toggle_coupon(coupon_id):
 @pos_bp.route('/coupons/<int:coupon_id>/delete', methods=['POST'])
 @require_permission('pos.manage')
 def delete_coupon(coupon_id):
-    """Delete a coupon."""
+    """Delete a coupon (never one that has been redeemed on a sale)."""
     conn = get_db_connection()
-    
-    conn.execute('DELETE FROM pos_coupon_items WHERE coupon_id = ?', (coupon_id,))
-    conn.execute('DELETE FROM pos_coupons WHERE id = ?', (coupon_id,))
-    conn.commit()
+    try:
+        used = conn.execute('SELECT 1 FROM pos_coupon_redemptions WHERE coupon_id = ? LIMIT 1',
+                            (coupon_id,)).fetchone()
+        if used:
+            flash('This coupon has been used on sales, so it is kept for their history. '
+                  'Deactivate it instead.')
+            return redirect(url_for('pos.coupons'))
+        conn.execute('DELETE FROM pos_coupon_items WHERE coupon_id = ?', (coupon_id,))
+        conn.execute('DELETE FROM pos_coupons WHERE id = ?', (coupon_id,))
+        conn.commit()
+    finally:
+        conn.close()
     
     flash('Coupon deleted.')
     return redirect(url_for('pos.coupons'))
@@ -284,7 +315,9 @@ def delete_coupon(coupon_id):
 # ========================================
 
 # Coupon validation and discount math live in app.services.pos_pricing
-from app.services.pos_pricing import evaluate_coupon, calculate_coupon_discount  # noqa: E402,F401
+from app.services.pos_pricing import (  # noqa: E402,F401
+    evaluate_coupon, calculate_coupon_discount, cart_subtotal, coupon_result_json,
+)
 
 
 @pos_bp.route('/api/coupon/validate', methods=['POST'])
@@ -300,14 +333,15 @@ def validate_coupon():
     from app.routes.pos.core import get_cart
     live_cart = get_cart()
     cart_items = live_cart.get('items', [])
-    cart_subtotal = sum(item.get('line_total', 0) for item in cart_items)
+    subtotal = cart_subtotal(cart_items)
 
     logger.info(f"[Coupon Validate] Validating coupon: {code}. "
-                f"Live cart items count: {len(cart_items)}, subtotal: {cart_subtotal}")
+                f"Live cart items count: {len(cart_items)}, subtotal: {subtotal} cents")
 
     conn = get_db_connection()
     try:
-        return jsonify(evaluate_coupon(code, cart_items, cart_subtotal, conn))
+        # JSON edge: dollars (discount_amount, coupon.discount_value)
+        return jsonify(coupon_result_json(evaluate_coupon(code, cart_items, subtotal, conn)))
     finally:
         conn.close()
 
@@ -331,8 +365,7 @@ def apply_coupon():
 
     def _apply(cart):
         cart_items = cart.get('items', [])
-        cart_subtotal = sum(item.get('line_total', 0) for item in cart_items)
-        result = evaluate_coupon(code, cart_items, cart_subtotal, get_request_db(), cart=cart)
+        result = evaluate_coupon(code, cart_items, cart_subtotal(cart_items), get_request_db(), cart=cart)
         if not result.get('valid'):
             return result
         coupon = result['coupon']
@@ -340,7 +373,7 @@ def apply_coupon():
             'id': coupon['id'],
             'code': coupon['code'],
             'name': coupon['name'],
-            'discount': result['discount_amount'],
+            'discount_cents': result['discount_cents'],
             'cannot_combine': coupon.get('cannot_combine', False),
         }
         return result
@@ -349,7 +382,7 @@ def apply_coupon():
     if not result.get('valid'):
         return jsonify({'success': False, 'error': result.get('error', 'Invalid coupon.')}), 400
 
-    return jsonify({'success': True, 'discount_amount': result['discount_amount']})
+    return jsonify({'success': True, 'discount_amount': money.to_dollars(result['discount_cents'])})
 
 
 @pos_bp.route('/api/coupon/remove', methods=['POST'])
