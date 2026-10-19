@@ -269,8 +269,8 @@ def test_edit_sale_page_data(pos_world):
 
 def test_confirm_texts_keep_their_line_breaks(pos_world):
     html = _get(pos_world['register'], '/pos/receipt/%s' % pos_world['order_number'], pos_world['headers'])
-    assert ('⚠️ PERMANENTLY DELETE this order?\n\nThis action cannot be undone.'
-            in _scan(html).confirms)
+    assert ('Void this sale?\n\nEvery item comes off it and the customer is paid back $10.70. '
+            'The sale stays in the history, marked voided.' in _scan(html).confirms)
     html = _get(pos_world['manager'], '/pos/refunds/order/%s' % pos_world['order_number'])
     assert 'Process FULL refund of $ 10.70?' in _scan(html).confirms
 

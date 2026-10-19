@@ -179,13 +179,16 @@ def test_admin_form_posts_denied_without_side_effects(app):
     assert outcome(client_as(app, MANAGER).post('/admin/add_user', data={'username': 'x', 'password': 'Aa1aaaaa'})) == D
 
 
-def test_delete_order_is_admin_only(app):
-    resp = client_as(app, MANAGER).post('/pos/order/NOPE-1/delete')
+def test_void_order_is_admin_only(app):
+    # Voiding replaced deleting and keeps its permission
+    resp = client_as(app, MANAGER).post('/pos/order/NOPE-1/void')
     assert outcome(resp) == D
     # admin gets through the guard (and is told the order does not exist)
-    resp = client_as(app, ADMIN).post('/pos/order/NOPE-1/delete')
+    resp = client_as(app, ADMIN).post('/pos/order/NOPE-1/void')
     assert resp.status_code == 302
-    assert urlparse(resp.headers['Location']).path == '/pos/management'
+    assert urlparse(resp.headers['Location']).path == '/pos/management/sales'
+    # there is no delete any more
+    assert client_as(app, ADMIN).post('/pos/order/NOPE-1/delete').status_code in (404, 405)
 
 
 # --- module toggles --------------------------------------------------------

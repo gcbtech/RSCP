@@ -6,7 +6,7 @@ from datetime import date, datetime, time, timezone
 import pytest
 from flask import template_rendered
 
-from tests.conftest import login
+from tests.conftest import login, sales_unlocked
 
 TODAY = date.today()
 
@@ -279,8 +279,8 @@ def _seed_day(app, client):
                                               'item_id': [str(b_line)], f'quantity_{b_line}': '1'})
     client.post('/pos/refunds/process', data={'order_id': c, 'refund_type': 'full', 'reason': 'other'})
     conn = _db(app)
-    conn.execute('UPDATE pos_refunds SET created_at = ?', (_utc_at_local(13),))
-    conn.commit()
+    with sales_unlocked(conn):
+        conn.execute('UPDATE pos_refunds SET created_at = ?', (_utc_at_local(13),))
     conn.close()
     return a, b, c, d
 
@@ -310,7 +310,8 @@ def test_engine_numbers_for_a_seeded_day(fresh_app, fresh_client):
         ('card', 2, 6400, 2200, 4200),
     ]
     assert r['expected_cash'] == {'opening_float_cents': 10000, 'cash_sales_cents': 3190,
-                                  'cash_refunds_cents': 3300, 'total_cents': 9890}
+                                  'cash_refunds_cents': 3300, 'cash_corrections_cents': 0, 'total_cents': 9890}
+    assert r['corrections']['count'] == 0 and r['corrections']['total_cents'] == 0
     assert [(s['id'], s['over_short_cents']) for s in r['drawer_sessions']] == [(1, -90)]
     # legacy keys the Top Sellers reconciliation relies on
     assert r['summary']['gross_sales_cents'] == r['sales_total_cents'] and r['summary']['total_orders'] == 3
@@ -441,7 +442,8 @@ def test_receipt_reprint_uses_stored_coupon_amount(fresh_app, fresh_client):
     conn.execute('INSERT INTO pos_coupon_items (coupon_id, item_id) VALUES (?, ?)', (coupon_id, item))
     order_id = _insert_order(conn, 'POS-C-1', 4500, 0, 'card', {}, subtotal=5000)
     line = _insert_line(conn, order_id, 1, 5000, 5000)
-    conn.execute('UPDATE pos_order_items SET inventory_item_id = ? WHERE id = ?', (item, line))
+    with sales_unlocked(conn):
+        conn.execute('UPDATE pos_order_items SET inventory_item_id = ? WHERE id = ?', (item, line))
     conn.execute("INSERT INTO pos_coupon_redemptions (coupon_id, order_id, serial_used, discount_applied_cents, "
                  "redeemed_by) VALUES (?, ?, 'TENOFF', 500, 1)", (coupon_id, order_id))
     # The coupon's definition changes after the sale
@@ -455,12 +457,15 @@ def test_receipt_reprint_uses_stored_coupon_amount(fresh_app, fresh_client):
         assert '$25.00' not in html and '$10.00' not in html
 
 
-def test_editing_a_sale_rebuilds_its_payments(fresh_app, fresh_client):
+def test_editing_a_sale_records_the_difference_as_a_payment(fresh_app, fresh_client):
+    """The checkout's payments stay as they were; what the correction pays
+    back is a payments row of its own (split sales: in cash by default)."""
     from app.services.pos_ledger import write_payments, allocate_payments
     conn = _db(fresh_app)
     details = {'cash_cents': 1500, 'cards_cents': [2000]}
     order_id = _insert_order(conn, 'POS-E-1', 3000, 0, 'split', details, subtotal=3000)
-    conn.execute("UPDATE pos_orders SET tax_rate = 0 WHERE id = ?", (order_id,))
+    with sales_unlocked(conn):
+        conn.execute("UPDATE pos_orders SET tax_rate = 0 WHERE id = ?", (order_id,))
     line = _insert_line(conn, order_id, 1, 3000, 3000)
     write_payments(conn, order_id, allocate_payments('split', details, 3000))
     conn.commit()
@@ -469,11 +474,15 @@ def test_editing_a_sale_rebuilds_its_payments(fresh_app, fresh_client):
     login(fresh_client, 1)
     fresh_client.post(f'/pos/management/edit-sale/{order_id}', data={
         'item_id': [str(line)], 'item_quantity': ['1'], 'item_price': ['25'], 'item_name': ['LINE item']})
-    assert _payments(fresh_app, order_id) == [('card', 2000, None, 0), ('cash', 500, 1500, 1000)]
+    assert _payments(fresh_app, order_id) == [('card', 2000, None, 0), ('cash', 1000, 1500, 500),
+                                              ('cash', -500, None, 0)]
 
 
-def test_deleting_an_order_removes_its_payments(fresh_app, fresh_client):
+def test_voiding_an_order_pays_back_its_payments(fresh_app, fresh_client):
     order_id, _lines = _seed_card_order(fresh_app)
+    before = _payments(fresh_app, order_id)
     login(fresh_client, 1)
-    fresh_client.post('/pos/order/POS-R-1/delete', data={})
-    assert _payments(fresh_app, order_id) == []
+    fresh_client.post('/pos/order/POS-R-1/void', data={})
+    after = _payments(fresh_app, order_id)
+    assert after[:len(before)] == before
+    assert sum(p[1] for p in after) == 0 and all(p[1] < 0 for p in after[len(before):])

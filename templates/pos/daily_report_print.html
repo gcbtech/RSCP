@@ -117,6 +117,10 @@
 
     <!-- REFUNDS -->
     <div class="section">
+        {% if r.corrections.count %}
+        <div class="row"><span>Corrections ({{ r.corrections.count }}):</span><span>{{ r.corrections.total_cents|money }}</span></div>
+        <div class="row"><span>&nbsp;Tax Corrected:</span><span>{{ r.corrections.tax_cents|money }}</span></div>
+        {% endif %}
         <div class="row"><span>Refunds ({{ r.refunds.count }}):</span><span>-${{ r.refunds.total_cents|dollars }}</span></div>
         <div class="row"><span>&nbsp;Tax Refunded:</span><span>-${{ r.refunds.tax_cents|dollars }}</span></div>
         <div class="row"><span>Tax (net):</span><span>${{ r.tax_net_cents|dollars }}</span></div>
@@ -130,6 +134,9 @@
         {% if t.refunded_cents %}
         <div class="row"><span>&nbsp;taken ${{ t.collected_cents|dollars }}</span><span>ref. -${{ t.refunded_cents|dollars }}</span></div>
         {% endif %}
+        {% if t.corrected_cents %}
+        <div class="row"><span>&nbsp;corrections</span><span>{{ t.corrected_cents|money }}</span></div>
+        {% endif %}
         {% endfor %}
     </div>
 
@@ -138,6 +145,9 @@
         <div class="row"><span>Opening Float:</span><span>${{ r.expected_cash.opening_float_cents|dollars }}</span></div>
         <div class="row"><span>+ Cash Sales:</span><span>${{ r.expected_cash.cash_sales_cents|dollars }}</span></div>
         <div class="row"><span>- Cash Refunds:</span><span>${{ r.expected_cash.cash_refunds_cents|dollars }}</span></div>
+        {% if r.expected_cash.cash_corrections_cents %}
+        <div class="row"><span>+/- Cash Corrections:</span><span>{{ r.expected_cash.cash_corrections_cents|money }}</span></div>
+        {% endif %}
         <div class="row total-row"><span>EXPECTED CASH:</span><span>${{ r.expected_cash.total_cents|dollars }}</span></div>
         {% for s in r.drawer_sessions if not s.is_open %}
         <div class="row"><span>Drawer #{{ s.id }} counted:</span><span>${{ (s.counted_cash_cents or 0)|dollars }}</span></div>

@@ -110,7 +110,7 @@
             <div class="col">
                 <div class="stat-card">
                     <div class="stat-value text-primary">${{ report.net_revenue_cents|dollars }}</div>
-                    <div class="stat-label">Net Revenue <small>(after refunds)</small></div>
+                    <div class="stat-label">Net Revenue <small>(after refunds{% if report.corrections.count %} and {{ report.corrections.count }} correction{{ 's' if report.corrections.count != 1 }}{% endif %})</small></div>
                 </div>
             </div>
             <div class="col">

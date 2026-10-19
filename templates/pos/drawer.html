@@ -37,6 +37,9 @@
                         <tr><td>Starting float</td><td class="text-end">${{ (current.opening_float_cents or 0)|dollars }}</td></tr>
                         <tr><td>+ Cash sales</td><td class="text-end">${{ current.cash_sales_cents|dollars }}</td></tr>
                         <tr><td>&minus; Cash refunds</td><td class="text-end">${{ current.cash_refunds_cents|dollars }}</td></tr>
+                        {% if current.cash_corrections_cents %}
+                        <tr><td>&plusmn; Cash sale corrections</td><td class="text-end">{{ current.cash_corrections_cents|money }}</td></tr>
+                        {% endif %}
                         <tr class="fw-bold"><td>Expected in drawer now</td><td class="text-end">${{ current.expected_cash_cents|dollars }}</td></tr>
                     </tbody>
                 </table>

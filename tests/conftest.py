@@ -5,6 +5,7 @@ Shared fixtures.
 with one user per common role, so tests never depend on the dev box's data.
 Log a test client in with `login(client, user_id)`.
 """
+import contextlib
 import json
 import os
 import sys
@@ -66,3 +67,21 @@ def login(client, user_id):
     with client.session_transaction() as sess:
         sess['_user_id'] = str(user_id)
     return client
+
+
+@contextlib.contextmanager
+def sales_unlocked(conn):
+    """Test-only: lift the finished-sale triggers (schema v23) for a block,
+    e.g. to backdate a sale or refund to another day. They are back (and
+    committed) when the block ends."""
+    from app.services.migration import SALE_IMMUTABLE_TABLES, sale_immutable_triggers_sql
+    for table in SALE_IMMUTABLE_TABLES:
+        for op in ('update', 'delete'):
+            conn.execute(f'DROP TRIGGER IF EXISTS trg_{table}_no_{op}')
+    try:
+        yield conn
+    finally:
+        for sql in sale_immutable_triggers_sql():
+            conn.execute(sql)
+        if conn.in_transaction:
+            conn.commit()

@@ -339,7 +339,7 @@ def test_report_totals_for_the_day_are_unchanged(migrated):
     assert (r['gross_sales_cents'], r['net_sales_cents'], r['tax_collected_cents'], r['sales_total_cents'],
             r['tax_net_cents'], r['net_revenue_cents'], r['net_sales_after_refunds_cents']) ==         (12780, 11366, 804, 12170, 747, 11303, 10556)
     assert r['expected_cash'] == {'opening_float_cents': 10000, 'cash_sales_cents': 3173,
-                                  'cash_refunds_cents': 0, 'total_cents': 13173}
+                                  'cash_refunds_cents': 0, 'cash_corrections_cents': 0, 'total_cents': 13173}
     assert r['refunds'] == {'count': 1, 'total_cents': 867, 'tax_cents': 57, 'net_cents': 810,
                             'by_method_cents': {'card': 867}}
     assert [(t['method'], t['collected_cents'], t['refunded_cents']) for t in r['tenders']] == [

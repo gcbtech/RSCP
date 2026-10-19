@@ -6,6 +6,11 @@ daily report page, its thermal print view, the manual and automatic EOD
 emails, the custom report and the management dashboard. Pages add presentation extras (hourly or
 per-period activity, top items) but never recompute the money.
 
+Sales count on the sale date; refunds and sale corrections (Edit Sale saves
+and voids, schema v23) on the date they were made, which is when the money
+moved. A finished sale never changes, so a day's figures never change when
+a sale from that day is corrected later.
+
 Money is integer cents (keys end in _cents); sums of stored cents are exact,
 so nothing is re-rounded. The Top Sellers figures spread order-level
 discounts and tax over lines pro rata; those shares are fractional cents
@@ -36,8 +41,8 @@ def _m(value):
 def build_sales_report(start_date, end_date, conn=None):
     """The money figures (cents) for a local date range (inclusive).
 
-    Sales are counted on the sale date, refunds on the refund date (that is
-    when the money moved). Returns a dict:
+    Sales are counted on the sale date, refunds and sale corrections on the
+    date they were made (that is when the money moved). Returns a dict:
 
       order_count              completed (non-held) sales
       gross_sales_cents        list value of items sold, before any discount, ex. tax
@@ -47,12 +52,18 @@ def build_sales_report(start_date, end_date, conn=None):
       sales_total_cents        what customers paid
       refunds                  {'count', 'total_cents', 'tax_cents', 'net_cents',
                                 'by_method_cents': {method: cents}}
-      tax_net_cents            tax_collected - refunded tax
-      net_revenue_cents        sales_total - refunds total (incl. tax)
-      net_sales_after_refunds_cents   net_sales - refunds net (ex. tax)
-      tenders                  [{'method', 'label', 'count', 'collected_cents', 'refunded_cents', 'net_cents'}]
+      corrections              {'count', 'voids', 'subtotal_cents', 'discount_cents', 'coupon_cents',
+                                'cash_discount_cents', 'tax_cents', 'total_cents', 'net_cents',
+                                'by_method_cents'}: sale corrections made in the range, signed
+                               (negative = taken off sales / paid back)
+      tax_net_cents            tax_collected + corrections tax - refunded tax
+      net_revenue_cents        sales_total + corrections total - refunds total (incl. tax)
+      net_sales_after_refunds_cents   net_sales + corrections net - refunds net (ex. tax)
+      tenders                  [{'method', 'label', 'count', 'collected_cents', 'corrected_cents',
+                                 'refunded_cents', 'net_cents'}]
       tender_net_cents         {method: net cents}
-      expected_cash            {'opening_float_cents', 'cash_sales_cents', 'cash_refunds_cents', 'total_cents'}
+      expected_cash            {'opening_float_cents', 'cash_sales_cents', 'cash_refunds_cents',
+                                'cash_corrections_cents', 'total_cents'}
       drawer_sessions          drawer sessions overlapping the range, with expected/over-short
       summary                  legacy keys: total_orders, gross_sales_cents (= sales_total,
                                the "Overall Total"), total_tax_cents, total_discounts_cents
@@ -100,18 +111,39 @@ def build_sales_report(start_date, end_date, conn=None):
             GROUP BY method
         ''', rng).fetchall()
 
+        corr = conn.execute('''
+            SELECT COUNT(*) AS n,
+                   COALESCE(SUM(CASE WHEN kind = 'void' THEN 1 ELSE 0 END), 0) AS voids,
+                   COALESCE(SUM(subtotal_delta_cents), 0) AS subtotal,
+                   COALESCE(SUM(discount_delta_cents), 0) AS discount,
+                   COALESCE(SUM(coupon_delta_cents), 0) AS coupon,
+                   COALESCE(SUM(cash_discount_delta_cents), 0) AS cash_disc,
+                   COALESCE(SUM(tax_delta_cents), 0) AS tax,
+                   COALESCE(SUM(total_delta_cents), 0) AS total
+            FROM pos_sale_corrections
+            WHERE created_at BETWEEN ? AND ?
+        ''', rng).fetchone()
+
+        # Money moved by corrections, by tender, when it moved
+        corr_tenders = conn.execute('''
+            SELECT p.method AS method, COALESCE(SUM(p.amount_cents), 0) AS amount
+            FROM pos_payments p
+            WHERE p.correction_id IS NOT NULL AND p.created_at BETWEEN ? AND ?
+            GROUP BY p.method
+        ''', rng).fetchall()
+
         # Tenders from the ledger; a sale with no ledger rows (recorded by
         # something other than checkout) counts under its payment_method.
         tender_rows = conn.execute('''
             SELECT p.method AS method, COUNT(DISTINCT p.order_id) AS n, COALESCE(SUM(p.amount_cents), 0) AS amount
             FROM pos_payments p JOIN pos_orders o ON o.id = p.order_id
-            WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held'
+            WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held' AND p.correction_id IS NULL
             GROUP BY p.method
             UNION ALL
             SELECT o.payment_method, COUNT(*), COALESCE(SUM(o.total_cents), 0)
             FROM pos_orders o
             WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held'
-              AND NOT EXISTS (SELECT 1 FROM pos_payments p WHERE p.order_id = o.id)
+              AND NOT EXISTS (SELECT 1 FROM pos_payments p WHERE p.order_id = o.id AND p.correction_id IS NULL)
             GROUP BY o.payment_method
         ''', rng + rng).fetchall()
 
@@ -144,25 +176,39 @@ def build_sales_report(start_date, end_date, conn=None):
     refunds = {'count': refund_count, 'total_cents': refund_total, 'tax_cents': refund_tax,
                'net_cents': refund_total - refund_tax, 'by_method_cents': refunds_by_method}
 
+    corrected = {}
+    for t in corr_tenders:
+        corrected[t['method']] = corrected.get(t['method'], 0) + _m(t['amount'])
+    corrections = {
+        'count': corr['n'], 'voids': corr['voids'],
+        'subtotal_cents': _m(corr['subtotal']), 'discount_cents': _m(corr['discount']),
+        'coupon_cents': _m(corr['coupon']), 'cash_discount_cents': _m(corr['cash_disc']),
+        'tax_cents': _m(corr['tax']), 'total_cents': _m(corr['total']),
+        'net_cents': _m(corr['total']) - _m(corr['tax']),
+        'by_method_cents': corrected,
+    }
+
     collected, counts = {}, {}
     for t in tender_rows:
         collected[t['method']] = collected.get(t['method'], 0) + _m(t['amount'])
         counts[t['method']] = counts.get(t['method'], 0) + t['n']
-    methods = [m for m in _TENDER_ORDER if m in collected or m in refunds_by_method]
-    methods += sorted(m for m in set(collected) | set(refunds_by_method) if m not in methods)
+    seen = set(collected) | set(refunds_by_method) | set(corrected)
+    methods = [m for m in _TENDER_ORDER if m in seen]
+    methods += sorted(m for m in seen if m not in methods)
     tenders = []
     for m in methods:
-        c, rf = collected.get(m, 0), refunds_by_method.get(m, 0)
+        c, cr, rf = collected.get(m, 0), corrected.get(m, 0), refunds_by_method.get(m, 0)
         tenders.append({'method': m, 'label': TENDER_LABELS.get(m, (m or '').title()),
-                        'count': counts.get(m, 0), 'collected_cents': c, 'refunded_cents': rf,
-                        'net_cents': c - rf})
+                        'count': counts.get(m, 0), 'collected_cents': c, 'corrected_cents': cr,
+                        'refunded_cents': rf, 'net_cents': c + cr - rf})
     tender_net = {t['method']: t['net_cents'] for t in tenders}
 
     cash_sales = collected.get('cash', 0)
     cash_refunds = refunds_by_method.get('cash', 0)
+    cash_corrections = corrected.get('cash', 0)
     expected_cash = {'opening_float_cents': opening_float, 'cash_sales_cents': cash_sales,
-                     'cash_refunds_cents': cash_refunds,
-                     'total_cents': opening_float + cash_sales - cash_refunds}
+                     'cash_refunds_cents': cash_refunds, 'cash_corrections_cents': cash_corrections,
+                     'total_cents': opening_float + cash_sales - cash_refunds + cash_corrections}
 
     return {
         'start_date': start_date,
@@ -175,9 +221,10 @@ def build_sales_report(start_date, end_date, conn=None):
         'tax_collected_cents': tax_collected,
         'sales_total_cents': sales_total,
         'refunds': refunds,
-        'tax_net_cents': tax_collected - refund_tax,
-        'net_revenue_cents': sales_total - refund_total,
-        'net_sales_after_refunds_cents': net_sales - refunds['net_cents'],
+        'corrections': corrections,
+        'tax_net_cents': tax_collected + corrections['tax_cents'] - refund_tax,
+        'net_revenue_cents': sales_total + corrections['total_cents'] - refund_total,
+        'net_sales_after_refunds_cents': net_sales + corrections['net_cents'] - refunds['net_cents'],
         'tenders': tenders,
         'tender_net_cents': tender_net,
         'expected_cash': expected_cash,
@@ -189,10 +236,11 @@ def build_sales_report(start_date, end_date, conn=None):
 
 def daily_sales_series(start_date, end_date, conn=None):
     """Orders and sales total (incl. tax, before refunds) for every local date
-    in the range, zero-filled: [{'day': 'YYYY-MM-DD', 'orders', 'revenue_cents'}].
+    in the range, zero-filled, with the sale corrections made that day:
+    [{'day': 'YYYY-MM-DD', 'orders', 'revenue_cents', 'corrections_cents'}].
 
-    Same orders as build_sales_report, so the days add up to its order_count
-    and sales_total for the range.
+    Same figures as build_sales_report, so the days add up to its
+    order_count, sales_total and corrections total for the range.
     """
     own = conn is None
     if own:
@@ -206,17 +254,25 @@ def daily_sales_series(start_date, end_date, conn=None):
             WHERE created_at BETWEEN ? AND ? AND status != 'held'
             GROUP BY day
         ''', (start_dt, end_dt)).fetchall()
+        corr_rows = conn.execute('''
+            SELECT date(created_at, 'localtime') AS day, COALESCE(SUM(total_delta_cents), 0) AS total
+            FROM pos_sale_corrections
+            WHERE created_at BETWEEN ? AND ?
+            GROUP BY day
+        ''', (start_dt, end_dt)).fetchall()
     finally:
         if own:
             conn.close()
 
     by_day = {r['day']: r for r in rows}
+    corr_by_day = {r['day']: _m(r['total']) for r in corr_rows}
     series = []
     for i in range((end_date - start_date).days + 1):
         day = (start_date + timedelta(days=i)).strftime('%Y-%m-%d')
         r = by_day.get(day)
         series.append({'day': day, 'orders': r['orders'] if r else 0,
-                       'revenue_cents': _m(r['revenue']) if r else 0})
+                       'revenue_cents': _m(r['revenue']) if r else 0,
+                       'corrections_cents': corr_by_day.get(day, 0)})
     return series
 
 
@@ -385,32 +441,70 @@ LOCATION_NONE = '__none__'  # filter value meaning "no location set"
 # v16 set those dangling ids to NULL) -- when its SKU is not a CUSTOM-... one.
 _FROM_INVENTORY = "(oi.inventory_item_id IS NOT NULL OR oi.sku NOT LIKE 'CUSTOM-%')"
 
-# Order items resolve to their inventory item by id, falling back to SKU when the
-# original item was deleted and re-created. Refunds are attributed to the sale.
-# `ol` holds each order's line total so order-level discounts (order discount,
-# coupons, cash discount) and tax can be spread across lines by line value --
-# that keeps item figures adding up to the order totals the Custom Report uses.
-_TOP_SELLERS_FROM = '''
+# Top Sellers works on "facts": one row per sold line, on the sale date, and
+# one row per line a sale correction changed, on the correction date
+# (corrections count on the day they are made, like everywhere else).
+#   f.qty / f.list_cents   units and line value (corrections: signed deltas)
+#   f.rev / f.tax          the line's share of the sale ex. tax and of its tax:
+#                          for a sale, its line total spread pro rata over the
+#                          order total -- that keeps item figures adding up to
+#                          the order totals the Custom Report uses; for a
+#                          correction, the shares it recorded per line
+#   f.rf_*                 refunds of the line, attributed to the sale (by the
+#                          sale as it stands now, corrections applied)
+# Order items resolve to their inventory item by id, falling back to SKU when
+# the original item was deleted and re-created.
+# * 1.0: these ratios are fractions (SQLite would truncate INTEGER / INTEGER).
+_NET_RATIO = ('(CASE WHEN ol.lines_total > 0 THEN (o.total_cents - o.tax_amount_cents) * 1.0 / ol.lines_total '
+              'ELSE 0 END)')
+_TAX_RATIO = '(CASE WHEN ol.lines_total > 0 THEN o.tax_amount_cents * 1.0 / ol.lines_total ELSE 0 END)'
+_NOW_LINES = '(ol.lines_total + COALESCE(cn.lines_d, 0))'
+_NET_RATIO_NOW = (f'(CASE WHEN {_NOW_LINES} > 0 THEN ((o.total_cents + COALESCE(cn.total_d, 0)) '
+                  f'- (o.tax_amount_cents + COALESCE(cn.tax_d, 0))) * 1.0 / {_NOW_LINES} ELSE 0 END)')
+_TAX_RATIO_NOW = (f'(CASE WHEN {_NOW_LINES} > 0 THEN (o.tax_amount_cents + COALESCE(cn.tax_d, 0)) * 1.0 '
+                  f'/ {_NOW_LINES} ELSE 0 END)')
+
+_TOP_SELLERS_FACTS = f'''
+    SELECT oi.id AS line_id, o.id AS order_id, o.created_at AS at, 1 AS is_sale,
+           oi.quantity AS qty, oi.line_total_cents AS list_cents,
+           oi.line_total_cents * {_NET_RATIO} AS rev,
+           oi.line_total_cents * {_TAX_RATIO} AS tax,
+           COALESCE(rf.qty, 0) AS rf_qty,
+           COALESCE(rf.amount, 0) * {_NET_RATIO_NOW} AS rf_rev,
+           COALESCE(rf.amount, 0) * {_TAX_RATIO_NOW} AS rf_tax
     FROM pos_order_items oi
     JOIN pos_orders o ON o.id = oi.order_id
     JOIN (SELECT order_id, SUM(line_total_cents) AS lines_total
           FROM pos_order_items GROUP BY order_id) ol ON ol.order_id = o.id
-    LEFT JOIN inventory_items inv ON inv.id = COALESCE(
-        (SELECT x.id FROM inventory_items x WHERE x.id = oi.inventory_item_id),
-        CASE WHEN ''' + _FROM_INVENTORY + '''
-             THEN (SELECT y.id FROM inventory_items y WHERE y.sku = oi.sku) END)
+    LEFT JOIN (SELECT c.order_id, SUM(c.total_delta_cents) AS total_d, SUM(c.tax_delta_cents) AS tax_d,
+                      SUM((SELECT COALESCE(SUM(ci.line_total_delta_cents), 0) FROM pos_sale_correction_items ci
+                           WHERE ci.correction_id = c.id)) AS lines_d
+               FROM pos_sale_corrections c GROUP BY c.order_id) cn ON cn.order_id = o.id
     LEFT JOIN (
         SELECT order_item_id, SUM(quantity) AS qty, SUM(amount_cents) AS amount
         FROM pos_refund_items GROUP BY order_item_id
     ) rf ON rf.order_item_id = oi.id
     WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held'
+    UNION ALL
+    SELECT ci.order_item_id, c.order_id, c.created_at, 0,
+           ci.qty_delta, ci.line_total_delta_cents,
+           ci.revenue_delta_cents * 1.0, ci.tax_delta_cents * 1.0,
+           0, 0.0, 0.0
+    FROM pos_sale_correction_items ci
+    JOIN pos_sale_corrections c ON c.id = ci.correction_id
+    JOIN pos_orders co ON co.id = c.order_id
+    WHERE c.created_at BETWEEN ? AND ? AND co.status != 'held'
 '''
 
-# Share of a line's list value that was actually charged (ex. tax), and its share of
-# tax. * 1.0: these are fractions (SQLite would truncate INTEGER / INTEGER).
-_NET_RATIO = ('(CASE WHEN ol.lines_total > 0 THEN (o.total_cents - o.tax_amount_cents) * 1.0 / ol.lines_total '
-              'ELSE 0 END)')
-_TAX_RATIO = '(CASE WHEN ol.lines_total > 0 THEN o.tax_amount_cents * 1.0 / ol.lines_total ELSE 0 END)'
+_TOP_SELLERS_FROM = '''
+    FROM (''' + _TOP_SELLERS_FACTS + ''') f
+    JOIN pos_order_items oi ON oi.id = f.line_id
+    LEFT JOIN inventory_items inv ON inv.id = COALESCE(
+        (SELECT x.id FROM inventory_items x WHERE x.id = oi.inventory_item_id),
+        CASE WHEN ''' + _FROM_INVENTORY + '''
+             THEN (SELECT y.id FROM inventory_items y WHERE y.sku = oi.sku) END)
+    WHERE 1 = 1
+'''
 
 _TOP_SELLERS_KEY = '''
     CASE WHEN inv.id IS NOT NULL THEN 'i:' || inv.id
@@ -499,47 +593,47 @@ def _top_sellers_items(conn, start_date, end_date, where_sql, where_params):
                MAX(inv.buy_price_cents) AS buy_price_cents,
                MAX(inv.sell_price_cents) AS list_price_cents,
                MAX(inv.is_legacy) AS is_legacy,
-               SUM(oi.quantity) AS qty_sold,
-               SUM(oi.line_total_cents) AS list_revenue_cents,
-               SUM(oi.line_total_cents * {_NET_RATIO}) AS gross_revenue_cents,
-               SUM(oi.line_total_cents * {_TAX_RATIO}) AS gross_tax_cents,
-               COALESCE(SUM(rf.qty), 0) AS refunded_qty,
-               COALESCE(SUM(rf.amount * {_NET_RATIO}), 0) AS refunded_amount_cents,
-               COALESCE(SUM(rf.amount * {_TAX_RATIO}), 0) AS refunded_tax_cents,
-               COUNT(DISTINCT o.id) AS orders,
-               MIN(o.created_at) AS first_sold,
-               MAX(o.created_at) AS last_sold
+               SUM(f.qty) AS qty_sold,
+               SUM(f.list_cents) AS list_revenue_cents,
+               SUM(f.rev) AS gross_revenue_cents,
+               SUM(f.tax) AS gross_tax_cents,
+               COALESCE(SUM(f.rf_qty), 0) AS refunded_qty,
+               COALESCE(SUM(f.rf_rev), 0) AS refunded_amount_cents,
+               COALESCE(SUM(f.rf_tax), 0) AS refunded_tax_cents,
+               COUNT(DISTINCT CASE WHEN f.is_sale = 1 THEN f.order_id END) AS orders,
+               MIN(CASE WHEN f.is_sale = 1 THEN f.at END) AS first_sold,
+               MAX(CASE WHEN f.is_sale = 1 THEN f.at END) AS last_sold
         {_TOP_SELLERS_FROM} {where_sql}
         GROUP BY item_key
-    ''', [start_dt, end_dt] + where_params).fetchall()
+    ''', [start_dt, end_dt, start_dt, end_dt] + where_params).fetchall()
 
 
 def _top_sellers_order_count(conn, start_date, end_date, where_sql, where_params):
     start_dt, end_dt = _utc_bounds(start_date, end_date)
     return conn.execute(f'''
-        SELECT COUNT(DISTINCT o.id) {_TOP_SELLERS_FROM} {where_sql}
-    ''', [start_dt, end_dt] + where_params).fetchone()[0]
+        SELECT COUNT(DISTINCT CASE WHEN f.is_sale = 1 THEN f.order_id END) {_TOP_SELLERS_FROM} {where_sql}
+    ''', [start_dt, end_dt, start_dt, end_dt] + where_params).fetchone()[0]
 
 
 def _top_sellers_trend(conn, start_date, end_date, where_sql, where_params):
     """Net units/revenue per day, week, or month (depending on range length)."""
     range_days = (end_date - start_date).days + 1
     if range_days <= 31:
-        grouping, period_expr = 'daily', "date(o.created_at, 'localtime')"
+        grouping, period_expr = 'daily', "date(f.at, 'localtime')"
     elif range_days <= 180:
-        grouping, period_expr = 'weekly', "strftime('%Y-W%W', o.created_at, 'localtime')"
+        grouping, period_expr = 'weekly', "strftime('%Y-W%W', f.at, 'localtime')"
     else:
-        grouping, period_expr = 'monthly', "strftime('%Y-%m', o.created_at, 'localtime')"
+        grouping, period_expr = 'monthly', "strftime('%Y-%m', f.at, 'localtime')"
 
     start_dt, end_dt = _utc_bounds(start_date, end_date)
     rows = conn.execute(f'''
         SELECT {period_expr} AS period,
-               MIN(date(o.created_at, 'localtime')) AS period_start,
-               SUM(oi.quantity) - COALESCE(SUM(rf.qty), 0) AS units,
-               SUM(oi.line_total_cents * {_NET_RATIO}) - COALESCE(SUM(rf.amount * {_NET_RATIO}), 0) AS revenue
+               MIN(date(f.at, 'localtime')) AS period_start,
+               SUM(f.qty) - COALESCE(SUM(f.rf_qty), 0) AS units,
+               SUM(f.rev) - COALESCE(SUM(f.rf_rev), 0) AS revenue
         {_TOP_SELLERS_FROM} {where_sql}
         GROUP BY period ORDER BY period
-    ''', [start_dt, end_dt] + where_params).fetchall()
+    ''', [start_dt, end_dt, start_dt, end_dt] + where_params).fetchall()
 
     by_period = {r['period']: r for r in rows}
     trend = []

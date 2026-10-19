@@ -12,7 +12,7 @@ from app.services import inventory as inv
 from app.services import pos_checkout, pos_refunds
 from app.services.db import get_db_connection
 from app.services.pos_pricing import PricingConfig
-from tests.conftest import login
+from tests.conftest import login, sales_unlocked
 
 CASHIER = SimpleNamespace(id=2, username='cashier')
 MANAGER = SimpleNamespace(id=3, username='manager')
@@ -108,8 +108,9 @@ def _seed_day(conn):
     assert (full_d.amount_cents, full_d.tax_refunded_cents, full_d.refund_method) == (2625, 250, 'cash')
 
     # Pin everything to the middle of the local day so the test never straddles midnight
-    conn.execute('UPDATE pos_orders SET created_at = ?', (_utc_at_local(_today(), 12),))
-    conn.execute('UPDATE pos_refunds SET created_at = ?', (_utc_at_local(_today(), 13),))
+    with sales_unlocked(conn):
+        conn.execute('UPDATE pos_orders SET created_at = ?', (_utc_at_local(_today(), 12),))
+        conn.execute('UPDATE pos_refunds SET created_at = ?', (_utc_at_local(_today(), 13),))
     return a, b, c, d
 
 
@@ -177,7 +178,8 @@ def test_dashboard_matches_the_report_engine_for_a_mixed_day(fresh_app, fresh_cl
     # Est. profit after discounts and refunds, ex. tax (Top Sellers): WIDGET 20-8, CABLE 20-5;
     # LAPTOP and GADGET were fully refunded
     assert dash['profit']['profit_cents'] == pytest.approx(2700)
-    assert dash['daily_sales'] == [{'day': today.isoformat(), 'orders': 4, 'revenue_cents': 14725}]
+    assert dash['daily_sales'] == [{'day': today.isoformat(), 'orders': 4, 'revenue_cents': 14725,
+                                    'corrections_cents': 0}]
 
     for figure in ('$147.25', '$44.00', '$27.00', '$36.81', '$103.25', 'Refunds (3)', '$68.25', '$79.00'):
         assert figure in html, figure
@@ -192,12 +194,14 @@ def test_dashboard_range_and_daily_series_add_up_to_the_engine(fresh_app, fresh_
     today = _today()
     widget = conn.execute("SELECT id FROM inventory_items WHERE sku = 'WIDGET'").fetchone()[0]
     earlier = _sell(conn, _cart(widget, 'WIDGET', 1000), 'card', TAX10)
-    conn.execute('UPDATE pos_orders SET created_at = ? WHERE id = ?',
-                 (_utc_at_local(today - timedelta(days=3), 23), earlier.order_id))
+    with sales_unlocked(conn):
+        conn.execute('UPDATE pos_orders SET created_at = ? WHERE id = ?',
+                     (_utc_at_local(today - timedelta(days=3), 23), earlier.order_id))
     held = conn.execute('''INSERT INTO pos_orders (order_number, status, subtotal_cents, tax_rate, tax_amount_cents,
                                                    total_cents, payment_method, operator_id)
                            VALUES ('HELD-1', 'held', 10000, 0, 0, 10000, 'cash', 2)''').lastrowid
-    conn.execute('UPDATE pos_orders SET created_at = ? WHERE id = ?', (_utc_at_local(today, 12), held))
+    with sales_unlocked(conn):
+        conn.execute('UPDATE pos_orders SET created_at = ? WHERE id = ?', (_utc_at_local(today, 12), held))
     login(fresh_client, 3)
 
     start = today - timedelta(days=6)
@@ -213,11 +217,12 @@ def test_dashboard_range_and_daily_series_add_up_to_the_engine(fresh_app, fresh_
         assert [s['day'] for s in series] == [(start + timedelta(days=i)).isoformat() for i in range(7)]
         assert sum(s['orders'] for s in series) == engine['order_count']
         assert sum(s['revenue_cents'] for s in series) == engine['sales_total_cents']
-        assert series[3] == {'day': (today - timedelta(days=3)).isoformat(), 'orders': 1, 'revenue_cents': 1100}
+        assert series[3] == {'day': (today - timedelta(days=3)).isoformat(), 'orders': 1, 'revenue_cents': 1100,
+                             'corrections_cents': 0}
 
     with fresh_app.app_context():
         assert daily_sales_series(today, today) == [{'day': today.isoformat(), 'orders': 4,
-                                                     'revenue_cents': 14725}]
+                                                     'revenue_cents': 14725, 'corrections_cents': 0}]
 
 
 @pytest.mark.parametrize('query', [

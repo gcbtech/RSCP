@@ -31,6 +31,8 @@
             <a href="{{ url_for('pos.management') }}" class="btn btn-outline-primary">← Back to Dashboard</a>
         </div>
 
+        {% include 'pos/_flashes.html' %}
+
         <!-- Filters -->
         <div class="table-card p-3 mb-3">
             <form method="GET" class="row g-2">
@@ -59,6 +61,7 @@
                         <option value="refunded" {% if status=='refunded' %}selected{% endif %}>Refunded</option>
                         <option value="partial_refund" {% if status=='partial_refund' %}selected{% endif %}>Partial
                             Refund</option>
+                        <option value="voided" {% if status=='voided' %}selected{% endif %}>Voided</option>
                     </select>
                 </div>
                 <div class="col-md-3">
@@ -88,17 +91,22 @@
                         <td>{{ order.operator_name }}</td>
                         <td>
                             <span
-                                class="badge bg-{% if order.status == 'completed' %}success{% elif order.status == 'refunded' %}danger{% else %}warning{% endif %}">
+                                class="badge bg-{% if order.status == 'completed' %}success{% elif order.status in ('refunded', 'voided') %}danger{% else %}warning{% endif %}">
                                 {{ order.status }}
                             </span>
+                            {% if order.correction_count and order.status != 'voided' %}
+                            <span class="badge bg-light text-dark border" title="Corrected after the sale">corrected</span>
+                            {% endif %}
                         </td>
                         <td>{{ order.payment_method }}</td>
-                        <td class="text-end fw-bold">${{ order.total_cents|dollars }}</td>
+                        <td class="text-end fw-bold">${{ order.net_total_cents|dollars }}</td>
                         <td>
                             <a href="{{ url_for('pos.receipt', order_number=order.order_number) }}"
                                 class="btn btn-sm btn-outline-primary">View</a>
+                            {% if order.status != 'voided' %}
                             <a href="{{ url_for('pos.edit_sale', order_id=order.id) }}"
                                 class="btn btn-sm btn-outline-warning" title="Edit Sale">✏️</a>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}

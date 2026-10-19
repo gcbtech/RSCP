@@ -138,7 +138,9 @@ def _refund_total(app, order_id):
     conn = _db(app)
     t = conn.execute('SELECT COALESCE(SUM(amount_cents), 0) FROM pos_refunds WHERE order_id = ?',
                      (order_id,)).fetchone()[0]
-    status = conn.execute('SELECT status FROM pos_orders WHERE id = ?', (order_id,)).fetchone()[0]
+    # The status is derived from the refunds (the order row never changes)
+    from app.services.pos_order_state import order_state
+    status = order_state(conn, order_id)['status']
     conn.close()
     return t, status
 

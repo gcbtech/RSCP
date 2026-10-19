@@ -112,12 +112,12 @@ def flow_sale_edit(ctx):
     return item, -1, 'sale_edit', 'order', sale.order_id, f'{sale.order_number}: qty increased'
 
 
-def flow_sale_delete(ctx):
+def flow_sale_void(ctx):
     item = _item(ctx.conn)
     sale = _sell(ctx.conn, item, 2)
     ctx.mark()
-    pos_sales.delete_order(ctx.conn, sale.order_number, True, ADMIN)
-    return item, 2, 'sale_delete', 'order', sale.order_id, f'{sale.order_number}: sale deleted'
+    pos_sales.void_order(ctx.conn, sale.order_number, True, ADMIN)
+    return item, 2, 'sale_void', 'order', sale.order_id, f'{sale.order_number}: sale voided'
 
 
 def flow_receive_linked_package(ctx):
@@ -216,7 +216,7 @@ def flow_reversal(ctx):
     return item, 3, 'reversal', 'movement', damaged, ...
 
 
-FLOWS = [flow_sale, flow_refund_restock, flow_sale_edit, flow_sale_delete,
+FLOWS = [flow_sale, flow_refund_restock, flow_sale_edit, flow_sale_void,
          flow_receive_linked_package, flow_receive_add_stock_page, flow_receive_scan_screen,
          flow_manual_adjust_preset, flow_manual_adjust_custom, flow_scan_quick_adjust,
          flow_absolute_count_audit, flow_absolute_count_mark_oos,
@@ -530,11 +530,12 @@ def test_item_page_shows_stock_history_with_links(conn, fresh_client):
 
 
 def test_item_page_with_deleted_references(conn, fresh_client):
+    # Sales deleted before schema v23 (sales are permanent now) left movements
+    # pointing at an order that no longer exists
     item = _item(conn, qty=4)
-    sale = _sell(conn, item, 1)
-    pos_sales.delete_order(conn, sale.order_number, False, ADMIN)
+    inv.adjust_stock(conn, item, -1, inv.REASON_SALE, '2', 'POS-OLD-1', ref_type=inv.REF_ORDER, ref_id=987654)
     html = login(fresh_client, 1).get(f'/inventory/edit/{item}').get_data(as_text=True)
-    assert 'Order (deleted)' in html and sale.order_number in html   # the note keeps the number
+    assert 'Order (deleted)' in html and 'POS-OLD-1' in html   # the note keeps the number
 
 
 def test_delete_route_refuses_items_with_history(conn, fresh_client):
