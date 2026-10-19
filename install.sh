@@ -28,6 +28,10 @@
 #   --noninteractive, -y    never prompt (implied when there is no terminal)
 #   --upgrade               require an existing install (used by the updater)
 #   --rollback              switch back to the previous release
+#   --restore-db            with --rollback: also put back the database from
+#                           before the update, when the previous release can't
+#                           read the upgraded one (anything recorded since is
+#                           saved to backups/pre-rollback-*.db, not lost)
 #   --migrate-from DIR      one-time move of a 2.x install (e.g. /opt/ebay_receiver)
 #   --legacy-unit NAME      systemd unit of that 2.x install (default: rscp)
 #   --from-request FILE     read action/channel from a web UI request (rscp-update.service)
@@ -77,6 +81,9 @@ main() {
     REQUEST_ID=""
     MIGRATE_NEEDED=0
     DB_BACKUP=""
+    RESTORE_DB=0
+    RESTORE_FROM=""
+    RESTORED_KEEP=""
     ACTION="install"
     BUILD_DIR=""
     STAGING_DIR=""
@@ -196,6 +203,7 @@ parse_args() {
             --from-request)   need_arg "$@"; REQUEST_FILE="$2"; shift 2 ;;
             --upgrade)        UPGRADE=1; NONINTERACTIVE=1; shift ;;
             --rollback)       ROLLBACK=1; NONINTERACTIVE=1; shift ;;
+            --restore-db)     RESTORE_DB=1; shift ;;
             --backup-paths)   BACKUP_PATHS_ONLY=1; NONINTERACTIVE=1; shift ;;
             --install-units)  need_arg "$@"; INSTALL_UNITS_REL="$2"; NONINTERACTIVE=1; shift 2 ;;
             --noninteractive|--non-interactive|-y) NONINTERACTIVE=1; shift ;;
@@ -843,6 +851,68 @@ PY
 }
 
 # --------------------------------------------------------------------------
+# Schema versions. Migrations are one-way (schema 15 made money integer
+# cents), so a release can only run on a database at or below the newest
+# schema it knows; going back across a schema change also needs the
+# database from before that change.
+# --------------------------------------------------------------------------
+
+db_file_schema() {  # db_file_schema FILE: its PRAGMA user_version (0 if missing)
+    [ -f "$1" ] || { echo 0; return 0; }
+    as_rscp python3 -I - "$1" <<'PY'
+import sqlite3, sys
+c = sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True)
+print(c.execute("PRAGMA user_version").fetchone()[0])
+PY
+}
+
+release_schema() {  # release_schema RELEASE_DIR: newest schema it knows (empty if unknown)
+    local rel="$1"
+    [ -x "$rel/venv/bin/python" ] || return 0
+    as_rscp env RSCP_DATA_DIR="$DATA_DIR" "$rel/venv/bin/python" -c \
+        'import sys; sys.path.insert(0, sys.argv[1]); from app.services.migration import LATEST_SCHEMA_VERSION as v; print(v)' \
+        "$rel" 2>/dev/null || true
+}
+
+newest_backup_at_most() {  # newest_backup_at_most SCHEMA: newest pre-update backup at or below it
+    as_rscp python3 -I - "$DATA_DIR/backups" "$1" <<'PY'
+import glob, os, sqlite3, sys
+root, limit = sys.argv[1], int(sys.argv[2])
+for path in sorted(glob.glob(os.path.join(root, "pre-update-*.db")), key=os.path.getmtime, reverse=True):
+    try:
+        c = sqlite3.connect("file:%s?mode=ro" % path, uri=True)
+        v = c.execute("PRAGMA user_version").fetchone()[0]
+        c.close()
+    except sqlite3.Error:
+        continue
+    if v <= limit:
+        print(path)
+        break
+PY
+}
+
+restore_db_from() {  # restore_db_from FILE: stop RSCP, save the live DB, copy FILE over it
+    local src="$1"
+    systemctl stop "$UNIT.service" 2>/dev/null || true
+    RESTORED_KEEP=$(as_rscp python3 -I - "$DATA_DIR/rscp.db" "$src" "$DATA_DIR/backups" <<'PY'
+import os, sqlite3, sys, time
+db, src, root = sys.argv[1:4]
+keep = os.path.join(root, "pre-rollback-%s.db" % time.strftime("%Y%m%d-%H%M%S"))
+live = sqlite3.connect(db, timeout=30)
+saved = sqlite3.connect(keep)
+live.backup(saved)
+saved.close()
+old = sqlite3.connect("file:%s?mode=ro" % src, uri=True)
+old.backup(live)
+old.close()
+live.close()
+print(keep)
+PY
+    ) || die "Could not restore the database from $src; the live database was not replaced."
+    info "Database restored from $src (the newer database is saved as $RESTORED_KEEP)"
+}
+
+# --------------------------------------------------------------------------
 # Health check
 # --------------------------------------------------------------------------
 
@@ -1183,6 +1253,17 @@ run_install() {
     fi
     if [ -n "$old_release" ]; then
         warn "v$NEW_VERSION is unhealthy; rolling back to $(basename "$old_release")."
+        # If the new release's migrations already upgraded the database, the
+        # old release can't read it: put the pre-update backup back as well.
+        if [ -n "$DB_BACKUP" ] && [ -f "$DB_BACKUP" ]; then
+            local now_schema was_schema
+            now_schema=$(db_file_schema "$DATA_DIR/rscp.db")
+            was_schema=$(db_file_schema "$DB_BACKUP")
+            if [ -n "$now_schema" ] && [ -n "$was_schema" ] && [ "$now_schema" -gt "$was_schema" ]; then
+                warn "The database was already upgraded (schema $was_schema -> $now_schema); restoring the pre-update backup."
+                restore_db_from "$DB_BACKUP"
+            fi
+        fi
         install_units "$old_release"
         systemctl restart "$UNIT.service" || true
         local old_version
@@ -1217,16 +1298,38 @@ run_rollback() {
     local tver cver
     tver=$(release_version "$target")
     cver=$(release_version "$cur")
+    # Can the target read the database as it is now? (Migrations are one-way.)
+    local db_schema target_schema backup msg
+    db_schema=$(db_file_schema "$DATA_DIR/rscp.db")
+    target_schema=$(release_schema "$target")
+    [ -n "$target_schema" ] || die "Can't tell which database version $(basename "$target") needs; not rolling back."
+    if [ "$db_schema" -gt "$target_schema" ]; then
+        backup=$(newest_backup_at_most "$target_schema")
+        if [ "$RESTORE_DB" -ne 1 ]; then
+            msg="v$tver can't run on this database: it was upgraded to schema $db_schema and v$tver only knows up to $target_schema. Rolling back needs the database from before the upgrade${backup:+ ($backup)}, and anything recorded since then would be undone (it is kept in a pre-rollback backup). To do that, run on the server: sudo /opt/rscp/bin/rscp-update --rollback --restore-db"
+            write_status error "" "$msg"
+            die "$msg"
+        fi
+        [ -n "$backup" ] || die "No pre-update backup at schema $target_schema or older in $DATA_DIR/backups; not rolling back."
+        RESTORE_FROM="$backup"
+    fi
+
     step "Rolling back from $(basename "$cur") to $(basename "$target")..."
     activate_release "$target" "$cur"
     install_units "$target"
+    [ -z "$RESTORE_FROM" ] || restore_db_from "$RESTORE_FROM"
     if restart_and_check "$tver"; then
-        write_status success "Rolled back to v$tver. The database was not changed." "" "$tver"
+        if [ -n "$RESTORE_FROM" ]; then
+            write_status success "Rolled back to v$tver with the database from $(basename "$RESTORE_FROM"); the newer database is saved as $(basename "$RESTORED_KEEP")." "" "$tver"
+        else
+            write_status success "Rolled back to v$tver. The database was not changed." "" "$tver"
+        fi
         log "Rolled back to $(basename "$target")."
         return 0
     fi
     warn "v$tver is unhealthy; returning to $(basename "$cur")."
     activate_release "$cur" "$target"
+    [ -z "$RESTORE_FROM" ] || restore_db_from "$RESTORED_KEEP"
     install_units "$cur"
     systemctl restart "$UNIT.service" || true
     wait_healthy "$cver" || true
