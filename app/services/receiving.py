@@ -196,7 +196,7 @@ def receive_scan(conn, raw, user, inventory_enabled=False, conf=None):
                 inv = {
                     'id': item['id'], 'sku': item['sku'], 'name': item['name'],
                     'quantity': item['quantity'], 'image_url': item['image_url'],
-                    'sell_price': item['sell_price'], 'location': _location(item),
+                    'sell_price_cents': item['sell_price_cents'], 'location': _location(item),
                 }
                 return ScanResult('inventory', tracking, [], [], inv, None)
         return ScanResult('unknown', tracking, [], [], None, None)

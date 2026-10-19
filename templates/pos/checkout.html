@@ -250,19 +250,19 @@
             <div class="pt-3">{% include 'pos/_flashes.html' %}</div>
             <div class="checkout-header">
                 <h1>💳 Checkout</h1>
-                {% if cash_discount_enabled and cash_discount_value > 0 %}
+                {% if cash_discount_enabled and cash_discount_cents > 0 %}
                 <div class="d-flex justify-content-center flex-wrap gap-3 mt-3">
                     <div style="background: rgba(34, 197, 94, 0.2); padding: 0.5rem 1.5rem; border-radius: 12px; border: 1px solid rgba(34, 197, 94, 0.4); text-align: center;">
                         <div style="font-size: 1.1rem; font-weight: 500;">💵 Cash</div>
-                        <div style="font-size: 2.5rem; font-weight: 700; color: #4ade80; line-height: 1.2;">${{ "%.2f"|format(total - cash_discount_value) }}</div>
+                        <div style="font-size: 2.5rem; font-weight: 700; color: #4ade80; line-height: 1.2;">${{ (total_cents - cash_discount_cents)|dollars }}</div>
                     </div>
                     <div style="background: rgba(255, 255, 255, 0.15); padding: 0.5rem 1.5rem; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.2); text-align: center;">
                         <div style="font-size: 1.1rem; font-weight: 500;">💳 Card</div>
-                        <div style="font-size: 2.5rem; font-weight: 700; line-height: 1.2;">${{ "%.2f"|format(total) }}</div>
+                        <div style="font-size: 2.5rem; font-weight: 700; line-height: 1.2;">${{ total_cents|dollars }}</div>
                     </div>
                 </div>
                 {% else %}
-                <div class="total">${{ "%.2f"|format(total) }}</div>
+                <div class="total">${{ total_cents|dollars }}</div>
                 {% endif %}
             </div>
 
@@ -281,38 +281,38 @@
                             {% endif %}
                         </span>
                         <div class="text-end">
-                            {% if item.is_on_sale and item.regular_price %}
+                            {% if item.is_on_sale and item.regular_price_cents %}
                             <small class="text-muted text-decoration-line-through me-1" style="font-size: 0.85rem;">
-                                ${{ "%.2f"|format(item.regular_price * item.quantity) }}
+                                ${{ (item.regular_price_cents * item.quantity)|dollars }}
                             </small>
                             {% endif %}
-                            <span>${{ "%.2f"|format(item.line_total) }}</span>
+                            <span>${{ item.line_total_cents|dollars }}</span>
                         </div>
                     </div>
                     {% endfor %}
                     <div class="summary-row">
                         <span>Subtotal</span>
-                        <span>${{ "%.2f"|format(subtotal) }}</span>
+                        <span>${{ subtotal_cents|dollars }}</span>
                     </div>
-                    {% if order_discount > 0 %}
+                    {% if order_discount_cents > 0 %}
                     <div class="summary-row text-warning">
                         <span>Discount</span>
-                        <span>-${{ "%.2f"|format(order_discount) }}</span>
+                        <span>-${{ order_discount_cents|dollars }}</span>
                     </div>
                     {% endif %}
-                    {% if coupon_discount > 0 %}
+                    {% if coupon_discount_cents > 0 %}
                     <div class="summary-row" style="color: #16a34a;">
                         <span>Coupon Discount</span>
-                        <span>-${{ "%.2f"|format(coupon_discount) }}</span>
+                        <span>-${{ coupon_discount_cents|dollars }}</span>
                     </div>
                     {% endif %}
                     <div class="summary-row">
                         <span>Tax ({{ "%.2f"|format(tax_rate) }}%)</span>
-                        <span>${{ "%.2f"|format(tax_amount) }}</span>
+                        <span>${{ tax_amount_cents|dollars }}</span>
                     </div>
                     <div class="summary-row total">
                         <span>Total</span>
-                        <span>${{ "%.2f"|format(total) }}</span>
+                        <span>${{ total_cents|dollars }}</span>
                     </div>
                 </details>
 
@@ -327,7 +327,7 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <input type="hidden" name="payment_method" id="paymentMethod" value="card">
                     <input type="hidden" name="checkout_token" value="{{ checkout_token }}">
-                    <input type="hidden" name="expected_total" value="{{ '%.2f'|format(total) }}">
+                    <input type="hidden" name="expected_total" value="{{ total_cents|dollars }}">
                     {% if cart_version is not none %}<input type="hidden" name="cart_version" value="{{ cart_version }}">{% endif %}
 
                     <!-- Cash Payment -->
@@ -352,12 +352,12 @@
                                     style="background: #fef2f2; border-color: #dc2626;">Clear</button>
                             </div>
 
-                            {% if cash_discount_enabled and cash_discount_value > 0 %}
+                            {% if cash_discount_enabled and cash_discount_cents > 0 %}
                             <div class="alert alert-success text-center mb-2" style="font-weight: 600;">
-                                💰 Cash Discount: -${{ "%.2f"|format(cash_discount_value) }}
-                                {% if cash_discount_type == 'percent' %}({{ cash_discount_amount }}% off){% endif %}
+                                💰 Cash Discount: -${{ cash_discount_cents|dollars }}
+                                {% if cash_discount_type == 'percent' %}({{ cash_discount_percent }}% off){% endif %}
                                 <br>
-                                <span class="fs-5">Pay only ${{ "%.2f"|format(total - cash_discount_value) }}</span>
+                                <span class="fs-5">Pay only ${{ (total_cents - cash_discount_cents)|dollars }}</span>
                             </div>
                             {% endif %}
 
@@ -374,7 +374,7 @@
                             <div style="font-size: 4rem;">💳</div>
                             <h4>Card Payment</h4>
                             <p class="fs-4">Enter <strong class="display-1 text-primary d-block my-3">${{
-                                    "%.2f"|format(total) }}</strong> on the card terminal</p>
+                                    total_cents|dollars }}</strong> on the card terminal</p>
                             <div class="alert alert-info">
                                 <strong>Note:</strong> Press "Complete Sale" after the card payment is approved.
                             </div>
@@ -403,7 +403,7 @@
                             </div>
 
                             <div class="split-remaining" id="splitRemaining">
-                                <div>Remaining: <strong id="remainingAmount">${{ "%.2f"|format(total) }}</strong></div>
+                                <div>Remaining: <strong id="remainingAmount">${{ total_cents|dollars }}</strong></div>
                             </div>
                         </div>
                     </div>
@@ -424,10 +424,11 @@
 
 {% block page_data %}
     <script type="application/json" id="page-data">{{ {
-        'total': total|float,
-        'cashDiscountValue': cash_discount_value|float,
+        'total': total_cents|dollar_number,
+        'cashDiscountValue': cash_discount_cents|dollar_number,
         'cashDiscountEnabled': true if cash_discount_enabled else false,
-        'cashDiscountAmount': cash_discount_amount|float,
+        'cashDiscountAmount': (cash_discount_percent if cash_discount_type == 'percent'
+                               else cash_discount_fixed_cents|dollar_number)|float,
         'cashDiscountType': cash_discount_type|string
     }|tojson }}</script>
 {% endblock %}

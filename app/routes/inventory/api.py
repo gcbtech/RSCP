@@ -9,7 +9,7 @@ from flask_login import current_user
 from app.routes.inventory import inventory_bp
 from app.routes.inventory.core import is_inventory_enabled
 from app.services.db import get_db_connection
-from app.services import inventory
+from app.services import inventory, money
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,7 @@ def lookup_sku(sku):
     conn = get_db_connection()
     try:
         item = conn.execute('''
-            SELECT id, sku, name, quantity, image_url, sell_price,
+            SELECT id, sku, name, quantity, image_url, sell_price_cents,
                    location_area, location_aisle, location_shelf, location_bin
             FROM inventory_items 
             WHERE sku = ?
@@ -131,7 +131,7 @@ def lookup_sku(sku):
                     "name": item['name'],
                     "quantity": item['quantity'],
                     "image_url": item['image_url'],
-                    "sell_price": item['sell_price'],
+                    "sell_price": money.to_dollars(item['sell_price_cents']),
                     "location": ' / '.join(filter(None, [
                         item['location_area'],
                         item['location_aisle'],

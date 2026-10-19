@@ -301,12 +301,12 @@ def sku_in_use(conn, sku, exclude_id=None):
 
 
 def apply_sale_pricing(item, now=None):
-    """Add regular_price / current_price / is_on_sale to an item dict from
-    its sale_* fields (sale window strings are 'YYYY-MM-DDTHH:MM', local)."""
+    """Add regular_price_cents / current_price_cents / is_on_sale to an item
+    dict from its sale_* fields (sale window strings are 'YYYY-MM-DDTHH:MM', local)."""
     now = now or datetime.now()
-    item['regular_price'] = item['sell_price']
+    item['regular_price_cents'] = item['sell_price_cents']
     item['is_on_sale'] = False
-    item['current_price'] = item['sell_price']
+    item['current_price_cents'] = item['sell_price_cents']
 
     if item.get('sale_enabled'):
         try:
@@ -319,7 +319,7 @@ def apply_sale_pricing(item, now=None):
                 if now > datetime.strptime(item['sale_end'], '%Y-%m-%dT%H:%M'):
                     end_valid = False
             if start_valid and end_valid:
-                item['current_price'] = item['sale_price']
+                item['current_price_cents'] = item['sale_price_cents']
                 item['is_on_sale'] = True
         except (ValueError, TypeError) as e:
             logger.warning(f"Error parsing sale dates for item {item.get('sku')}: {e}")
@@ -399,8 +399,8 @@ def create_item(conn, fields, user=None, first_stock_date_default=None):
     """Insert an item and log its initial stock. Returns the new item id.
 
     fields: sku (required: generate one first), name, quantity, location_*,
-    asin, image_url, additional_images (list), source_url, buy_price,
-    sell_price, supplier, first_stock_date, resupply_interval,
+    asin, image_url, additional_images (list), source_url, buy_price_cents,
+    sell_price_cents, supplier, first_stock_date, resupply_interval,
     alert_threshold, upc, part_number, keywords, addon_1, addon_2,
     description, notes.
     Alerts are enabled exactly when alert_threshold > 0. An ASIN fills in a
@@ -423,13 +423,13 @@ def create_item(conn, fields, user=None, first_stock_date_default=None):
             cur = conn.execute('''
                 INSERT INTO inventory_items
                 (sku, name, quantity, location_area, location_aisle, location_shelf, location_bin,
-                 asin, image_url, source_url, buy_price, sell_price, supplier, first_stock_date,
+                 asin, image_url, source_url, buy_price_cents, sell_price_cents, supplier, first_stock_date,
                  resupply_interval, alert_enabled, alert_threshold, secondary_ids, keywords, addon_1, addon_2,
                  description, additional_images, notes)
                 VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (sku, f['name'], f.get('location_area') or None, f.get('location_aisle') or None,
                   f.get('location_shelf') or None, f.get('location_bin') or None, asin, image_url,
-                  source_url, f.get('buy_price'), f.get('sell_price'), f.get('supplier') or None,
+                  source_url, f.get('buy_price_cents'), f.get('sell_price_cents'), f.get('supplier') or None,
                   f.get('first_stock_date') or first_stock_date_default, f.get('resupply_interval'),
                   1 if alert_threshold > 0 else 0, alert_threshold,
                   secondary_ids_json(f.get('upc'), f.get('part_number')), f.get('keywords'),
@@ -465,7 +465,7 @@ def update_item(conn, item_id, fields):
             UPDATE inventory_items SET
                 sku = ?, name = ?, location_area = ?, location_aisle = ?,
                 location_shelf = ?, location_bin = ?, asin = ?,
-                buy_price = ?, sell_price = ?, supplier = ?,
+                buy_price_cents = ?, sell_price_cents = ?, supplier = ?,
                 first_stock_date = ?, resupply_interval = ?, source_url = ?,
                 image_url = ?, alert_enabled = ?, alert_threshold = ?,
                 secondary_ids = ?, keywords = ?, addon_1 = ?, addon_2 = ?,
@@ -474,7 +474,7 @@ def update_item(conn, item_id, fields):
             WHERE id = ?
         ''', (sku, f['name'], f.get('location_area') or None, f.get('location_aisle') or None,
               f.get('location_shelf') or None, f.get('location_bin') or None, asin,
-              f.get('buy_price'), f.get('sell_price'), f.get('supplier') or None,
+              f.get('buy_price_cents'), f.get('sell_price_cents'), f.get('supplier') or None,
               f.get('first_stock_date') or None, f.get('resupply_interval'), f.get('source_url') or None,
               image_url, 1 if alert_threshold > 0 else 0, alert_threshold,
               secondary_ids_json(f.get('upc'), f.get('part_number')), f.get('keywords'),
@@ -504,7 +504,7 @@ def toggle_legacy(conn, item_id):
 
 # Columns bulk edit may set (never quantity: stock goes through adjust_stock).
 BULK_EDIT_COLUMNS = ('location_area', 'location_aisle', 'location_shelf', 'location_bin',
-                     'buy_price', 'sell_price', 'keywords', 'alert_threshold', 'addon_1', 'addon_2')
+                     'buy_price_cents', 'sell_price_cents', 'keywords', 'alert_threshold', 'addon_1', 'addon_2')
 
 
 def bulk_update_items(conn, item_ids, changes):
@@ -608,6 +608,17 @@ IMPORT_COLUMN_MAP = {
 ImportResult = namedtuple('ImportResult', 'added updated skipped errors')
 
 
+def _import_price(raw):
+    """Cents for a spreadsheet price cell ("12.50", "$1,299", blank -> 0)."""
+    if raw is None or str(raw).strip() == '':
+        return 0
+    from app.services import money
+    cents = money.parse(raw)
+    if cents is None:
+        raise ValueError(f"invalid price {raw!r}")
+    return cents
+
+
 def _map_import_row(row):
     data = {}
     for col, val in row.items():
@@ -641,8 +652,8 @@ def import_items(conn, rows, update_existing, user=None):
                     continue
 
                 quantity = int(data.get('quantity', 0) or 0)
-                buy_price = float(data.get('buy_price', 0) or 0)
-                sell_price = float(data.get('sell_price', 0) or 0)
+                buy_price = _import_price(data.get('buy_price'))
+                sell_price = _import_price(data.get('sell_price'))
                 ids_json = secondary_ids_json(data.get('upc'), data.get('part_number'))
 
                 existing = conn.execute("SELECT id FROM inventory_items WHERE sku = ?", (sku,)).fetchone()
@@ -651,8 +662,8 @@ def import_items(conn, rows, update_existing, user=None):
                         conn.execute('''
                             UPDATE inventory_items SET
                                 name = ?,
-                                buy_price = COALESCE(?, buy_price),
-                                sell_price = COALESCE(?, sell_price),
+                                buy_price_cents = COALESCE(?, buy_price_cents),
+                                sell_price_cents = COALESCE(?, sell_price_cents),
                                 location_area = COALESCE(?, location_area),
                                 location_aisle = COALESCE(?, location_aisle),
                                 location_shelf = COALESCE(?, location_shelf),
@@ -673,7 +684,7 @@ def import_items(conn, rows, update_existing, user=None):
                 else:
                     cur = conn.execute('''
                         INSERT INTO inventory_items (
-                            sku, name, quantity, buy_price, sell_price,
+                            sku, name, quantity, buy_price_cents, sell_price_cents,
                             location_area, location_aisle, location_shelf, location_bin,
                             supplier, asin, keywords, secondary_ids
                         ) VALUES (?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -702,6 +713,8 @@ def import_items(conn, rows, update_existing, user=None):
 
 LIST_SORT_COLUMNS = ('name', 'sku', 'quantity', 'location_area', 'buy_price', 'sell_price',
                      'created_at', 'updated_at')
+# sort keys (URL parameters) that name a differently-called column
+_SORT_COLUMN_SQL = {'buy_price': 'buy_price_cents', 'sell_price': 'sell_price_cents'}
 
 
 def list_items(conn, sort_by='name', order=None, search='', show_legacy=False, page=1, per_page=100):
@@ -728,7 +741,7 @@ def list_items(conn, sort_by='name', order=None, search='', show_legacy=False, p
             f"COALESCE(name, '') ASC"
         )
     else:
-        order_by = f"{sort_by} {order_dir}"
+        order_by = f"{_SORT_COLUMN_SQL.get(sort_by, sort_by)} {order_dir}"
 
     legacy_clause = "" if show_legacy else "AND COALESCE(is_legacy, 0) = 0"
     params = []
@@ -818,15 +831,15 @@ def inventory_stats(conn, low_threshold, now=None):
     ''', (low_threshold, low_threshold)).fetchone()[0]
 
     financials = conn.execute('''
-        SELECT SUM(quantity * sell_price) as revenue, SUM(quantity * buy_price) as cost
+        SELECT SUM(quantity * sell_price_cents) as revenue, SUM(quantity * buy_price_cents) as cost
         FROM inventory_items
-        WHERE quantity > 0 AND buy_price > 0 AND sell_price > 0
+        WHERE quantity > 0 AND buy_price_cents > 0 AND sell_price_cents > 0
     ''').fetchone()
     revenue = financials['revenue'] or 0
     cost = financials['cost'] or 0
     potential_profit = revenue - cost
     stats['margin_percent'] = round((potential_profit / revenue) * 100, 1) if revenue > 0 else 0
-    stats['potential_profit'] = potential_profit
+    stats['potential_profit_cents'] = potential_profit
 
     last_audit = conn.execute("SELECT end_time FROM audit_sessions WHERE status='completed' ORDER BY end_time DESC LIMIT 1").fetchone()
     stats['last_audit'] = "Never"

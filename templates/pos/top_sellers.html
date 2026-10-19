@@ -280,8 +280,8 @@
                 <div class="card h-100 border-start border-success border-3">
                     <div class="card-body">
                         <div class="filter-label">Net Sales <span class="text-lowercase fw-normal">(ex. tax)</span></div>
-                        <div class="stat-value">${{ "{:,.2f}".format(summary.net_revenue) }}</div>
-                        <small>{{ change_badge(summary.revenue_change) }} <span class="text-muted">vs ${{ "{:,.0f}".format(summary.prev_revenue) }}</span></small>
+                        <div class="stat-value">${{ summary.net_revenue_cents|dollars_grouped }}</div>
+                        <small>{{ change_badge(summary.revenue_change) }} <span class="text-muted">vs ${{ summary.prev_revenue_cents|whole_dollars_grouped }}</span></small>
                     </div>
                 </div>
             </div>
@@ -289,7 +289,7 @@
                 <div class="card h-100 border-start border-info border-3">
                     <div class="card-body">
                         <div class="filter-label">Est. Profit</div>
-                        <div class="stat-value">${{ "{:,.2f}".format(summary.profit) }}</div>
+                        <div class="stat-value">${{ summary.profit_cents|dollars_grouped }}</div>
                         <small class="text-muted">
                             {% if summary.margin is not none %}{{ "%.1f"|format(summary.margin) }}% margin{% else %}No cost data{% endif %}
                         </small>
@@ -319,7 +319,7 @@
                     <div class="card-body">
                         <div class="filter-label">Refunded</div>
                         <div class="stat-value text-danger">{{ summary.refunded_units }}</div>
-                        <small class="text-muted">-${{ "{:,.2f}".format(summary.refunded_amount) }}
+                        <small class="text-muted">-${{ summary.refunded_amount_cents|dollars_grouped }}
                             {% if summary.units_sold %}· {{ "%.1f"|format(summary.refunded_units / summary.units_sold * 100) }}% of units{% endif %}</small>
                     </div>
                 </div>
@@ -331,12 +331,12 @@
             or filters.item_status != 'all' or filters.stock != 'any' or filters.exclude_custom %}
         <div class="card bg-light mb-4">
             <div class="card-body py-2 small d-flex flex-wrap gap-4 align-items-center">
-                <div><strong>Item prices:</strong> ${{ "{:,.2f}".format(summary.list_revenue) }}</div>
-                <div><strong>Discounts:</strong> <span class="text-danger">-${{ "{:,.2f}".format(summary.discounts) }}</span></div>
-                <div><strong>Sales (ex. tax):</strong> ${{ "{:,.2f}".format(summary.gross_revenue) }}</div>
-                <div><strong>Tax:</strong> ${{ "{:,.2f}".format(summary.tax) }}</div>
-                <div><strong>Total incl. tax:</strong> <span class="fw-bold">${{ "{:,.2f}".format(summary.total_incl_tax) }}</span></div>
-                <div><strong>Refunds:</strong> <span class="text-danger">-${{ "{:,.2f}".format(summary.refunded_incl_tax) }}</span> <span class="text-muted">incl. tax</span></div>
+                <div><strong>Item prices:</strong> ${{ summary.list_revenue_cents|dollars_grouped }}</div>
+                <div><strong>Discounts:</strong> <span class="text-danger">-${{ summary.discounts_cents|dollars_grouped }}</span></div>
+                <div><strong>Sales (ex. tax):</strong> ${{ summary.gross_revenue_cents|dollars_grouped }}</div>
+                <div><strong>Tax:</strong> ${{ summary.tax_cents|dollars_grouped }}</div>
+                <div><strong>Total incl. tax:</strong> <span class="fw-bold">${{ summary.total_incl_tax_cents|dollars_grouped }}</span></div>
+                <div><strong>Refunds:</strong> <span class="text-danger">-${{ summary.refunded_incl_tax_cents|dollars_grouped }}</span> <span class="text-muted">incl. tax</span></div>
                 <div class="text-muted ms-auto">
                     {% if filtered %}Filters applied — totals cover matching items only.
                     {% else %}"Total incl. tax" matches the Custom Report's "Overall Total" for the same dates.{% endif %}
@@ -381,7 +381,7 @@
                                 <tr>
                                     <td class="ps-3">{{ g.label }} <span class="text-muted">({{ g.items }})</span></td>
                                     <td class="text-end">{{ g.units }}</td>
-                                    <td class="text-end">${{ "{:,.2f}".format(g.revenue) }}</td>
+                                    <td class="text-end">${{ g.revenue_cents|dollars_grouped }}</td>
                                     <td class="text-end pe-3" style="width: 90px;">
                                         {{ "%.1f"|format(g.share) }}%
                                         <div class="share-bar"><div style="width: {{ [g.share, 100]|min }}%"></div></div>
@@ -451,15 +451,15 @@
                                 <td class="text-end">{{ item.qty_sold }}</td>
                                 <td class="text-end">{% if item.refunded_qty %}<span class="text-danger">{{ item.refunded_qty }}</span>{% else %}<span class="text-muted">0</span>{% endif %}</td>
                                 <td class="text-end fw-bold">{{ item.net_qty }}</td>
-                                <td class="text-end">${{ "{:,.2f}".format(item.net_revenue) }}</td>
+                                <td class="text-end">${{ item.net_revenue_cents|dollars_grouped }}</td>
                                 <td class="text-end" style="min-width: 70px;">
                                     {{ "%.1f"|format(item.share) }}%
                                     <div class="share-bar"><div style="width: {{ [item.share, 100]|min }}%"></div></div>
                                 </td>
-                                <td class="text-end">${{ "{:,.2f}".format(item.avg_price) }}</td>
+                                <td class="text-end">${{ item.avg_price_cents|dollars_grouped }}</td>
                                 <td class="text-end">
-                                    {% if item.profit is not none %}
-                                    <span class="{{ 'text-danger' if item.profit < 0 else '' }}">${{ "{:,.2f}".format(item.profit) }}</span>
+                                    {% if item.profit_cents is not none %}
+                                    <span class="{{ 'text-danger' if item.profit_cents < 0 else '' }}">${{ item.profit_cents|dollars_grouped }}</span>
                                     {% else %}<span class="text-muted" title="No cost price on file">—</span>{% endif %}
                                 </td>
                                 <td class="text-end">
@@ -520,8 +520,8 @@
                             <td class="ps-3">{{ g.label }}</td>
                             <td class="text-end">{{ g.items }}</td>
                             <td class="text-end">{{ g.units }}</td>
-                            <td class="text-end">${{ "{:,.2f}".format(g.revenue) }}</td>
-                            <td class="text-end">${{ "{:,.2f}".format(g.profit) }}</td>
+                            <td class="text-end">${{ g.revenue_cents|dollars_grouped }}</td>
+                            <td class="text-end">${{ g.profit_cents|dollars_grouped }}</td>
                             <td class="text-end pe-3">
                                 {{ "%.1f"|format(g.share) }}%
                                 <div class="share-bar"><div style="width: {{ [g.share, 100]|min }}%"></div></div>
@@ -545,7 +545,7 @@
     </div>
 {% endblock %}
 {% block page_data %}
-    <script type="application/json" id="page-data">{{ {'firstSaleDate': first_sale_date, 'trend': trend or []}|tojson }}</script>
+    <script type="application/json" id="page-data">{{ {'firstSaleDate': first_sale_date, 'trend': trend_json}|tojson }}</script>
 {% endblock %}
 {% block scripts %}
     {{ vendor.chartjs() }}

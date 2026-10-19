@@ -43,7 +43,9 @@ CONNECTED_WINDOW_SECONDS = 15
 # under CONNECTED_WINDOW_SECONDS minus the slowest poll interval (5s).
 LAST_SEEN_WRITE_SECONDS = 4
 
-EMPTY_CART = {'items': [], 'discount_amount': 0, 'discount_type': None, 'discount_reason': ''}
+# Money in carts is integer cents (see app/services/pos_pricing.py).
+EMPTY_CART = {'items': [], 'discount_type': None, 'discount_percent': 0, 'discount_cents': 0,
+              'discount_reason': ''}
 
 VALID_ROLES = ('display', 'scanner')
 
@@ -122,8 +124,11 @@ def normalize_cart(cart):
         cart = empty_cart()
     if not isinstance(cart.get('items'), list):
         cart['items'] = []
-    cart.setdefault('discount_amount', 0)
+    from app.services.pos_pricing import upgrade_legacy_cart
+    upgrade_legacy_cart(cart)   # carts saved before v15 held dollars
     cart.setdefault('discount_type', None)
+    cart.setdefault('discount_percent', 0)
+    cart.setdefault('discount_cents', 0)
     cart.setdefault('discount_reason', '')
     ensure_line_ids(cart)
     return cart

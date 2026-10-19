@@ -268,6 +268,33 @@ def _validate_location_labels(v):
     return {str(k): str(label) for k, label in v.items()}
 
 
+def _money_from_form(field):
+    """from_form for a cents setting entered in dollars in form field `field`."""
+    def read(form, key):
+        if field not in form:
+            return _ABSENT
+        raw = (form.get(field) or '').strip()
+        from app.services import money
+        cents = money.parse(raw) if raw else None
+        if cents is None:
+            raise SettingsError(f"{SETTINGS[key].label}: expected a dollar amount")
+        return cents
+    return read
+
+
+def _cash_discount_from_form(form, key):
+    """The POS settings forms have one "amount" box (CASH_DISCOUNT_AMOUNT) whose
+    meaning follows CASH_DISCOUNT_TYPE: a percent, or dollars stored as cents."""
+    if 'CASH_DISCOUNT_AMOUNT' not in form:
+        return _ABSENT
+    dtype = form.get('CASH_DISCOUNT_TYPE') or get('CASH_DISCOUNT_TYPE')
+    if key == 'CASH_DISCOUNT_PERCENT':
+        return (form.get('CASH_DISCOUNT_AMOUNT') or '').strip() if dtype == 'percent' else _ABSENT
+    if dtype != 'fixed':
+        return _ABSENT
+    return _money_from_form('CASH_DISCOUNT_AMOUNT')(form, key)
+
+
 def _check_tax_rate(v):
     if not 0 <= v <= 1:
         raise ValueError("must be between 0% and 100%")
@@ -381,7 +408,9 @@ SETTINGS = {
 
     # POS manager approval limits (admin, as before)
     'POS_MAX_DISCOUNT_PERCENT': S(float, 10.0, 'pos_approval', 'Max discount %', min=0, max=100),
-    'POS_MAX_DISCOUNT_AMOUNT': S(float, 20.0, 'pos_approval', 'Max discount $', min=0),
+    # money settings are integer cents; the forms show and accept dollars
+    'POS_MAX_DISCOUNT_CENTS': S(int, 2000, 'pos_approval', 'Max discount $', min=0,
+                                from_form=_money_from_form('POS_MAX_DISCOUNT_AMOUNT')),
     'POS_REQUIRE_MANAGER_REFUND': S(bool, False, 'pos_approval', 'Require manager for refunds'),
 
     # POS (formerly the pos_settings table): POS managers may change these
@@ -394,7 +423,10 @@ SETTINGS = {
     'CASH_DISCOUNT_ENABLED': S(bool, False, 'pos', 'Cash discount', permission='pos.manage'),
     'CASH_DISCOUNT_TYPE': S(str, 'percent', 'pos', 'Cash discount type', choices=('percent', 'fixed'),
                             permission='pos.manage'),
-    'CASH_DISCOUNT_AMOUNT': S(float, 0.0, 'pos', 'Cash discount amount', min=0, permission='pos.manage'),
+    'CASH_DISCOUNT_PERCENT': S(float, 0.0, 'pos', 'Cash discount percent', min=0,
+                               permission='pos.manage', from_form=_cash_discount_from_form),
+    'CASH_DISCOUNT_CENTS': S(int, 0, 'pos', 'Cash discount amount', min=0, permission='pos.manage',
+                             from_form=_cash_discount_from_form),
     'RECEIPT_STORE_NAME': S(str, '', 'pos', 'Receipt store name', permission='pos.manage'),
     'RECEIPT_HEADER': S(str, '', 'pos', 'Receipt header', permission='pos.manage'),
     'RECEIPT_FOOTER': S(str, '', 'pos', 'Receipt footer', permission='pos.manage'),

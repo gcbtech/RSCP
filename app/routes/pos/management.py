@@ -16,7 +16,7 @@ from flask_login import current_user, login_required
 
 from app.routes.pos import pos_bp
 from app.routes.pos.core import get_pos_setting, set_pos_setting, get_tax_rate
-from app.services import pos_sales
+from app.services import money, pos_sales
 from app.services.db import get_db_connection, get_request_db
 from app.utils.permissions import require_permission
 
@@ -65,21 +65,22 @@ def management():
     start, end, use_custom_range = _dashboard_range()
 
     report = build_sales_report(start, end, conn=conn)
-    avg_order = round(report['sales_total'] / report['order_count'], 2) if report['order_count'] else 0.0
+    avg_order_cents = (money.div_round(report['sales_total_cents'], report['order_count'])
+                       if report['order_count'] else 0)
     daily_sales = daily_sales_series(start, end, conn=conn)
 
     # Top sellers and est. profit -- same figures as the Top Sellers report ("View All" opens it with this range)
     top_report = generate_top_sellers_data(start, end, {})
-    top_sellers = [{'sku': i['sku'], 'name': i['name'], 'sold': i['net_qty'], 'revenue': i['net_revenue']}
+    top_sellers = [{'sku': i['sku'], 'name': i['name'], 'sold': i['net_qty'], 'revenue_cents': i['net_revenue_cents']}
                    for i in top_report['items'][:10]]
 
     return render_template('pos/management.html',
                            report=report,
-                           avg_order=avg_order,
+                           avg_order_cents=avg_order_cents,
                            profit=top_report['summary'],
                            daily_sales=daily_sales,
                            top_sellers=top_sellers,
-                           payment_breakdown=[t for t in report['tenders'] if t['collected'] > 0],
+                           payment_breakdown=[t for t in report['tenders'] if t['collected_cents'] > 0],
                            days=(end - start).days + 1,
                            start_date=start.isoformat(),
                            end_date=end.isoformat(),
@@ -250,6 +251,10 @@ def top_sellers():
                            sort_links=sort_links,
                            csv_url=url_for('pos.top_sellers', **{**base_args, 'format': 'csv'}),
                            shown_items=report['items'][:limit] if limit else report['items'],
+                           # chart data for the page script, in dollars
+                           trend_json=[{'label': t['label'], 'units': t['units'],
+                                        'revenue': money.to_dollars(t['revenue_cents'])}
+                                       for t in report['trend']],
                            **report)
 
 
@@ -260,6 +265,10 @@ def _top_sellers_csv(items, start_date, end_date):
     """Export every matching Top Sellers row (ignores the display limit)."""
     def num(value, digits=2):
         return '' if value is None else round(value, digits)
+
+    def dollars(cents):
+        # (fractional) cents -> the dollar number the CSV has always shown
+        return '' if cents is None else round(cents / 100, 2)
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -272,10 +281,11 @@ def _top_sellers_csv(items, start_date, end_date):
         writer.writerow([rank, i['sku'], i['name'], i['category_name'], i['kind'],
                          i['area'], i['aisle'], i['shelf'], i['bin'],
                          i['qty_sold'], i['refunded_qty'], i['net_qty'],
-                         num(i['list_revenue']), num(i['discounts']), num(i['gross_revenue']),
-                         num(i['refunded_amount']), num(i['net_revenue']),
-                         num(i['share'], 1), num(i['avg_price']), num(i['buy_price']),
-                         num(i['profit']), num(i['margin'], 1), i['orders'], num(i['per_day']),
+                         dollars(i['list_revenue_cents']), dollars(i['discounts_cents']),
+                         dollars(i['gross_revenue_cents']),
+                         dollars(i['refunded_amount_cents']), dollars(i['net_revenue_cents']),
+                         num(i['share'], 1), dollars(i['avg_price_cents']), dollars(i['buy_price_cents']),
+                         dollars(i['profit_cents']), num(i['margin'], 1), i['orders'], num(i['per_day']),
                          '' if i['stock'] is None else i['stock'], num(i['days_cover'], 0),
                          i['prev_qty'], num(i['qty_change_pct'], 1), i['last_sold_local']])
 
@@ -318,15 +328,15 @@ def refunds_report():
     stats = conn.execute('''
         SELECT 
             COUNT(*) as refund_count,
-            SUM(amount) as total_refunded,
-            AVG(amount) as avg_refund
+            SUM(amount_cents) as total_refunded_cents,
+            AVG(amount_cents) as avg_refund_cents
         FROM pos_refunds
         WHERE date(created_at, 'localtime') BETWEEN ? AND ?
     ''', (start_date, end_date)).fetchone()
     
     # Refund reasons breakdown
     reasons = conn.execute('''
-        SELECT reason, COUNT(*) as count, SUM(amount) as total
+        SELECT reason, COUNT(*) as count, SUM(amount_cents) as total_cents
         FROM pos_refunds
         WHERE date(created_at, 'localtime') BETWEEN ? AND ?
         GROUP BY reason
@@ -354,6 +364,20 @@ def refunds_report():
                            use_custom_range=use_custom_range)
 
 
+def _csv_dollars(cents):
+    """Cents -> the dollar number these CSVs have always carried (19.99, 10.0)."""
+    return money.to_dollars(cents)
+
+
+def _cash_discount_form_value():
+    """The settings form's single cash discount box: the percent, or the
+    fixed amount in dollars (as the old float setting rendered: '3.0')."""
+    from app.services import settings as settings_store
+    if get_pos_setting('CASH_DISCOUNT_TYPE', 'percent') == 'fixed':
+        return str(money.to_dollars(settings_store.get('CASH_DISCOUNT_CENTS') or 0))
+    return str(float(settings_store.get('CASH_DISCOUNT_PERCENT') or 0))
+
+
 @pos_bp.route('/management/export')
 @require_permission('pos.manage')
 def export_data():
@@ -369,33 +393,44 @@ def export_data():
     if report_type == 'orders':
         writer.writerow(['Order Number', 'Date', 'Status', 'Subtotal', 'Tax', 'Discount', 'Total', 'Payment', 'Operator'])
         orders = conn.execute('''
-            SELECT o.order_number, o.created_at, o.status, o.subtotal, o.tax_amount,
-                   o.discount_amount, o.total, o.payment_method, u.username
+            SELECT o.order_number, o.created_at, o.status, o.subtotal_cents, o.tax_amount_cents,
+                   o.discount_amount_cents, o.total_cents, o.payment_method, u.username
             FROM pos_orders o
             LEFT JOIN users u ON o.operator_id = u.id
             WHERE date(o.created_at) BETWEEN ? AND ?
             ORDER BY o.created_at
         ''', (date_from, date_to)).fetchall()
         for o in orders:
-            writer.writerow(list(o))
+            o = list(o)
+            o[3:7] = [_csv_dollars(v) for v in o[3:7]]
+            writer.writerow(o)
     
     elif report_type == 'items':
         writer.writerow(['Order Number', 'Date', 'SKU', 'Name', 'Quantity', 'Unit Price', 'Discount', 'Line Total'])
         items = conn.execute('''
             SELECT o.order_number, o.created_at, oi.sku, oi.name, oi.quantity,
-                   oi.unit_price, oi.discount_amount, oi.line_total
+                   oi.unit_price_cents, oi.discount_type, oi.discount_percent, oi.discount_cents,
+                   oi.line_total_cents
             FROM pos_order_items oi
             JOIN pos_orders o ON oi.order_id = o.id
             WHERE date(o.created_at) BETWEEN ? AND ?
             ORDER BY o.created_at
         ''', (date_from, date_to)).fetchall()
         for i in items:
-            writer.writerow(list(i))
+            # Discount column as entered: a percent, or dollars
+            if i['discount_type'] == 'percent':
+                discount = float(i['discount_percent'] or 0)
+            elif i['discount_type'] == 'fixed':
+                discount = _csv_dollars(i['discount_cents'] or 0)
+            else:
+                discount = 0.0
+            writer.writerow([i['order_number'], i['created_at'], i['sku'], i['name'], i['quantity'],
+                             _csv_dollars(i['unit_price_cents']), discount, _csv_dollars(i['line_total_cents'])])
     
     elif report_type == 'refunds':
         writer.writerow(['Order Number', 'Date', 'Type', 'Amount', 'Reason', 'Manager', 'Items Restocked', 'Items Damaged'])
         refunds = conn.execute('''
-            SELECT o.order_number, r.created_at, r.refund_type, r.amount, r.reason,
+            SELECT o.order_number, r.created_at, r.refund_type, r.amount_cents, r.reason,
                    u.username, r.items_restocked, r.items_damaged
             FROM pos_refunds r
             JOIN pos_orders o ON r.order_id = o.id
@@ -404,7 +439,9 @@ def export_data():
             ORDER BY r.created_at
         ''', (date_from, date_to)).fetchall()
         for r in refunds:
-            writer.writerow(list(r))
+            r = list(r)
+            r[3] = _csv_dollars(r[3])
+            writer.writerow(r)
     
     output.seek(0)
     response = make_response(output.getvalue())
@@ -437,7 +474,7 @@ def settings():
                            allow_hold_orders=get_pos_setting('ALLOW_HOLD_ORDERS', 'true') == 'true',
                            # Cash discount
                            cash_discount_enabled=get_pos_setting('CASH_DISCOUNT_ENABLED', 'false') == 'true',
-                           cash_discount_amount=get_pos_setting('CASH_DISCOUNT_AMOUNT', '0'),
+                           cash_discount_amount=_cash_discount_form_value(),
                            cash_discount_type=get_pos_setting('CASH_DISCOUNT_TYPE', 'percent'),
                            # Receipt branding
                            receipt_store_name=get_pos_setting('RECEIPT_STORE_NAME', ''),
@@ -563,7 +600,8 @@ def valuation_report():
     conn = get_request_db()
     
     # Query all items
-    items = conn.execute('SELECT sku, quantity, buy_price, sell_price FROM inventory_items WHERE COALESCE(is_legacy, 0) = 0').fetchall()
+    items = conn.execute('SELECT sku, quantity, buy_price_cents, sell_price_cents FROM inventory_items '
+                         'WHERE COALESCE(is_legacy, 0) = 0').fetchall()
     
     category_data = {}
     
@@ -597,18 +635,18 @@ def valuation_report():
                 'description': cat_desc,
                 'count': 0,
                 'qty': 0,
-                'cost_value': 0,
-                'retail_value': 0
+                'cost_value_cents': 0,
+                'retail_value_cents': 0
             }
             
         qty = item['quantity'] or 0
-        cost = (item['buy_price'] or 0) * qty
-        retail = (item['sell_price'] or 0) * qty
+        cost = (item['buy_price_cents'] or 0) * qty
+        retail = (item['sell_price_cents'] or 0) * qty
         
         category_data[cat_code]['count'] += 1
         category_data[cat_code]['qty'] += qty
-        category_data[cat_code]['cost_value'] += cost
-        category_data[cat_code]['retail_value'] += retail
+        category_data[cat_code]['cost_value_cents'] += cost
+        category_data[cat_code]['retail_value_cents'] += retail
         
         total_cost += cost
         total_retail += retail
@@ -622,9 +660,9 @@ def valuation_report():
     
     return render_template('pos/valuation_report.html',
                            categories=sorted_cats,
-                           total_cost=total_cost,
-                           total_retail=total_retail,
-                           potential_profit=potential_profit,
+                           total_cost_cents=total_cost,
+                           total_retail_cents=total_retail,
+                           potential_profit_cents=potential_profit,
                            margin_percent=margin_percent,
                            total_items=total_items,
                            today=date.today())
@@ -654,7 +692,7 @@ def reorder_report():
     
     # 2. Get Current Inventory
     inventory_items = conn.execute('''
-        SELECT id, sku, name, quantity, supplier, buy_price 
+        SELECT id, sku, name, quantity, supplier, buy_price_cents
         FROM inventory_items 
         WHERE COALESCE(is_legacy, 0) = 0
           AND (quantity > 0 OR sku IN (SELECT sku FROM pos_order_items))
@@ -693,7 +731,7 @@ def reorder_report():
                 'velocity': velocity,
                 'days_cover': days_cover,
                 'suggested': suggested_order,
-                'cost_est': suggested_order * (item['buy_price'] or 0)
+                'cost_est_cents': suggested_order * (item['buy_price_cents'] or 0)
             })
             
     recommendations.sort(key=lambda x: x['days_cover'])
@@ -744,14 +782,14 @@ def daily_items_report():
     
     # SQL Sorts
     if sort == 'qty_asc': order_clause = "qty ASC"
-    elif sort == 'revenue_desc': order_clause = "total DESC"
-    elif sort == 'revenue_asc': order_clause = "total ASC"
+    elif sort == 'revenue_desc': order_clause = "total_cents DESC"
+    elif sort == 'revenue_asc': order_clause = "total_cents ASC"
     elif sort == 'name_asc': order_clause = "oi.name ASC"
     elif sort == 'name_desc': order_clause = "oi.name DESC"
     elif sort == 'sku_asc': order_clause = "oi.sku ASC"
     elif sort == 'sku_desc': order_clause = "oi.sku DESC"
-    elif sort == 'price_asc': order_clause = "avg_price ASC"
-    elif sort == 'price_desc': order_clause = "avg_price DESC"
+    elif sort == 'price_asc': order_clause = "avg_price_cents ASC"
+    elif sort == 'price_desc': order_clause = "avg_price_cents DESC"
 
     # 3. Query
     # Prioritize Inventory SKU (RSCP) over Order SKU (which might be UPC/Part)
@@ -760,8 +798,8 @@ def daily_items_report():
             COALESCE(inv.sku, oi.sku) as sku,
             oi.name, 
             SUM(oi.quantity) as qty, 
-            SUM(oi.line_total) as total,
-            AVG(oi.unit_price) as avg_price,
+            SUM(oi.line_total_cents) as total_cents,
+            AVG(oi.unit_price_cents) as avg_price_cents,
             MAX(inv.quantity) as current_stock,
             MAX(inv.location_aisle) as aisle
         FROM pos_order_items oi
@@ -801,8 +839,8 @@ def daily_items_report():
             'sku': r['sku'],
             'name': r['name'],
             'qty': r['qty'],
-            'total': r['total'],
-            'avg_price': r['avg_price'],
+            'total_cents': r['total_cents'],
+            'avg_price_cents': r['avg_price_cents'],
             'current_stock': r['current_stock'] if r['current_stock'] is not None else 0,
             'category': category
         })
@@ -862,11 +900,26 @@ def edit_sale(order_id):
                            items=items,
                            tax_rate=adj['tax_rate'] * 100,
                            adjustments=adj,
+                           adjustments_json=_adjustments_json(adj),
                            local_date=local_dt.strftime('%Y-%m-%d') if local_dt else '',
                            local_time=local_dt.strftime('%H:%M:%S') if local_dt else '')
 
 
 _sale_has_refunds = pos_sales.has_refunds
+
+
+def _adjustments_json(adj):
+    """sale_adjustments() as the dollar JSON edit_sale's preview script reads
+    (discount_pct as a fraction of the subtotal)."""
+    pct = adj['discount_pct']
+    return {
+        'discount_pct': (pct[0] / pct[1]) if pct else None,
+        'discount_fixed': money.to_dollars(adj['discount_fixed']),
+        'coupon': money.to_dollars(adj['coupon']),
+        'cash_discount': money.to_dollars(adj['cash_discount']),
+        'tax_rate': adj['tax_rate'],
+        'orig_subtotal': money.to_dollars(adj['orig_subtotal']),
+    }
 
 
 @pos_bp.route('/management/edit-sale/<int:order_id>', methods=['POST'])

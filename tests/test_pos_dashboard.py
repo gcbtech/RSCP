@@ -17,7 +17,7 @@ from tests.conftest import login
 CASHIER = SimpleNamespace(id=2, username='cashier')
 MANAGER = SimpleNamespace(id=3, username='manager')
 TAX10 = PricingConfig(tax_rate=0.10)
-TAX10_CASH5 = PricingConfig(tax_rate=0.10, cash_discount_enabled=True, cash_discount_amount=5,
+TAX10_CASH5 = PricingConfig(tax_rate=0.10, cash_discount_enabled=True, cash_discount_percent=5,
                             cash_discount_type='percent')
 
 
@@ -55,14 +55,14 @@ def conn(fresh_app):
 
 def _item(conn, sku, price, buy):
     return inv.create_item(conn, {'sku': sku, 'name': f'{sku} item', 'quantity': 10,
-                                  'sell_price': price, 'buy_price': buy}, user='admin')
+                                  'sell_price_cents': price, 'buy_price_cents': buy}, user='admin')
 
 
 def _cart(item_id, sku, price, qty=1, **extra):
     cart = {'items': [{'inventory_item_id': item_id, 'sku': sku, 'name': f'{sku} item', 'quantity': qty,
-                       'unit_price': price, 'discount_amount': 0, 'discount_type': None,
-                       'line_total': round(price * qty, 2)}],
-            'discount_amount': 0, 'discount_type': None, 'discount_reason': ''}
+                       'unit_price_cents': price, 'discount_type': None, 'discount_percent': 0,
+                       'discount_cents': 0, 'line_total_cents': price * qty}],
+            'discount_type': None, 'discount_percent': 0, 'discount_cents': 0, 'discount_reason': ''}
     cart.update(extra)
     return cart
 
@@ -82,29 +82,30 @@ def _seed_day(conn):
     Refunds: all of B to card ($55.00, $5.00 tax); one CABLE of C in cash
     ($22.00, $2.00 tax); all of D in cash ($26.25, $2.50 tax).
     """
-    widget = _item(conn, 'WIDGET', 10.0, 4.0)
-    laptop = _item(conn, 'LAPTOP', 50.0, 30.0)
-    cable = _item(conn, 'CABLE', 20.0, 5.0)
-    gadget = _item(conn, 'GADGET', 30.0, 12.0)
-    coupon_id = conn.execute('''INSERT INTO pos_coupons (name, code, coupon_type, discount_type, discount_value)
-                                VALUES ('SAVE5', 'SAVE5', 'standard', 'order_dollar', 5.0)''').lastrowid
+    widget = _item(conn, 'WIDGET', 1000, 400)
+    laptop = _item(conn, 'LAPTOP', 5000, 3000)
+    cable = _item(conn, 'CABLE', 2000, 500)
+    gadget = _item(conn, 'GADGET', 3000, 1200)
+    coupon_id = conn.execute('''INSERT INTO pos_coupons (name, code, coupon_type, discount_type, discount_cents)
+                                VALUES ('SAVE5', 'SAVE5', 'standard', 'order_dollar', 500)''').lastrowid
 
-    a = _sell(conn, _cart(widget, 'WIDGET', 10.0, qty=2), 'cash', TAX10, tendered='30')
-    b = _sell(conn, _cart(laptop, 'LAPTOP', 50.0), 'card', TAX10)
-    c = _sell(conn, _cart(cable, 'CABLE', 20.0, qty=2), 'split', TAX10, cash_amount='20', card_amounts=['24'])
-    d = _sell(conn, _cart(gadget, 'GADGET', 30.0,
-                          applied_coupon={'id': coupon_id, 'code': 'SAVE5', 'name': 'SAVE5', 'discount': 5.0}),
+    a = _sell(conn, _cart(widget, 'WIDGET', 1000, qty=2), 'cash', TAX10, tendered='30')
+    b = _sell(conn, _cart(laptop, 'LAPTOP', 5000), 'card', TAX10)
+    c = _sell(conn, _cart(cable, 'CABLE', 2000, qty=2), 'split', TAX10, cash_amount='20', card_amounts=['24'])
+    d = _sell(conn, _cart(gadget, 'GADGET', 3000,
+                          applied_coupon={'id': coupon_id, 'code': 'SAVE5', 'name': 'SAVE5', 'discount_cents': 500}),
               'cash', TAX10_CASH5, tendered='30')
-    assert (a.total, b.total, c.total, d.total, d.cash_discount) == (22.0, 55.0, 44.0, 26.25, 1.25)
+    assert (a.total_cents, b.total_cents, c.total_cents, d.total_cents, d.cash_discount_cents) == \
+        (2200, 5500, 4400, 2625, 125)
 
     full_b = pos_refunds.process_refund(conn, b.order_id, 'full', 'other', MANAGER)
     cable_line = conn.execute('SELECT id FROM pos_order_items WHERE order_id = ?', (c.order_id,)).fetchone()[0]
     part_c = pos_refunds.process_refund(conn, c.order_id, 'partial', 'other', MANAGER,
                                         items=[(str(cable_line), '1')])
     full_d = pos_refunds.process_refund(conn, d.order_id, 'full', 'other', MANAGER)
-    assert (full_b.amount, full_b.tax_refunded, full_b.refund_method) == (55.0, 5.0, 'card')
-    assert (part_c.amount, part_c.tax_refunded, part_c.refund_method) == (22.0, 2.0, 'cash')
-    assert (full_d.amount, full_d.tax_refunded, full_d.refund_method) == (26.25, 2.5, 'cash')
+    assert (full_b.amount_cents, full_b.tax_refunded_cents, full_b.refund_method) == (5500, 500, 'card')
+    assert (part_c.amount_cents, part_c.tax_refunded_cents, part_c.refund_method) == (2200, 200, 'cash')
+    assert (full_d.amount_cents, full_d.tax_refunded_cents, full_d.refund_method) == (2625, 250, 'cash')
 
     # Pin everything to the middle of the local day so the test never straddles midnight
     conn.execute('UPDATE pos_orders SET created_at = ?', (_utc_at_local(_today(), 12),))
@@ -151,30 +152,32 @@ def test_dashboard_matches_the_report_engine_for_a_mixed_day(fresh_app, fresh_cl
 
     # One source of truth: the dashboard shows exactly what the reports show
     assert dash['report'] == engine == daily['report'] == custom['report']
-    assert dash['profit']['profit'] == top['summary']['profit']
+    assert dash['profit']['profit_cents'] == top['summary']['profit_cents']
 
     # ... and those numbers are right
     r = dash['report']
     assert r['order_count'] == 4
-    assert r['gross_sales'] == 140.0
-    assert r['discounts'] == {'line': 0.0, 'order': 0.0, 'coupon': 5.0, 'cash': 1.25, 'total': 6.25}
-    assert r['net_sales'] == 133.75
-    assert r['tax_collected'] == 13.50
-    assert r['sales_total'] == 147.25
-    assert r['refunds'] == {'count': 3, 'total': 103.25, 'tax': 9.50, 'net': 93.75,
-                            'by_method': {'card': 55.0, 'cash': 48.25}}
-    assert r['net_revenue'] == 44.00
-    assert r['tax_net'] == 4.00
+    assert r['gross_sales_cents'] == 14000
+    assert r['discounts'] == {'line_cents': 0, 'order_cents': 0, 'coupon_cents': 500, 'cash_cents': 125,
+                              'total_cents': 625}
+    assert r['net_sales_cents'] == 13375
+    assert r['tax_collected_cents'] == 1350
+    assert r['sales_total_cents'] == 14725
+    assert r['refunds'] == {'count': 3, 'total_cents': 10325, 'tax_cents': 950, 'net_cents': 9375,
+                            'by_method_cents': {'card': 5500, 'cash': 4825}}
+    assert r['net_revenue_cents'] == 4400
+    assert r['tax_net_cents'] == 400
     # Split sale C counts $20 under cash and $24 under card, not as a "split" lump
-    assert [(t['method'], t['count'], t['collected'], t['refunded'], t['net']) for t in r['tenders']] == [
-        ('cash', 3, 68.25, 48.25, 20.0),
-        ('card', 2, 79.0, 55.0, 24.0),
+    assert [(t['method'], t['count'], t['collected_cents'], t['refunded_cents'], t['net_cents'])
+            for t in r['tenders']] == [
+        ('cash', 3, 6825, 4825, 2000),
+        ('card', 2, 7900, 5500, 2400),
     ]
-    assert dash['avg_order'] == 36.81            # 147.25 / 4
+    assert dash['avg_order_cents'] == 3681            # 147.25 / 4
     # Est. profit after discounts and refunds, ex. tax (Top Sellers): WIDGET 20-8, CABLE 20-5;
     # LAPTOP and GADGET were fully refunded
-    assert dash['profit']['profit'] == pytest.approx(27.0)
-    assert dash['daily_sales'] == [{'day': today.isoformat(), 'orders': 4, 'revenue': 147.25}]
+    assert dash['profit']['profit_cents'] == pytest.approx(2700)
+    assert dash['daily_sales'] == [{'day': today.isoformat(), 'orders': 4, 'revenue_cents': 14725}]
 
     for figure in ('$147.25', '$44.00', '$27.00', '$36.81', '$103.25', 'Refunds (3)', '$68.25', '$79.00'):
         assert figure in html, figure
@@ -188,12 +191,12 @@ def test_dashboard_range_and_daily_series_add_up_to_the_engine(fresh_app, fresh_
     _seed_day(conn)
     today = _today()
     widget = conn.execute("SELECT id FROM inventory_items WHERE sku = 'WIDGET'").fetchone()[0]
-    earlier = _sell(conn, _cart(widget, 'WIDGET', 10.0), 'card', TAX10)
+    earlier = _sell(conn, _cart(widget, 'WIDGET', 1000), 'card', TAX10)
     conn.execute('UPDATE pos_orders SET created_at = ? WHERE id = ?',
                  (_utc_at_local(today - timedelta(days=3), 23), earlier.order_id))
-    held = conn.execute('''INSERT INTO pos_orders (order_number, status, subtotal, tax_rate, tax_amount,
-                                                   total, payment_method, operator_id)
-                           VALUES ('HELD-1', 'held', 100, 0, 0, 100, 'cash', 2)''').lastrowid
+    held = conn.execute('''INSERT INTO pos_orders (order_number, status, subtotal_cents, tax_rate, tax_amount_cents,
+                                                   total_cents, payment_method, operator_id)
+                           VALUES ('HELD-1', 'held', 10000, 0, 0, 10000, 'cash', 2)''').lastrowid
     conn.execute('UPDATE pos_orders SET created_at = ? WHERE id = ?', (_utc_at_local(today, 12), held))
     login(fresh_client, 3)
 
@@ -205,15 +208,16 @@ def test_dashboard_range_and_daily_series_add_up_to_the_engine(fresh_app, fresh_
             engine = build_sales_report(start, today)
         assert dash['report'] == engine
         assert (dash['start_date'], dash['end_date'], dash['days']) == (start.isoformat(), today.isoformat(), 7)
-        assert engine['order_count'] == 5 and engine['sales_total'] == 158.25   # + $11.00 three days ago
+        assert engine['order_count'] == 5 and engine['sales_total_cents'] == 15825   # + $11.00 three days ago
         series = dash['daily_sales']
         assert [s['day'] for s in series] == [(start + timedelta(days=i)).isoformat() for i in range(7)]
         assert sum(s['orders'] for s in series) == engine['order_count']
-        assert round(sum(s['revenue'] for s in series), 2) == engine['sales_total']
-        assert series[3] == {'day': (today - timedelta(days=3)).isoformat(), 'orders': 1, 'revenue': 11.0}
+        assert sum(s['revenue_cents'] for s in series) == engine['sales_total_cents']
+        assert series[3] == {'day': (today - timedelta(days=3)).isoformat(), 'orders': 1, 'revenue_cents': 1100}
 
     with fresh_app.app_context():
-        assert daily_sales_series(today, today) == [{'day': today.isoformat(), 'orders': 4, 'revenue': 147.25}]
+        assert daily_sales_series(today, today) == [{'day': today.isoformat(), 'orders': 4,
+                                                     'revenue_cents': 14725}]
 
 
 @pytest.mark.parametrize('query', [

@@ -189,16 +189,16 @@
         <div class="section">
             {% for item in cart['items'] %}
             {% set qty = item.quantity or 1 %}
-            {% set unit = (item.line_total / qty) if qty else item.line_total %}
+            {% set unit_cents = (item.line_total_cents / qty) if qty else item.line_total_cents %}
             <div class="item">
                 <div class="chk"></div>
                 <div class="item-main">
                     <div class="item-top">
                         <span>{{ item.name }}</span>
-                        <span>${{ "%.2f"|format(item.line_total) }}</span>
+                        <span>${{ item.line_total_cents|dollars }}</span>
                     </div>
                     <div class="item-detail">
-                        {% if item.sku %}{{ item.sku }} · {% endif %}{{ qty }} × ${{ "%.2f"|format(unit) }}
+                        {% if item.sku %}{{ item.sku }} · {% endif %}{{ qty }} × ${{ unit_cents|dollars }}
                         {% if item.is_on_sale %} · SALE{% endif %}
                     </div>
                 </div>
@@ -209,32 +209,32 @@
         <div class="section">
             <div class="row">
                 <span>Subtotal</span>
-                <span>${{ "%.2f"|format(totals.subtotal) }}</span>
+                <span>${{ totals.subtotal_cents|dollars }}</span>
             </div>
-            {% if totals.order_discount and totals.order_discount > 0.005 %}
+            {% if totals.order_discount_cents and totals.order_discount_cents > 0 %}
             <div class="row">
                 <span>Order Discount</span>
-                <span>-${{ "%.2f"|format(totals.order_discount) }}</span>
+                <span>-${{ totals.order_discount_cents|dollars }}</span>
             </div>
             {% endif %}
-            {% if totals.applied_coupon and totals.coupon_discount and totals.coupon_discount > 0.005 %}
+            {% if totals.applied_coupon and totals.coupon_discount_cents and totals.coupon_discount_cents > 0 %}
             <div class="row">
                 <span>Coupon ({{ totals.applied_coupon['code'] }})</span>
-                <span>-${{ "%.2f"|format(totals.coupon_discount) }}</span>
+                <span>-${{ totals.coupon_discount_cents|dollars }}</span>
             </div>
             {% endif %}
             <div class="row">
                 <span>Tax ({{ "%.2f"|format(totals.tax_rate_pct) }}%)</span>
-                <span>${{ "%.2f"|format(totals.tax_amount) }}</span>
+                <span>${{ totals.tax_amount_cents|dollars }}</span>
             </div>
             <div class="row total-row">
                 <span>ESTIMATED TOTAL</span>
-                <span>${{ "%.2f"|format(totals.card_total) }}</span>
+                <span>${{ totals.card_total_cents|dollars }}</span>
             </div>
-            {% if totals.cash_discount_enabled and totals.cash_total < totals.card_total %}
+            {% if totals.cash_discount_enabled and totals.cash_total_cents < totals.card_total_cents %}
             <div class="row" style="font-size:12px;">
                 <span>Est. Cash Price</span>
-                <span>${{ "%.2f"|format(totals.cash_total) }}</span>
+                <span>${{ totals.cash_total_cents|dollars }}</span>
             </div>
             {% endif %}
         </div>

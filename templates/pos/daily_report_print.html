@@ -105,43 +105,43 @@
     <!-- SALES -->
     <div class="section">
         <div class="row"><span>Orders:</span><span>{{ r.order_count }}</span></div>
-        <div class="row"><span>Gross Sales:</span><span>${{ "%.2f"|format(r.gross_sales) }}</span></div>
-        <div class="row"><span>&nbsp;Line Disc:</span><span>-${{ "%.2f"|format(r.discounts.line) }}</span></div>
-        <div class="row"><span>&nbsp;Order Disc:</span><span>-${{ "%.2f"|format(r.discounts.order) }}</span></div>
-        <div class="row"><span>&nbsp;Coupons:</span><span>-${{ "%.2f"|format(r.discounts.coupon) }}</span></div>
-        <div class="row"><span>&nbsp;Cash Disc:</span><span>-${{ "%.2f"|format(r.discounts.cash) }}</span></div>
-        <div class="row"><span>Net Sales:</span><span>${{ "%.2f"|format(r.net_sales) }}</span></div>
-        <div class="row"><span>Tax Collected:</span><span>${{ "%.2f"|format(r.tax_collected) }}</span></div>
-        <div class="row"><span>Sales Total:</span><span>${{ "%.2f"|format(r.sales_total) }}</span></div>
+        <div class="row"><span>Gross Sales:</span><span>${{ r.gross_sales_cents|dollars }}</span></div>
+        <div class="row"><span>&nbsp;Line Disc:</span><span>-${{ r.discounts.line_cents|dollars }}</span></div>
+        <div class="row"><span>&nbsp;Order Disc:</span><span>-${{ r.discounts.order_cents|dollars }}</span></div>
+        <div class="row"><span>&nbsp;Coupons:</span><span>-${{ r.discounts.coupon_cents|dollars }}</span></div>
+        <div class="row"><span>&nbsp;Cash Disc:</span><span>-${{ r.discounts.cash_cents|dollars }}</span></div>
+        <div class="row"><span>Net Sales:</span><span>${{ r.net_sales_cents|dollars }}</span></div>
+        <div class="row"><span>Tax Collected:</span><span>${{ r.tax_collected_cents|dollars }}</span></div>
+        <div class="row"><span>Sales Total:</span><span>${{ r.sales_total_cents|dollars }}</span></div>
     </div>
 
     <!-- REFUNDS -->
     <div class="section">
-        <div class="row"><span>Refunds ({{ r.refunds.count }}):</span><span>-${{ "%.2f"|format(r.refunds.total) }}</span></div>
-        <div class="row"><span>&nbsp;Tax Refunded:</span><span>-${{ "%.2f"|format(r.refunds.tax) }}</span></div>
-        <div class="row"><span>Tax (net):</span><span>${{ "%.2f"|format(r.tax_net) }}</span></div>
-        <div class="row total-row"><span>NET REVENUE:</span><span>${{ "%.2f"|format(r.net_revenue) }}</span></div>
+        <div class="row"><span>Refunds ({{ r.refunds.count }}):</span><span>-${{ r.refunds.total_cents|dollars }}</span></div>
+        <div class="row"><span>&nbsp;Tax Refunded:</span><span>-${{ r.refunds.tax_cents|dollars }}</span></div>
+        <div class="row"><span>Tax (net):</span><span>${{ r.tax_net_cents|dollars }}</span></div>
+        <div class="row total-row"><span>NET REVENUE:</span><span>${{ r.net_revenue_cents|dollars }}</span></div>
     </div>
 
     <!-- TENDERS (net of refunds) -->
     <div class="section">
         {% for t in r.tenders %}
-        <div class="row"><span>{{ t.label }} (net):</span><span>${{ "%.2f"|format(t.net) }}</span></div>
-        {% if t.refunded %}
-        <div class="row"><span>&nbsp;taken ${{ "%.2f"|format(t.collected) }}</span><span>ref. -${{ "%.2f"|format(t.refunded) }}</span></div>
+        <div class="row"><span>{{ t.label }} (net):</span><span>${{ t.net_cents|dollars }}</span></div>
+        {% if t.refunded_cents %}
+        <div class="row"><span>&nbsp;taken ${{ t.collected_cents|dollars }}</span><span>ref. -${{ t.refunded_cents|dollars }}</span></div>
         {% endif %}
         {% endfor %}
     </div>
 
     <!-- CASH -->
     <div class="section">
-        <div class="row"><span>Opening Float:</span><span>${{ "%.2f"|format(r.expected_cash.opening_float) }}</span></div>
-        <div class="row"><span>+ Cash Sales:</span><span>${{ "%.2f"|format(r.expected_cash.cash_sales) }}</span></div>
-        <div class="row"><span>- Cash Refunds:</span><span>${{ "%.2f"|format(r.expected_cash.cash_refunds) }}</span></div>
-        <div class="row total-row"><span>EXPECTED CASH:</span><span>${{ "%.2f"|format(r.expected_cash.total) }}</span></div>
+        <div class="row"><span>Opening Float:</span><span>${{ r.expected_cash.opening_float_cents|dollars }}</span></div>
+        <div class="row"><span>+ Cash Sales:</span><span>${{ r.expected_cash.cash_sales_cents|dollars }}</span></div>
+        <div class="row"><span>- Cash Refunds:</span><span>${{ r.expected_cash.cash_refunds_cents|dollars }}</span></div>
+        <div class="row total-row"><span>EXPECTED CASH:</span><span>${{ r.expected_cash.total_cents|dollars }}</span></div>
         {% for s in r.drawer_sessions if not s.is_open %}
-        <div class="row"><span>Drawer #{{ s.id }} counted:</span><span>${{ "%.2f"|format(s.counted_cash or 0) }}</span></div>
-        <div class="row"><span>&nbsp;{{ 'Over' if (s.over_short or 0) >= 0 else 'Short' }}:</span><span>${{ "%.2f"|format((s.over_short or 0)|abs) }}</span></div>
+        <div class="row"><span>Drawer #{{ s.id }} counted:</span><span>${{ (s.counted_cash_cents or 0)|dollars }}</span></div>
+        <div class="row"><span>&nbsp;{{ 'Over' if (s.over_short_cents or 0) >= 0 else 'Short' }}:</span><span>${{ ((s.over_short_cents or 0)|abs)|dollars }}</span></div>
         {% endfor %}
     </div>
 

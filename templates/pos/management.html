@@ -103,19 +103,19 @@
                for est. profit, the Top Sellers report), the same as the reports pages. #}
             <div class="col">
                 <div class="stat-card">
-                    <div class="stat-value text-primary">${{ "%.2f"|format(report.sales_total) }}</div>
+                    <div class="stat-value text-primary">${{ report.sales_total_cents|dollars }}</div>
                     <div class="stat-label">Sales Total <small>(incl. tax)</small></div>
                 </div>
             </div>
             <div class="col">
                 <div class="stat-card">
-                    <div class="stat-value text-primary">${{ "%.2f"|format(report.net_revenue) }}</div>
+                    <div class="stat-value text-primary">${{ report.net_revenue_cents|dollars }}</div>
                     <div class="stat-label">Net Revenue <small>(after refunds)</small></div>
                 </div>
             </div>
             <div class="col">
                 <div class="stat-card">
-                    <div class="stat-value text-success">${{ "%.2f"|format(profit.profit) }}</div>
+                    <div class="stat-value text-success">${{ profit.profit_cents|dollars }}</div>
                     <div class="stat-label">Est. Profit{% if profit.uncosted_items %} <small>({{ profit.uncosted_items }} item{{ 's' if profit.uncosted_items != 1 }} without cost excluded)</small>{% endif %}</div>
                 </div>
             </div>
@@ -127,13 +127,13 @@
             </div>
             <div class="col">
                 <div class="stat-card">
-                    <div class="stat-value">${{ "%.2f"|format(avg_order) }}</div>
+                    <div class="stat-value">${{ avg_order_cents|dollars }}</div>
                     <div class="stat-label">Avg Order</div>
                 </div>
             </div>
             <div class="col">
                 <div class="stat-card">
-                    <div class="stat-value text-danger">${{ "%.2f"|format(report.refunds.total) }}</div>
+                    <div class="stat-value text-danger">${{ report.refunds.total_cents|dollars }}</div>
                     <div class="stat-label">Refunds ({{ report.refunds.count }})</div>
                 </div>
             </div>
@@ -186,7 +186,7 @@
                             <tr>
                                 <td>{{ item.name }}<br><small class="text-muted">{{ item.sku }}</small></td>
                                 <td class="text-end">{{ item.sold }}</td>
-                                <td class="text-end">${{ "%.2f"|format(item.revenue) }}</td>
+                                <td class="text-end">${{ item.revenue_cents|dollars }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -214,9 +214,9 @@
                             {% for t in report.tenders %}
                             <tr>
                                 <td>{{ t.label }}</td>
-                                <td class="text-end">${{ "%.2f"|format(t.collected) }}</td>
-                                <td class="text-end text-danger">&minus;${{ "%.2f"|format(t.refunded) }}</td>
-                                <td class="text-end fw-bold">${{ "%.2f"|format(t.net) }}</td>
+                                <td class="text-end">${{ t.collected_cents|dollars }}</td>
+                                <td class="text-end text-danger">&minus;${{ t.refunded_cents|dollars }}</td>
+                                <td class="text-end fw-bold">${{ t.net_cents|dollars }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -256,10 +256,10 @@
 {% endblock %}
 {% block page_data %}
     <script type="application/json" id="page-data">{{ {
-        'salesData': daily_sales|map(attribute='revenue')|list,
+        'salesData': daily_sales|map(attribute='revenue_cents')|map('dollar_number')|list,
         'salesLabels': daily_sales|map(attribute='day')|list,
         'paymentLabels': payment_breakdown|map(attribute='method')|list,
-        'paymentData': payment_breakdown|map(attribute='collected')|list,
+        'paymentData': payment_breakdown|map(attribute='collected_cents')|map('dollar_number')|list,
     }|tojson }}</script>
 {% endblock %}
 {% block scripts %}

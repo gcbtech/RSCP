@@ -159,7 +159,7 @@
                     <div class="input-group">
                         <span class="input-group-text" id="discountPrefix">%</span>
                         <input type="number" name="discount_value" id="discountValue" class="form-control" step="0.01"
-                            min="0" required value="{{ coupon.discount_value if coupon else '' }}">
+                            min="0" required value="{% if coupon %}{% if (coupon.discount_type or '').endswith('_dollar') %}{{ (coupon.discount_cents or 0)|dollar_number }}{% else %}{{ coupon.discount_percent }}{% endif %}{% endif %}">
                     </div>
                 </div>
             </div>
@@ -217,7 +217,7 @@
                         <div class="input-group">
                             <span class="input-group-text">$</span>
                             <input type="number" name="min_purchase" class="form-control" step="0.01" min="0"
-                                value="{{ coupon.min_purchase if coupon and coupon.min_purchase else '' }}"
+                                value="{{ coupon.min_purchase_cents|dollar_number if coupon and coupon.min_purchase_cents else '' }}"
                                 placeholder="Optional">
                         </div>
                         <small class="text-muted">Order must be at least this amount</small>

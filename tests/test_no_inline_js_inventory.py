@@ -113,14 +113,14 @@ def app_with_all_features(fresh_app, monkeypatch):
     with fresh_app.app_context():
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute('INSERT INTO inventory_items (sku, name, sell_price, buy_price, quantity, image_url, '
-                    'additional_images, is_legacy) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    ('NJ-SKU-1', TRICKY_NAME, 9.99, 4.0, 25, '/static/img/a.png',
+        cur.execute('INSERT INTO inventory_items (sku, name, sell_price_cents, buy_price_cents, quantity, '
+                    'image_url, additional_images, is_legacy) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                    ('NJ-SKU-1', TRICKY_NAME, 999, 400, 25, '/static/img/a.png',
                      json.dumps(['/static/img/b.png']), 1))
         item_id = cur.lastrowid
-        cur.execute('INSERT INTO inventory_items (sku, name, sell_price, quantity, alert_enabled, alert_threshold, '
-                    'image_url) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                    ('NJ-SKU-LOW', 'Low Widget', 5.0, 1, 1, 5, '/static/img/c.png'))
+        cur.execute('INSERT INTO inventory_items (sku, name, sell_price_cents, quantity, alert_enabled, '
+                    'alert_threshold, image_url) VALUES (?, ?, ?, ?, ?, ?, ?)',
+                    ('NJ-SKU-LOW', 'Low Widget', 500, 1, 1, 5, '/static/img/c.png'))
         cur.execute('INSERT INTO inventory_transactions (inventory_item_id, quantity_change, reason, user_id) '
                     'VALUES (?, ?, ?, ?)', (item_id, 5, 'Received', 'admin'))
         cur.execute("INSERT INTO audit_sessions (user_id, mode, status) VALUES ('admin', 'shelf', 'active')")

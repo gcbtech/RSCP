@@ -165,7 +165,7 @@
                 <div id="itemRows">
                     {% for item in items %}
                     <div class="item-row" id="item-row-{{ item.id }}" data-item-id="{{ item.id }}"
-                        data-line-discount="{{ item.discount_amount or 0 }}" data-line-discount-type="{{ item.discount_type or '' }}">
+                        data-line-discount="{% if item.discount_type == 'percent' %}{{ item.discount_percent or 0 }}{% elif item.discount_type == 'fixed' %}{{ (item.discount_cents or 0)|dollar_number }}{% else %}0{% endif %}" data-line-discount-type="{{ item.discount_type or '' }}">
                         <input type="hidden" name="item_id" value="{{ item.id }}">
                         <div class="item-name-col">
                             <input type="text" name="item_name" value="{{ item.name }}" data-input="recalculate">
@@ -177,11 +177,11 @@
                                 data-input="recalculate">
                         </div>
                         <div class="item-price-col">
-                            <input type="number" name="item_price" value="{{ '%.2f'|format(item.unit_price) }}"
+                            <input type="number" name="item_price" value="{{ item.unit_price_cents|dollars }}"
                                 step="0.01" min="0" data-input="recalculate">
                         </div>
                         <div class="item-total-col" id="line-total-{{ item.id }}">
-                            ${{ "%.2f"|format(item.line_total) }}
+                            ${{ item.line_total_cents|dollars }}
                         </div>
                         <div class="item-action-col">
                             <button type="button" class="btn btn-sm btn-outline-danger"
@@ -195,21 +195,21 @@
                 <div class="totals-section">
                     <div class="total-row">
                         <span>Subtotal</span>
-                        <span id="editSubtotal">${{ "%.2f"|format(order.subtotal) }}</span>
+                        <span id="editSubtotal">${{ order.subtotal_cents|dollars }}</span>
                     </div>
-                    {% if order.discount_amount and order.discount_amount > 0 %}
+                    {% if order.discount_amount_cents and order.discount_amount_cents > 0 %}
                     <div class="total-row text-warning">
                         <span>Discount ({{ order.discount_type }})</span>
-                        <span>-${{ "%.2f"|format(order.discount_amount) }}</span>
+                        <span>-${{ order.discount_amount_cents|dollars }}</span>
                     </div>
                     {% endif %}
                     <div class="total-row">
                         <span>Tax ({{ "%.2f"|format(tax_rate) }}%)</span>
-                        <span id="editTax">${{ "%.2f"|format(order.tax_amount) }}</span>
+                        <span id="editTax">${{ order.tax_amount_cents|dollars }}</span>
                     </div>
                     <div class="total-row grand">
                         <span>Total</span>
-                        <span id="editTotal">${{ "%.2f"|format(order.total) }}</span>
+                        <span id="editTotal">${{ order.total_cents|dollars }}</span>
                     </div>
                 </div>
             </div>
@@ -253,7 +253,7 @@
 {% endblock %}
 
 {% block page_data %}
-    <script type="application/json" id="page-data">{{ {'taxRatePercent': tax_rate|float, 'adjustments': adjustments}|tojson }}</script>
+    <script type="application/json" id="page-data">{{ {'taxRatePercent': tax_rate|float, 'adjustments': adjustments_json}|tojson }}</script>
 {% endblock %}
 
 {% block scripts %}

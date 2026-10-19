@@ -147,8 +147,8 @@
                                 class="text-end {{ 'text-danger fw-bold' if item.current_stock < 5 else 'text-muted' }}">
                                 {{ item.current_stock }}
                             </td>
-                            <td class="text-end">${{ "%.2f"|format(item.avg_price) }}</td>
-                            <td class="text-end fw-bold">${{ "%.2f"|format(item.total) }}</td>
+                            <td class="text-end">${{ item.avg_price_cents|dollars }}</td>
+                            <td class="text-end fw-bold">${{ item.total_cents|dollars }}</td>
                         </tr>
                         {% else %}
                         <tr>
@@ -165,7 +165,7 @@
                             <td class="text-center">{{ items|sum(attribute='qty') }}</td>
                             <td></td>
                             <td></td>
-                            <td class="text-end">${{ "%.2f"|format(items|sum(attribute='total')) }}</td>
+                            <td class="text-end">${{ (items|sum(attribute='total_cents'))|dollars }}</td>
                         </tr>
                     </tfoot>
                 </table>

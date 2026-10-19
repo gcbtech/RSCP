@@ -23,17 +23,17 @@ def _db(app):
 def order(fresh_app):
     """A completed one-line sale: (order_id, order_number)."""
     conn = _db(fresh_app)
-    item = conn.execute('INSERT INTO inventory_items (sku, name, sell_price, quantity) '
-                        "VALUES ('GADGET', 'GADGET item', 100, 5)").lastrowid
+    item = conn.execute('INSERT INTO inventory_items (sku, name, sell_price_cents, quantity) '
+                        "VALUES ('GADGET', 'GADGET item', 10000, 5)").lastrowid
     order_id = conn.execute('''
-        INSERT INTO pos_orders (order_number, status, subtotal, tax_rate, tax_amount,
-                                discount_amount, discount_type, total, payment_method,
+        INSERT INTO pos_orders (order_number, status, subtotal_cents, tax_rate, tax_amount_cents,
+                                discount_amount_cents, discount_type, total_cents, payment_method,
                                 payment_details, operator_id)
-        VALUES ('POS-T-001', 'completed', 100, 0.07, 7, 0, NULL, 107, 'card', '{}', 1)
+        VALUES ('POS-T-001', 'completed', 10000, 0.07, 700, 0, NULL, 10700, 'card', '{}', 1)
     ''').lastrowid
     conn.execute('''INSERT INTO pos_order_items (order_id, inventory_item_id, sku, name, quantity,
-                                                 unit_price, line_total)
-                    VALUES (?, ?, 'GADGET', 'GADGET item', 1, 100, 100)''', (order_id, item))
+                                                 unit_price_cents, line_total_cents)
+                    VALUES (?, ?, 'GADGET', 'GADGET item', 1, 10000, 10000)''', (order_id, item))
     conn.commit()
     conn.close()
     return order_id, 'POS-T-001'
@@ -41,8 +41,8 @@ def order(fresh_app):
 
 def _put_cart(fresh_app, client):
     conn = _db(fresh_app)
-    item = conn.execute('INSERT INTO inventory_items (sku, name, sell_price, quantity) '
-                        "VALUES ('WIDGET', 'WIDGET item', 10, 10)").lastrowid
+    item = conn.execute('INSERT INTO inventory_items (sku, name, sell_price_cents, quantity) '
+                        "VALUES ('WIDGET', 'WIDGET item', 1000, 10)").lastrowid
     conn.commit()
     conn.close()
     with client.session_transaction() as sess:
