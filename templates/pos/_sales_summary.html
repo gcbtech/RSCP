@@ -9,6 +9,7 @@
                 <h6 class="text-muted text-uppercase small">{{ t.label }} (net)</h6>
                 <h3 class="fw-bold text-{{ 'success' if t.method == 'cash' else 'info' }}">${{ t.net_cents|dollars }}</h3>
                 <small class="text-muted d-block">${{ t.collected_cents|dollars }} taken
+                    {% if t.corrected_cents %}{{ '+' if t.corrected_cents > 0 else '&minus;'|safe }} ${{ (t.corrected_cents|abs)|dollars }} corrections{% endif %}
                     {% if t.refunded_cents %}&minus; ${{ t.refunded_cents|dollars }} refunded{% endif %}</small>
             </div>
         </div>
@@ -20,6 +21,7 @@
                 <h6 class="text-muted text-uppercase small">Tax (net)</h6>
                 <h3 class="fw-bold">${{ r.tax_net_cents|dollars }}</h3>
                 <small class="text-muted">${{ r.tax_collected_cents|dollars }} collected
+                    {% if r.corrections.tax_cents %}{{ '+' if r.corrections.tax_cents > 0 else '&minus;'|safe }} ${{ (r.corrections.tax_cents|abs)|dollars }} corrections{% endif %}
                     {% if r.refunds.tax_cents %}&minus; ${{ r.refunds.tax_cents|dollars }} refunded{% endif %}</small>
             </div>
         </div>
@@ -29,7 +31,7 @@
             <div class="card-body">
                 <h6 class="text-primary text-uppercase small fw-bold">Net Revenue</h6>
                 <h3 class="fw-bold text-primary">${{ r.net_revenue_cents|dollars }}</h3>
-                <small class="text-primary">Incl. tax, after refunds &bull; {{ r.order_count }} orders</small>
+                <small class="text-primary">Incl. tax, after refunds{% if r.corrections.count %} and corrections{% endif %} &bull; {{ r.order_count }} orders</small>
             </div>
         </div>
     </div>
@@ -60,11 +62,18 @@
                         <tr><td>Tax collected</td><td class="text-end">${{ r.tax_collected_cents|dollars }}</td></tr>
                         <tr><td>Sales total <small class="text-muted">(incl. tax)</small></td>
                             <td class="text-end">${{ r.sales_total_cents|dollars }}</td></tr>
+                        {% if r.corrections.count %}
+                        <tr class="text-warning"><td>Sale corrections ({{ r.corrections.count }}{% if r.corrections.voids %}, {{ r.corrections.voids }} void{{ 's' if r.corrections.voids != 1 }}{% endif %})
+                            <small class="text-muted">(made this period, incl. tax)</small></td>
+                            <td class="text-end">{{ r.corrections.total_cents|money }}</td></tr>
+                        <tr class="text-warning"><td class="ps-3">of which tax</td>
+                            <td class="text-end">{{ r.corrections.tax_cents|money }}</td></tr>
+                        {% endif %}
                         <tr class="text-danger"><td>Refunds ({{ r.refunds.count }})</td>
                             <td class="text-end">&minus;${{ r.refunds.total_cents|dollars }}</td></tr>
                         <tr class="text-danger"><td class="ps-3">of which tax</td>
                             <td class="text-end">&minus;${{ r.refunds.tax_cents|dollars }}</td></tr>
-                        <tr class="fw-bold table-light"><td>Net revenue <small class="text-muted fw-normal">(incl. tax, after refunds)</small></td>
+                        <tr class="fw-bold table-light"><td>Net revenue <small class="text-muted fw-normal">(incl. tax, after refunds{% if r.corrections.count %} and corrections{% endif %})</small></td>
                             <td class="text-end">${{ r.net_revenue_cents|dollars }}</td></tr>
                         <tr><td>Net sales after refunds <small class="text-muted">(ex. tax)</small></td>
                             <td class="text-end">${{ r.net_sales_after_refunds_cents|dollars }}</td></tr>
@@ -88,6 +97,7 @@
                                 <th>Method</th>
                                 <th class="text-center">Sales</th>
                                 <th class="text-end">Collected</th>
+                                {% if r.corrections.count %}<th class="text-end">Corrections</th>{% endif %}
                                 <th class="text-end">Refunded</th>
                                 <th class="text-end fw-bold">Net</th>
                             </tr>
@@ -98,6 +108,7 @@
                                 <td class="text-uppercase fw-bold">{{ t.label }}</td>
                                 <td class="text-center">{{ t.count }}</td>
                                 <td class="text-end">${{ t.collected_cents|dollars }}</td>
+                                {% if r.corrections.count %}<td class="text-end text-warning">{{ t.corrected_cents|money }}</td>{% endif %}
                                 <td class="text-end text-danger">&minus;${{ t.refunded_cents|dollars }}</td>
                                 <td class="text-end fw-bold">${{ t.net_cents|dollars }}</td>
                             </tr>
@@ -124,6 +135,9 @@
                         <tr><td>Opening float(s)</td><td class="text-end">${{ r.expected_cash.opening_float_cents|dollars }}</td></tr>
                         <tr><td>+ Cash sales</td><td class="text-end">${{ r.expected_cash.cash_sales_cents|dollars }}</td></tr>
                         <tr><td>&minus; Cash refunds</td><td class="text-end">${{ r.expected_cash.cash_refunds_cents|dollars }}</td></tr>
+                        {% if r.expected_cash.cash_corrections_cents %}
+                        <tr><td>&plusmn; Cash sale corrections</td><td class="text-end">{{ r.expected_cash.cash_corrections_cents|money }}</td></tr>
+                        {% endif %}
                         <tr class="fw-bold"><td>Expected cash</td><td class="text-end">${{ r.expected_cash.total_cents|dollars }}</td></tr>
                     </tbody>
                 </table>

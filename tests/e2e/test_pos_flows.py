@@ -215,6 +215,62 @@ def test_card_sale_then_manager_refunds_one_item(page, e2e_server):
     page.watcher.assert_clean()
 
 
+def test_manager_corrects_a_sale_then_admin_voids_it(page, e2e_server):
+    """Edit Sale records a correction (the sale stays as rung up) and says
+    what to pay back; Void reverses the rest. Both show on the receipt."""
+    lamp, lamp_sku = helpers.seed_pos_item(e2e_server, 'E2E Fix Lamp', 25.00, quantity=5)
+    bulb, bulb_sku = helpers.seed_pos_item(e2e_server, 'E2E Fix Bulb', 5.00, quantity=5)
+    helpers.login(page, 'cashier')
+    open_register(page)
+    ring_up(page, lamp_sku, 'E2E Fix Lamp')
+    ring_up(page, bulb_sku, 'E2E Fix Bulb')
+    go_to_checkout(page)                              # card: $30.00 + 7% = $32.10
+    order_number = complete_sale(page)
+    order, payments = helpers.order(e2e_server, order_number)
+
+    # Manager takes the bulb off the sale: the page previews the $5.35 to pay back
+    helpers.logout(page)
+    helpers.login(page, 'manager')
+    page.goto('/pos/management/sales')
+    with page.expect_navigation(url=re.compile(r'/pos/management/edit-sale/')):
+        page.locator(f'a[href$="/pos/management/edit-sale/{order["id"]}"]').click()
+    row = page.locator('.item-row', has_text=bulb_sku)
+    row.locator('button[data-action="removeItem"]').click()
+    expect(page.locator('#editTotal')).to_have_text('$26.75')
+    expect(page.locator('#editDifferenceLabel')).to_have_text('Pay the customer back')
+    expect(page.locator('#editDifference')).to_have_text('$5.35')
+    page.fill('#correctionReason', 'bulb was broken')
+    with page.expect_navigation(url=re.compile(r'/pos/management/sales')):
+        page.locator('#editForm button[type="submit"]').click()
+    expect(page.locator('body')).to_contain_text('Pay the customer back $5.35 (Card)')
+
+    after, after_payments = helpers.order(e2e_server, order_number)
+    assert tuple(after) == tuple(order)                       # the sale itself never changes
+    assert after_payments == payments + [('card', -535, None, 0)]
+    assert helpers.item_quantity(e2e_server, bulb) == 5       # back on the shelf
+
+    page.goto(f'/pos/receipt/{order_number}')
+    body = page.locator('body')
+    expect(body).to_contain_text('Changes after the sale')
+    expect(body).to_contain_text('bulb was broken')
+    expect(page.locator('.sale-net')).to_contain_text('$26.75')
+
+    # Admin voids what is left
+    helpers.logout(page)
+    helpers.login(page, 'admin')
+    page.goto(f'/pos/receipt/{order_number}')
+    page.locator('button.dropdown-toggle', has_text='Void Sale').click()
+    page.fill('#voidReason', 'customer left')
+    with page.expect_navigation(url=re.compile(rf'/pos/receipt/{order_number}$')):
+        page.locator('form[action$="/void"] button[type="submit"]').click()
+    expect(page.locator('h1')).to_have_text('Sale Voided')
+    expect(page.locator('body')).to_contain_text('Pay the customer back $26.75 card')
+    _o, final_payments = helpers.order(e2e_server, order_number)
+    assert sum(p[1] for p in final_payments) == 0
+    assert helpers.item_quantity(e2e_server, lamp) == 5
+    page.watcher.assert_clean()
+
+
 def test_paired_scanner_rings_into_open_register(cashier_page, new_page, e2e_server):
     register = cashier_page
     item, sku = helpers.seed_pos_item(e2e_server, 'E2E Scanner Cable', 8.00, quantity=6)

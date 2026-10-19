@@ -310,7 +310,8 @@ def test_engine_numbers_for_a_seeded_day(fresh_app, fresh_client):
         ('card', 2, 6400, 2200, 4200),
     ]
     assert r['expected_cash'] == {'opening_float_cents': 10000, 'cash_sales_cents': 3190,
-                                  'cash_refunds_cents': 3300, 'total_cents': 9890}
+                                  'cash_refunds_cents': 3300, 'cash_corrections_cents': 0, 'total_cents': 9890}
+    assert r['corrections']['count'] == 0 and r['corrections']['total_cents'] == 0
     assert [(s['id'], s['over_short_cents']) for s in r['drawer_sessions']] == [(1, -90)]
     # legacy keys the Top Sellers reconciliation relies on
     assert r['summary']['gross_sales_cents'] == r['sales_total_cents'] and r['summary']['total_orders'] == 3

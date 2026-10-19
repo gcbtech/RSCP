@@ -43,6 +43,7 @@ def render_eod_email_html(report_date, data):
         return f"<tr><td style='{td}{style}'>{label}</td><td style='{num}{style}'>{value}</td></tr>"
 
     d = r['discounts']
+    c = r['corrections']
     sales_rows = ''.join([
         row('Orders', r['order_count']),
         row('Gross Sales <small>(before discounts, ex. tax)</small>', _money(r['gross_sales_cents'])),
@@ -53,23 +54,34 @@ def render_eod_email_html(report_date, data):
         row('<strong>Net Sales</strong> <small>(ex. tax)</small>', f"<strong>{_money(r['net_sales_cents'])}</strong>"),
         row('Tax Collected', _money(r['tax_collected_cents'])),
         row('Sales Total <small>(incl. tax)</small>', _money(r['sales_total_cents'])),
+        *([row(f"Sale corrections ({c['count']})", _money(c['total_cents']), ' color: #b45309;'),
+           row('&nbsp;&nbsp;of which tax', _money(c['tax_cents']), ' color: #b45309;')] if c['count'] else []),
         row(f"Refunds ({r['refunds']['count']})", '-' + _money(r['refunds']['total_cents']), ' color: #dc3545;'),
         row('&nbsp;&nbsp;of which tax', '-' + _money(r['refunds']['tax_cents']), ' color: #dc3545;'),
-        row('Tax (net of refunds)', _money(r['tax_net_cents'])),
-        row('<strong>NET REVENUE</strong> <small>(incl. tax, after refunds)</small>',
+        row('Tax (net of refunds and corrections)' if c['count'] else 'Tax (net of refunds)',
+            _money(r['tax_net_cents'])),
+        row('<strong>NET REVENUE</strong> <small>(incl. tax, after refunds'
+            + (' and corrections' if c['count'] else '') + ')</small>',
             f"<strong>{_money(r['net_revenue_cents'])}</strong>", ' background: #f8f9fa;'),
     ])
 
+    def corrected_cell(t):
+        return f"<td style='{num}'>{_money(t['corrected_cents'])}</td>" if c['count'] else ''
+
     tender_rows = ''.join(
         f"<tr><td style='{td}'>{escape(t['label'])}</td><td style='{num}'>{_money(t['collected_cents'])}</td>"
+        f"{corrected_cell(t)}"
         f"<td style='{num}'>-{_money(t['refunded_cents'])}</td><td style='{num}'><strong>{_money(t['net_cents'])}</strong></td></tr>"
         for t in r['tenders'])
+    corrected_th = f'<th style="{th} text-align: right;">Corrections</th>' if c['count'] else ''
 
     ec = r['expected_cash']
     cash_rows = ''.join([
         row('Opening float(s)', _money(ec['opening_float_cents'])),
         row('+ Cash sales', _money(ec['cash_sales_cents'])),
         row('- Cash refunds', _money(ec['cash_refunds_cents'])),
+        *([row('+/- Cash sale corrections', _money(ec['cash_corrections_cents']))]
+          if ec['cash_corrections_cents'] else []),
         row('<strong>Expected cash</strong>', f"<strong>{_money(ec['total_cents'])}</strong>"),
     ])
     drawer_rows = ''
@@ -99,7 +111,7 @@ def render_eod_email_html(report_date, data):
 
             <h4 style="border-bottom: 2px solid #eee; padding-bottom: 6px;">Tenders</h4>
             <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px;">
-                <tr><th style="{th}">Method</th><th style="{th} text-align: right;">Collected</th>
+                <tr><th style="{th}">Method</th><th style="{th} text-align: right;">Collected</th>{corrected_th}
                     <th style="{th} text-align: right;">Refunded</th><th style="{th} text-align: right;">Net</th></tr>
                 {tender_rows}
             </table>

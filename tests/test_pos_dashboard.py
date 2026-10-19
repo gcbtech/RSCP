@@ -178,7 +178,8 @@ def test_dashboard_matches_the_report_engine_for_a_mixed_day(fresh_app, fresh_cl
     # Est. profit after discounts and refunds, ex. tax (Top Sellers): WIDGET 20-8, CABLE 20-5;
     # LAPTOP and GADGET were fully refunded
     assert dash['profit']['profit_cents'] == pytest.approx(2700)
-    assert dash['daily_sales'] == [{'day': today.isoformat(), 'orders': 4, 'revenue_cents': 14725}]
+    assert dash['daily_sales'] == [{'day': today.isoformat(), 'orders': 4, 'revenue_cents': 14725,
+                                    'corrections_cents': 0}]
 
     for figure in ('$147.25', '$44.00', '$27.00', '$36.81', '$103.25', 'Refunds (3)', '$68.25', '$79.00'):
         assert figure in html, figure
@@ -216,11 +217,12 @@ def test_dashboard_range_and_daily_series_add_up_to_the_engine(fresh_app, fresh_
         assert [s['day'] for s in series] == [(start + timedelta(days=i)).isoformat() for i in range(7)]
         assert sum(s['orders'] for s in series) == engine['order_count']
         assert sum(s['revenue_cents'] for s in series) == engine['sales_total_cents']
-        assert series[3] == {'day': (today - timedelta(days=3)).isoformat(), 'orders': 1, 'revenue_cents': 1100}
+        assert series[3] == {'day': (today - timedelta(days=3)).isoformat(), 'orders': 1, 'revenue_cents': 1100,
+                             'corrections_cents': 0}
 
     with fresh_app.app_context():
         assert daily_sales_series(today, today) == [{'day': today.isoformat(), 'orders': 4,
-                                                     'revenue_cents': 14725}]
+                                                     'revenue_cents': 14725, 'corrections_cents': 0}]
 
 
 @pytest.mark.parametrize('query', [
