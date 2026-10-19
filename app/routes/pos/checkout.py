@@ -16,7 +16,7 @@ from app.routes.pos.core import (
     get_cart, mutate_cart, current_cart_version, resolve_register_id,
     generate_order_number, compute_cart_totals, pricing_config, get_pos_setting
 )
-from app.services import pos_checkout, pos_sales
+from app.services import money, pos_checkout, pos_sales
 from app.services.db import get_db_connection, get_request_db
 from app.services.pos_ledger import order_payments
 from app.services.pos_pricing import parse_money, parse_money_field
@@ -37,24 +37,23 @@ def checkout():
     # the customer display and the recorded sale cannot disagree.
     totals = compute_cart_totals(cart)
 
-    from app.routes.pos.core import get_pos_setting
-    cash_discount_amount = float(get_pos_setting('CASH_DISCOUNT_AMOUNT', '0') or 0)
-    cash_discount_type = get_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
+    config = pricing_config()
 
     return render_template('pos/checkout.html',
                            cart=cart,
                            cart_version=current_cart_version(),
-                           subtotal=totals['subtotal'],
-                           order_discount=totals['order_discount'],
-                           coupon_discount=totals['coupon_discount'],
+                           subtotal_cents=totals['subtotal_cents'],
+                           order_discount_cents=totals['order_discount_cents'],
+                           coupon_discount_cents=totals['coupon_discount_cents'],
                            tax_rate=totals['tax_rate_pct'],
-                           tax_amount=totals['tax_amount'],
-                           total=totals['card_total'],
+                           tax_amount_cents=totals['tax_amount_cents'],
+                           total_cents=totals['card_total_cents'],
                            payment_methods=PAYMENT_METHODS,
                            cash_discount_enabled=totals['cash_discount_enabled'],
-                           cash_discount_amount=cash_discount_amount,
-                           cash_discount_type=cash_discount_type,
-                           cash_discount_value=totals['cash_discount_value'],
+                           cash_discount_percent=config.cash_discount_percent,
+                           cash_discount_fixed_cents=config.cash_discount_cents,
+                           cash_discount_type=config.cash_discount_type,
+                           cash_discount_cents=totals['cash_discount_cents'],
                            # One token per rendered checkout: a double-click or a
                            # retried POST records the sale once.
                            checkout_token=secrets.token_urlsafe(16))
@@ -120,7 +119,7 @@ def checkout_process():
         session.modified = True
 
     order_number = sale.order_number
-    flash(f'Order {order_number} completed! Total: ${sale.total:.2f}')
+    flash(f'Order {order_number} completed! Total: {money.fmt(sale.total_cents)}')
 
     # Redirect with optional auto-print and cash-drawer flags
     redirect_params = {}
@@ -131,7 +130,7 @@ def checkout_process():
     # Open the drawer only for cash, or a split with cash
     if get_pos_setting('CASH_DRAWER_ENABLED', 'false') == 'true':
         has_cash = sale.payment_method == 'cash' or (
-            sale.payment_method == 'split' and sale.payment_details.get('cash', 0) > 0
+            sale.payment_method == 'split' and sale.payment_details.get('cash_cents', 0) > 0
         )
         if has_cash:
             redirect_params['open_drawer'] = '1'
@@ -141,7 +140,7 @@ def checkout_process():
     return redirect(url_for('pos.receipt', order_number=order_number, **redirect_params))
 
 
-# Form money parsing now lives in pos_pricing (kept here for importers)
+# Form money parsing (dollars typed -> cents) lives in pos_pricing (kept here for importers)
 _money_value = parse_money
 
 
@@ -153,12 +152,14 @@ def _prepare_receipt_data(conn, order):
     """Everything a receipt shows, from what was stored at the time of sale.
 
     Discounts come from the order itself: line discounts from each line's
-    stored line_total, the coupon from pos_coupon_redemptions.discount_applied,
-    the cash discount from pos_orders.cash_discount -- never from today's
-    coupon or settings definitions. Tenders come from the payments ledger.
+    stored line_total_cents, the coupon from
+    pos_coupon_redemptions.discount_applied_cents, the cash discount from
+    pos_orders.cash_discount_cents -- never from today's coupon or settings
+    definitions. Tenders come from the payments ledger. Money is cents; the
+    templates format it.
     """
     items = [dict(row) for row in conn.execute('''
-        SELECT oi.*, ii.addon_1, ii.addon_2, ii.sell_price as current_reg_price
+        SELECT oi.*, ii.addon_1, ii.addon_2, ii.sell_price_cents as current_reg_price_cents
         FROM pos_order_items oi
         LEFT JOIN inventory_items ii ON oi.inventory_item_id = ii.id
         WHERE oi.order_id = ?
@@ -179,26 +180,24 @@ def _prepare_receipt_data(conn, order):
         except (json.JSONDecodeError, TypeError):
             payment_details = {}  # Invalid payment details JSON
 
-    try:
-        cash_discount = float(order['cash_discount'] or 0)
-    except (IndexError, KeyError, TypeError, ValueError):
-        cash_discount = 0.0
+    cash_discount = order['cash_discount_cents'] or 0
     if not cash_discount and isinstance(payment_details, dict):
         try:
-            cash_discount = float(payment_details.get('cash_discount') or 0)
+            cash_discount = int(payment_details.get('cash_discount_cents') or 0)
         except (TypeError, ValueError):
-            cash_discount = 0.0
+            cash_discount = 0
 
-    # Subtotal before any line discount, and the line discounts as stored
-    subtotal_before_discounts = sum(item['unit_price'] * item['quantity'] for item in items)
-    total_item_discount = sum((item['unit_price'] * item['quantity']) - item['line_total'] for item in items)
+    # Subtotal before any line discount, and the line discounts as stored (cents)
+    subtotal_before_discounts = sum(item['unit_price_cents'] * item['quantity'] for item in items)
+    total_item_discount = sum((item['unit_price_cents'] * item['quantity']) - item['line_total_cents']
+                              for item in items)
 
     return {
         'items': items,
         'coupon_redemption': coupon_redemption,
-        'subtotal_before_discounts': round(subtotal_before_discounts, 2),
-        'total_item_discount': round(total_item_discount, 2),
-        'cash_discount': round(cash_discount, 2),
+        'subtotal_before_discounts_cents': subtotal_before_discounts,
+        'total_item_discount_cents': total_item_discount,
+        'cash_discount_cents': cash_discount,
         'payment_details': payment_details,
         'payments': order_payments(conn, order['id']),
     }

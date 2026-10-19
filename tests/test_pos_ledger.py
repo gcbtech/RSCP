@@ -28,9 +28,9 @@ def _settings(app, **values):
             set_pos_setting(k, v)
 
 
-def _add_item(app, sku='WIDGET', price=10.0, qty=10):
+def _add_item(app, sku='WIDGET', price=1000, qty=10):
     conn = _db(app)
-    cur = conn.execute('INSERT INTO inventory_items (sku, name, sell_price, quantity) VALUES (?, ?, ?, ?)',
+    cur = conn.execute('INSERT INTO inventory_items (sku, name, sell_price_cents, quantity) VALUES (?, ?, ?, ?)',
                        (sku, f'{sku} item', price, qty))
     conn.commit()
     item_id = cur.lastrowid
@@ -38,13 +38,13 @@ def _add_item(app, sku='WIDGET', price=10.0, qty=10):
     return item_id
 
 
-def _put_cart(client, item_id, price=10.0, qty=1, sku='WIDGET'):
+def _put_cart(client, item_id, price=1000, qty=1, sku='WIDGET'):
     with client.session_transaction() as sess:
         sess['pos_cart'] = {
             'items': [{'inventory_item_id': item_id, 'sku': sku, 'name': f'{sku} item',
-                       'quantity': qty, 'unit_price': price, 'discount_amount': 0,
-                       'discount_type': None, 'line_total': round(price * qty, 2)}],
-            'discount_amount': 0, 'discount_type': None, 'discount_reason': '',
+                       'quantity': qty, 'unit_price_cents': price, 'discount_type': None,
+                       'discount_percent': 0, 'discount_cents': 0, 'line_total_cents': price * qty}],
+            'discount_type': None, 'discount_percent': 0, 'discount_cents': 0, 'discount_reason': '',
         }
 
 
@@ -55,14 +55,16 @@ def _payments(app, order_id=None):
     else:
         rows = conn.execute('SELECT * FROM pos_payments WHERE order_id = ? ORDER BY id', (order_id,)).fetchall()
     conn.close()
-    return [(r['method'], r['amount'], r['tendered'], r['change_given']) for r in rows]
+    return [(r['method'], r['amount_cents'], r['tendered_cents'], r['change_given_cents']) for r in rows]
 
 
-def _insert_order(conn, number, total, tax, method, details, subtotal=None, discount=0.0, status='completed',
-                  created_at=None, cash_discount=0.0):
+def _insert_order(conn, number, total, tax, method, details, subtotal=None, discount=0, status='completed',
+                  created_at=None, cash_discount=0):
+    """An order row (money in cents; payment_details keys as checkout writes them)."""
     cur = conn.execute('''
-        INSERT INTO pos_orders (order_number, status, subtotal, tax_rate, tax_amount, discount_amount, total,
-                                payment_method, payment_details, operator_id, created_at, cash_discount)
+        INSERT INTO pos_orders (order_number, status, subtotal_cents, tax_rate, tax_amount_cents,
+                                discount_amount_cents, total_cents,
+                                payment_method, payment_details, operator_id, created_at, cash_discount_cents)
         VALUES (?, ?, ?, 0.1, ?, ?, ?, ?, ?, 1, COALESCE(?, CURRENT_TIMESTAMP), ?)
     ''', (number, status, subtotal if subtotal is not None else total, tax, discount, total, method,
           details if isinstance(details, str) or details is None else json.dumps(details), created_at,
@@ -71,22 +73,36 @@ def _insert_order(conn, number, total, tax, method, details, subtotal=None, disc
 
 
 def _insert_line(conn, order_id, qty, unit_price, line_total, sku='LINE'):
-    return conn.execute('''INSERT INTO pos_order_items (order_id, sku, name, quantity, unit_price, line_total)
+    return conn.execute('''INSERT INTO pos_order_items (order_id, sku, name, quantity, unit_price_cents,
+                                                       line_total_cents)
                            VALUES (?, ?, ?, ?, ?, ?)''',
                         (order_id, sku, f'{sku} item', qty, unit_price, line_total)).lastrowid
 
 
 # --- migration backfill -----------------------------------------------------
 
-def test_backfill_from_each_payment_type(fresh_app):
+def test_backfill_from_each_payment_type(fresh_app, tmp_path):
+    """Migration 8 on a database at schema v7 (dollar REAL columns, as then)."""
+    from app.services import migration
     from app.services.migration import _m8_pos_ledger
-    conn = _db(fresh_app)
-    cash = _insert_order(conn, 'B-1', 10.70, 0.70, 'cash', {'tendered': 20, 'change': 9.30, 'cash_discount': 0})
-    card = _insert_order(conn, 'B-2', 21.40, 1.40, 'card', {})
-    split = _insert_order(conn, 'B-3', 9.00, 0.0, 'split',
-                          {'cash': 6, 'cards': [4], 'total_tendered': 10, 'change': 1, 'cash_discount': 0.5})
-    broken = _insert_order(conn, 'B-4', 5.00, 0.0, 'split', '{not json')
-    exact = _insert_order(conn, 'B-5', 7.00, 0.0, 'cash', None)
+    db = str(tmp_path / 'v7.db')
+    migration.run_migrations(db, target=7)
+    conn = sqlite3.connect(db)
+
+    def order(number, total, tax, method, details):
+        return conn.execute('''
+            INSERT INTO pos_orders (order_number, status, subtotal, tax_rate, tax_amount, discount_amount, total,
+                                    payment_method, payment_details, operator_id)
+            VALUES (?, 'completed', ?, 0.1, ?, 0, ?, ?, ?, 1)''',
+            (number, total, tax, total, method,
+             details if isinstance(details, str) or details is None else json.dumps(details))).lastrowid
+
+    cash = order('B-1', 10.70, 0.70, 'cash', {'tendered': 20, 'change': 9.30, 'cash_discount': 0})
+    card = order('B-2', 21.40, 1.40, 'card', {})
+    split = order('B-3', 9.00, 0.0, 'split',
+                  {'cash': 6, 'cards': [4], 'total_tendered': 10, 'change': 1, 'cash_discount': 0.5})
+    broken = order('B-4', 5.00, 0.0, 'split', '{not json')
+    exact = order('B-5', 7.00, 0.0, 'cash', None)
     # Full refunds carry their share of tax; 2.x partial refunds (below) were pre-tax
     conn.execute("INSERT INTO pos_refunds (order_id, refund_type, amount, reason, manager_id) "
                  "VALUES (?, 'full', 10.70, 'other', 1)", (cash,))
@@ -97,25 +113,28 @@ def test_backfill_from_each_payment_type(fresh_app):
     conn.commit()
     conn.close()
 
-    raw = sqlite3.connect(fresh_app.config['DATABASE'], isolation_level=None)
-    for _ in range(2):  # idempotent
-        raw.execute('BEGIN IMMEDIATE')
-        _m8_pos_ledger(raw)
-        raw.execute('COMMIT')
-    raw.close()
+    migration.run_migrations(db, target=8)
+    raw = sqlite3.connect(db, isolation_level=None)
+    raw.execute('BEGIN IMMEDIATE')
+    _m8_pos_ledger(raw)  # idempotent
+    raw.execute('COMMIT')
 
-    assert _payments(fresh_app, cash) == [('cash', 10.70, 20.0, 9.30)]
-    assert _payments(fresh_app, card) == [('card', 21.40, None, 0.0)]
+    def payments(order_id):
+        return [tuple(r) for r in raw.execute(
+            'SELECT method, amount, tendered, change_given FROM pos_payments WHERE order_id = ? ORDER BY id',
+            (order_id,))]
+
+    assert payments(cash) == [('cash', 10.70, 20.0, 9.30)]
+    assert payments(card) == [('card', 21.40, None, 0.0)]
     # split: card as given, cash applied = total - cards, change = handed - applied
-    assert _payments(fresh_app, split) == [('card', 4.0, None, 0.0), ('cash', 5.0, 6.0, 1.0)]
-    assert _payments(fresh_app, broken) == [('cash', 5.0, 5.0, 0.0)]
-    assert _payments(fresh_app, exact) == [('cash', 7.0, 7.0, 0.0)]
+    assert payments(split) == [('card', 4.0, None, 0.0), ('cash', 5.0, 6.0, 1.0)]
+    assert payments(broken) == [('cash', 5.0, 5.0, 0.0)]
+    assert payments(exact) == [('cash', 7.0, 7.0, 0.0)]
 
-    conn = _db(fresh_app)
-    refunds = conn.execute('SELECT order_id, refund_method, tax_refunded FROM pos_refunds ORDER BY id').fetchall()
+    refunds = raw.execute('SELECT order_id, refund_method, tax_refunded FROM pos_refunds ORDER BY id').fetchall()
     assert [tuple(r) for r in refunds] == [(cash, 'cash', 0.70), (card, 'card', 0.70), (split, 'cash', 0.0)]
-    assert conn.execute('SELECT cash_discount FROM pos_orders WHERE id = ?', (split,)).fetchone()[0] == 0.5
-    conn.close()
+    assert raw.execute('SELECT cash_discount FROM pos_orders WHERE id = ?', (split,)).fetchone()[0] == 0.5
+    raw.close()
 
 
 # --- checkout writes the ledger --------------------------------------------
@@ -128,7 +147,7 @@ def test_checkout_cash_records_tendered_and_change(fresh_app, fresh_client):
     resp = fresh_client.post('/pos/checkout/process', data={'payment_method': 'cash', 'tendered': '20.00'})
     # The sale lands on its receipt (no error page after a recorded sale)
     assert '/pos/receipt/' in resp.headers['Location']
-    assert _payments(fresh_app) == [('cash', 10.70, 20.0, 9.30)]
+    assert _payments(fresh_app) == [('cash', 1070, 2000, 930)]
 
 
 def test_checkout_split_records_cash_applied(fresh_app, fresh_client):
@@ -138,7 +157,7 @@ def test_checkout_split_records_cash_applied(fresh_app, fresh_client):
     _put_cart(fresh_client, item)
     fresh_client.post('/pos/checkout/process',
                       data={'payment_method': 'split', 'cash_amount': '7', 'card_amount': ['4']})
-    assert _payments(fresh_app) == [('card', 4.0, None, 0.0), ('cash', 6.0, 7.0, 1.0)]
+    assert _payments(fresh_app) == [('card', 400, None, 0), ('cash', 600, 700, 100)]
 
 
 def test_checkout_split_cards_cannot_exceed_total(fresh_app, fresh_client):
@@ -152,7 +171,7 @@ def test_checkout_split_cards_cannot_exceed_total(fresh_app, fresh_client):
 
 
 def test_checkout_records_cash_discount(fresh_app, fresh_client):
-    _settings(fresh_app, TAX_RATE='0.0', CASH_DISCOUNT_ENABLED='true', CASH_DISCOUNT_AMOUNT='10',
+    _settings(fresh_app, TAX_RATE='0.0', CASH_DISCOUNT_ENABLED='true', CASH_DISCOUNT_PERCENT='10',
               CASH_DISCOUNT_TYPE='percent')
     item = _add_item(fresh_app)
     login(fresh_client, 2)
@@ -161,8 +180,8 @@ def test_checkout_records_cash_discount(fresh_app, fresh_client):
     conn = _db(fresh_app)
     order = conn.execute('SELECT * FROM pos_orders').fetchone()
     conn.close()
-    assert order['total'] == pytest.approx(9.0) and order['cash_discount'] == pytest.approx(1.0)
-    assert _payments(fresh_app) == [('cash', 9.0, 10.0, 1.0)]
+    assert order['total_cents'] == 900 and order['cash_discount_cents'] == 100
+    assert _payments(fresh_app) == [('cash', 900, 1000, 100)]
     receipt = fresh_client.get(resp.headers['Location']).get_data(as_text=True)
     assert 'Cash Discount' in receipt and '1.00' in receipt
 
@@ -173,9 +192,9 @@ def _seed_card_order(app):
     """Two $100 lines, $20 order discount, 7% tax: paid $192.60 by card."""
     from app.services.pos_ledger import write_payments
     conn = _db(app)
-    order_id = _insert_order(conn, 'POS-R-1', 192.60, 12.60, 'card', {}, subtotal=200, discount=20)
-    lines = [_insert_line(conn, order_id, 1, 100, 100) for _ in range(2)]
-    write_payments(conn, order_id, [('card', 192.60, None, 0.0)])
+    order_id = _insert_order(conn, 'POS-R-1', 19260, 1260, 'card', {}, subtotal=20000, discount=2000)
+    lines = [_insert_line(conn, order_id, 1, 10000, 10000) for _ in range(2)]
+    write_payments(conn, order_id, [('card', 19260, None, 0)])
     conn.commit()
     conn.close()
     return order_id, lines
@@ -194,25 +213,26 @@ def test_refund_records_method_and_tax(fresh_app, fresh_client):
         'item_id': [str(line2)], f'quantity_{line2}': '1'})
     conn = _db(fresh_app)
     rows = [tuple(r) for r in conn.execute(
-        'SELECT amount, refund_method, tax_refunded FROM pos_refunds ORDER BY id').fetchall()]
-    items = conn.execute('SELECT amount FROM pos_refund_items ORDER BY id').fetchall()
+        'SELECT amount_cents, refund_method, tax_refunded_cents FROM pos_refunds ORDER BY id').fetchall()]
+    items = conn.execute('SELECT amount_cents FROM pos_refund_items ORDER BY id').fetchall()
     conn.close()
-    assert rows == [(96.30, 'cash', 6.30), (96.30, 'card', 6.30)]
-    assert [r[0] for r in items] == [100, 100]   # refund item rows keep list value (Top Sellers ratios)
+    assert rows == [(9630, 'cash', 630), (9630, 'card', 630)]
+    assert [r[0] for r in items] == [10000, 10000]   # refund item rows keep list value (Top Sellers ratios)
 
 
 def test_split_order_refund_defaults_to_cash(fresh_app, fresh_client):
     conn = _db(fresh_app)
-    order_id = _insert_order(conn, 'POS-S-1', 33.0, 3.0, 'split', {'cash': 15, 'cards': [20]}, subtotal=30)
-    _insert_line(conn, order_id, 1, 30, 30)
+    order_id = _insert_order(conn, 'POS-S-1', 3300, 300, 'split', {'cash_cents': 1500, 'cards_cents': [2000]},
+                             subtotal=3000)
+    _insert_line(conn, order_id, 1, 3000, 3000)
     conn.commit()
     conn.close()
     login(fresh_client, 3)
     fresh_client.post('/pos/refunds/process', data={'order_id': order_id, 'refund_type': 'full', 'reason': 'other'})
     conn = _db(fresh_app)
-    r = conn.execute('SELECT amount, refund_method, tax_refunded FROM pos_refunds').fetchone()
+    r = conn.execute('SELECT amount_cents, refund_method, tax_refunded_cents FROM pos_refunds').fetchone()
     conn.close()
-    assert tuple(r) == (33.0, 'cash', 3.0)
+    assert tuple(r) == (3300, 'cash', 300)
 
 
 # --- the report engine --------------------------------------------------------
@@ -230,22 +250,27 @@ def _seed_day(app, client):
     from app.services.pos_ledger import write_payments, allocate_payments
     noon = _utc_at_local(12)
     conn = _db(app)
-    a = _insert_order(conn, 'D-A', 18.90, 1.80, 'cash', {'tendered': 20, 'change': 1.10, 'cash_discount': 0.90},
-                      subtotal=18, created_at=noon, cash_discount=0.90)
-    _insert_line(conn, a, 2, 10, 18)
-    b = _insert_order(conn, 'D-B', 44.00, 4.00, 'card', {}, subtotal=50, discount=5, created_at=noon)
-    b_line = _insert_line(conn, b, 2, 25, 50)
-    conn.execute("INSERT INTO pos_coupon_redemptions (coupon_id, order_id, serial_used, discount_applied, redeemed_by) "
-                 "VALUES (1, ?, 'SAVE5', 5.0, 1)", (b,))
-    c = _insert_order(conn, 'D-C', 33.00, 3.00, 'split', {'cash': 15, 'cards': [20]}, subtotal=30, created_at=noon)
-    _insert_line(conn, c, 1, 30, 30)
-    d = _insert_order(conn, 'D-D', 100.0, 0, 'cash', {}, status='held', created_at=noon)
+    a = _insert_order(conn, 'D-A', 1890, 180, 'cash',
+                      {'tendered_cents': 2000, 'change_cents': 110, 'cash_discount_cents': 90},
+                      subtotal=1800, created_at=noon, cash_discount=90)
+    _insert_line(conn, a, 2, 1000, 1800)
+    b = _insert_order(conn, 'D-B', 4400, 400, 'card', {}, subtotal=5000, discount=500, created_at=noon)
+    b_line = _insert_line(conn, b, 2, 2500, 5000)
+    coupon = conn.execute("INSERT INTO pos_coupons (name, code, coupon_type, discount_type, discount_cents) "
+                          "VALUES ('Save 5', 'SAVE5', 'generic', 'order_dollar', 500)").lastrowid
+    conn.execute("INSERT INTO pos_coupon_redemptions (coupon_id, order_id, serial_used, discount_applied_cents, "
+                 "redeemed_by) VALUES (?, ?, 'SAVE5', 500, 1)", (coupon, b))
+    c = _insert_order(conn, 'D-C', 3300, 300, 'split', {'cash_cents': 1500, 'cards_cents': [2000]},
+                      subtotal=3000, created_at=noon)
+    _insert_line(conn, c, 1, 3000, 3000)
+    d = _insert_order(conn, 'D-D', 10000, 0, 'cash', {}, status='held', created_at=noon)
     for oid in (a, b, c):
-        o = conn.execute('SELECT payment_method, payment_details, total FROM pos_orders WHERE id = ?', (oid,)).fetchone()
+        o = conn.execute('SELECT payment_method, payment_details, total_cents FROM pos_orders WHERE id = ?',
+                         (oid,)).fetchone()
         write_payments(conn, oid, allocate_payments(o[0], json.loads(o[1]), o[2]))
-    conn.execute('''INSERT INTO drawer_sessions (opened_at, opened_by, opening_float, closed_at, closed_by,
-                                                counted_cash, expected_cash, over_short)
-                    VALUES (?, 3, 100, ?, 3, 98.0, 98.90, -0.90)''', (_utc_at_local(9), _utc_at_local(17)))
+    conn.execute('''INSERT INTO drawer_sessions (opened_at, opened_by, opening_float_cents, closed_at, closed_by,
+                                                counted_cash_cents, expected_cash_cents, over_short_cents)
+                    VALUES (?, 3, 10000, ?, 3, 9800, 9890, -90)''', (_utc_at_local(9), _utc_at_local(17)))
     conn.commit()
     conn.close()
 
@@ -267,26 +292,28 @@ def test_engine_numbers_for_a_seeded_day(fresh_app, fresh_client):
         r = build_sales_report(TODAY, TODAY)
 
     assert r['order_count'] == 3
-    assert r['gross_sales'] == 100.0
-    assert r['discounts'] == {'line': 2.0, 'order': 5.0, 'coupon': 5.0, 'cash': 0.90, 'total': 12.90}
-    assert r['net_sales'] == pytest.approx(87.10)
-    assert r['gross_sales'] - r['discounts']['total'] == pytest.approx(r['net_sales'])
-    assert r['tax_collected'] == pytest.approx(8.80)
-    assert r['sales_total'] == pytest.approx(95.90)
-    assert r['refunds'] == {'count': 2, 'total': 55.0, 'tax': 5.0, 'net': 50.0,
-                            'by_method': {'card': 22.0, 'cash': 33.0}}
-    assert r['tax_net'] == pytest.approx(3.80)
-    assert r['net_revenue'] == pytest.approx(40.90)
-    assert r['net_sales_after_refunds'] == pytest.approx(37.10)
-    assert [(t['method'], t['count'], t['collected'], t['refunded'], t['net']) for t in r['tenders']] == [
-        ('cash', 2, 31.90, 33.0, -1.10),
-        ('card', 2, 64.0, 22.0, 42.0),
+    assert r['gross_sales_cents'] == 10000
+    assert r['discounts'] == {'line_cents': 200, 'order_cents': 500, 'coupon_cents': 500, 'cash_cents': 90,
+                              'total_cents': 1290}
+    assert r['net_sales_cents'] == 8710
+    assert r['gross_sales_cents'] - r['discounts']['total_cents'] == r['net_sales_cents']
+    assert r['tax_collected_cents'] == 880
+    assert r['sales_total_cents'] == 9590
+    assert r['refunds'] == {'count': 2, 'total_cents': 5500, 'tax_cents': 500, 'net_cents': 5000,
+                            'by_method_cents': {'card': 2200, 'cash': 3300}}
+    assert r['tax_net_cents'] == 380
+    assert r['net_revenue_cents'] == 4090
+    assert r['net_sales_after_refunds_cents'] == 3710
+    assert [(t['method'], t['count'], t['collected_cents'], t['refunded_cents'], t['net_cents'])
+            for t in r['tenders']] == [
+        ('cash', 2, 3190, 3300, -110),
+        ('card', 2, 6400, 2200, 4200),
     ]
-    assert r['expected_cash'] == {'opening_float': 100.0, 'cash_sales': 31.90, 'cash_refunds': 33.0,
-                                  'total': 98.90}
-    assert [(s['id'], s['over_short']) for s in r['drawer_sessions']] == [(1, -0.90)]
+    assert r['expected_cash'] == {'opening_float_cents': 10000, 'cash_sales_cents': 3190,
+                                  'cash_refunds_cents': 3300, 'total_cents': 9890}
+    assert [(s['id'], s['over_short_cents']) for s in r['drawer_sessions']] == [(1, -90)]
     # legacy keys the Top Sellers reconciliation relies on
-    assert r['summary']['gross_sales'] == r['sales_total'] and r['summary']['total_orders'] == 3
+    assert r['summary']['gross_sales_cents'] == r['sales_total_cents'] and r['summary']['total_orders'] == 3
 
 
 def _captured(app):
@@ -318,7 +345,7 @@ def test_eod_email_print_view_and_page_use_the_same_numbers(fresh_app, fresh_cli
     with fresh_app.test_request_context():
         subject, html, data = build_eod_email(TODAY)
     assert data['report'] == print_report == page_report == custom_report
-    assert print_report['net_revenue'] == pytest.approx(40.90)
+    assert print_report['net_revenue_cents'] == 4090
 
     # The rendered print view and email show the same figures
     print_html = fresh_client.get('/pos/management/reports/daily/print').get_data(as_text=True)
@@ -389,8 +416,8 @@ def test_drawer_session_expected_and_over_short(fresh_app, fresh_client):
     s = conn.execute('SELECT * FROM drawer_sessions').fetchall()
     conn.close()
     assert len(s) == 1
-    assert (s[0]['opening_float'], s[0]['expected_cash'], s[0]['counted_cash'], s[0]['over_short']) == \
-        (100.0, 116.0, 115.5, -0.5)
+    assert (s[0]['opening_float_cents'], s[0]['expected_cash_cents'], s[0]['counted_cash_cents'],
+            s[0]['over_short_cents']) == (10000, 11600, 11550, -50)
     assert s[0]['closed_by'] == 3
 
 
@@ -406,19 +433,19 @@ def test_drawer_requires_manager(fresh_app, fresh_client):
 # --- receipts and sale edits ---------------------------------------------------
 
 def test_receipt_reprint_uses_stored_coupon_amount(fresh_app, fresh_client):
-    item = _add_item(fresh_app, 'TARGET', 50.0)
+    item = _add_item(fresh_app, 'TARGET', 5000)
     conn = _db(fresh_app)
-    cur = conn.execute('''INSERT INTO pos_coupons (code, name, coupon_type, discount_type, discount_value)
-                          VALUES ('TENOFF', 'Ten off', 'standard', 'item_dollar', 10)''')
+    cur = conn.execute('''INSERT INTO pos_coupons (code, name, coupon_type, discount_type, discount_cents)
+                          VALUES ('TENOFF', 'Ten off', 'standard', 'item_dollar', 1000)''')
     coupon_id = cur.lastrowid
     conn.execute('INSERT INTO pos_coupon_items (coupon_id, item_id) VALUES (?, ?)', (coupon_id, item))
-    order_id = _insert_order(conn, 'POS-C-1', 45.0, 0.0, 'card', {}, subtotal=50)
-    line = _insert_line(conn, order_id, 1, 50, 50)
+    order_id = _insert_order(conn, 'POS-C-1', 4500, 0, 'card', {}, subtotal=5000)
+    line = _insert_line(conn, order_id, 1, 5000, 5000)
     conn.execute('UPDATE pos_order_items SET inventory_item_id = ? WHERE id = ?', (item, line))
-    conn.execute("INSERT INTO pos_coupon_redemptions (coupon_id, order_id, serial_used, discount_applied, redeemed_by) "
-                 "VALUES (?, ?, 'TENOFF', 5.0, 1)", (coupon_id, order_id))
+    conn.execute("INSERT INTO pos_coupon_redemptions (coupon_id, order_id, serial_used, discount_applied_cents, "
+                 "redeemed_by) VALUES (?, ?, 'TENOFF', 500, 1)", (coupon_id, order_id))
     # The coupon's definition changes after the sale
-    conn.execute('UPDATE pos_coupons SET discount_value = 25 WHERE id = ?', (coupon_id,))
+    conn.execute('UPDATE pos_coupons SET discount_cents = 2500 WHERE id = ?', (coupon_id,))
     conn.commit()
     conn.close()
     login(fresh_client, 2)
@@ -431,17 +458,18 @@ def test_receipt_reprint_uses_stored_coupon_amount(fresh_app, fresh_client):
 def test_editing_a_sale_rebuilds_its_payments(fresh_app, fresh_client):
     from app.services.pos_ledger import write_payments, allocate_payments
     conn = _db(fresh_app)
-    order_id = _insert_order(conn, 'POS-E-1', 30.0, 0.0, 'split', {'cash': 15, 'cards': [20]}, subtotal=30)
+    details = {'cash_cents': 1500, 'cards_cents': [2000]}
+    order_id = _insert_order(conn, 'POS-E-1', 3000, 0, 'split', details, subtotal=3000)
     conn.execute("UPDATE pos_orders SET tax_rate = 0 WHERE id = ?", (order_id,))
-    line = _insert_line(conn, order_id, 1, 30, 30)
-    write_payments(conn, order_id, allocate_payments('split', {'cash': 15, 'cards': [20]}, 30.0))
+    line = _insert_line(conn, order_id, 1, 3000, 3000)
+    write_payments(conn, order_id, allocate_payments('split', details, 3000))
     conn.commit()
     conn.close()
-    assert _payments(fresh_app, order_id) == [('card', 20.0, None, 0.0), ('cash', 10.0, 15.0, 5.0)]
+    assert _payments(fresh_app, order_id) == [('card', 2000, None, 0), ('cash', 1000, 1500, 500)]
     login(fresh_client, 1)
     fresh_client.post(f'/pos/management/edit-sale/{order_id}', data={
         'item_id': [str(line)], 'item_quantity': ['1'], 'item_price': ['25'], 'item_name': ['LINE item']})
-    assert _payments(fresh_app, order_id) == [('card', 20.0, None, 0.0), ('cash', 5.0, 15.0, 10.0)]
+    assert _payments(fresh_app, order_id) == [('card', 2000, None, 0), ('cash', 500, 1500, 1000)]
 
 
 def test_deleting_an_order_removes_its_payments(fresh_app, fresh_client):

@@ -125,23 +125,23 @@ def pos_world(fresh_app):
         set_pos_setting('ALLOW_HOLD_ORDERS', 'true')
         set_pos_setting('CASH_DISCOUNT_ENABLED', 'true')
         set_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
-        set_pos_setting('CASH_DISCOUNT_AMOUNT', '3')
+        set_pos_setting('CASH_DISCOUNT_PERCENT', '3')
 
     conn = _db(fresh_app)
-    conn.execute('INSERT INTO inventory_items (sku, name, sell_price, quantity) VALUES (?, ?, ?, ?)',
-                 ('NJ-AAA', TRICKY_NAME, 10.0, 50))
-    conn.execute('INSERT INTO inventory_items (sku, name, sell_price, quantity) VALUES (?, ?, ?, ?)',
-                 ('NJ-BBB', 'Plain item', 4.5, 50))
+    conn.execute('INSERT INTO inventory_items (sku, name, sell_price_cents, quantity) VALUES (?, ?, ?, ?)',
+                 ('NJ-AAA', TRICKY_NAME, 1000, 50))
+    conn.execute('INSERT INTO inventory_items (sku, name, sell_price_cents, quantity) VALUES (?, ?, ?, ?)',
+                 ('NJ-BBB', 'Plain item', 450, 50))
     item_id = conn.execute("SELECT id FROM inventory_items WHERE sku = 'NJ-AAA'").fetchone()[0]
     order_id = conn.execute('''
-        INSERT INTO pos_orders (order_number, status, subtotal, tax_rate, tax_amount,
-                                discount_amount, discount_type, total, payment_method,
+        INSERT INTO pos_orders (order_number, status, subtotal_cents, tax_rate, tax_amount_cents,
+                                discount_amount_cents, discount_type, total_cents, payment_method,
                                 payment_details, operator_id)
-        VALUES ('POS-NJ-001', 'completed', 10, 0.07, 0.7, 0, NULL, 10.7, 'card', '{}', 1)
+        VALUES ('POS-NJ-001', 'completed', 1000, 0.07, 70, 0, NULL, 1070, 'card', '{}', 1)
     ''').lastrowid
     conn.execute('''INSERT INTO pos_order_items (order_id, inventory_item_id, sku, name, quantity,
-                                                 unit_price, line_total)
-                    VALUES (?, ?, 'NJ-AAA', ?, 1, 10, 10)''', (order_id, item_id, TRICKY_NAME))
+                                                 unit_price_cents, line_total_cents)
+                    VALUES (?, ?, 'NJ-AAA', ?, 1, 1000, 1000)''', (order_id, item_id, TRICKY_NAME))
     conn.commit()
     conn.close()
 

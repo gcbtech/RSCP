@@ -117,11 +117,16 @@ def admin_panel():
     pos_settings = {}
     try:
         from app.routes.pos.core import get_pos_setting
+        from app.services import money, settings as settings_store
         pos_settings = {
             'TAX_RATE': float(get_pos_setting('TAX_RATE', 0)),
             'CASH_DISCOUNT_ENABLED': get_pos_setting('CASH_DISCOUNT_ENABLED', 'false'),
             'CASH_DISCOUNT_TYPE': get_pos_setting('CASH_DISCOUNT_TYPE', 'percent'),
-            'CASH_DISCOUNT_AMOUNT': float(get_pos_setting('CASH_DISCOUNT_AMOUNT', 0) or 0),
+            # the form's one amount box: a percent, or dollars (stored as cents)
+            'CASH_DISCOUNT_AMOUNT': (
+                money.to_dollars(settings_store.get('CASH_DISCOUNT_CENTS') or 0)
+                if get_pos_setting('CASH_DISCOUNT_TYPE', 'percent') == 'fixed'
+                else float(settings_store.get('CASH_DISCOUNT_PERCENT') or 0)),
             'RECEIPT_STORE_NAME': get_pos_setting('RECEIPT_STORE_NAME', ''),
             'RECEIPT_HEADER': get_pos_setting('RECEIPT_HEADER', ''),
             'RECEIPT_FOOTER': get_pos_setting('RECEIPT_FOOTER', ''),

@@ -7,9 +7,9 @@
         <div class="card h-100 border-{{ 'success' if t.method == 'cash' else 'info' }} border-start border-3">
             <div class="card-body">
                 <h6 class="text-muted text-uppercase small">{{ t.label }} (net)</h6>
-                <h3 class="fw-bold text-{{ 'success' if t.method == 'cash' else 'info' }}">${{ "%.2f"|format(t.net) }}</h3>
-                <small class="text-muted d-block">${{ "%.2f"|format(t.collected) }} taken
-                    {% if t.refunded %}&minus; ${{ "%.2f"|format(t.refunded) }} refunded{% endif %}</small>
+                <h3 class="fw-bold text-{{ 'success' if t.method == 'cash' else 'info' }}">${{ t.net_cents|dollars }}</h3>
+                <small class="text-muted d-block">${{ t.collected_cents|dollars }} taken
+                    {% if t.refunded_cents %}&minus; ${{ t.refunded_cents|dollars }} refunded{% endif %}</small>
             </div>
         </div>
     </div>
@@ -18,9 +18,9 @@
         <div class="card h-100 border-secondary border-start border-3">
             <div class="card-body">
                 <h6 class="text-muted text-uppercase small">Tax (net)</h6>
-                <h3 class="fw-bold">${{ "%.2f"|format(r.tax_net) }}</h3>
-                <small class="text-muted">${{ "%.2f"|format(r.tax_collected) }} collected
-                    {% if r.refunds.tax %}&minus; ${{ "%.2f"|format(r.refunds.tax) }} refunded{% endif %}</small>
+                <h3 class="fw-bold">${{ r.tax_net_cents|dollars }}</h3>
+                <small class="text-muted">${{ r.tax_collected_cents|dollars }} collected
+                    {% if r.refunds.tax_cents %}&minus; ${{ r.refunds.tax_cents|dollars }} refunded{% endif %}</small>
             </div>
         </div>
     </div>
@@ -28,7 +28,7 @@
         <div class="card h-100 border-primary border-start border-3 bg-primary bg-opacity-10">
             <div class="card-body">
                 <h6 class="text-primary text-uppercase small fw-bold">Net Revenue</h6>
-                <h3 class="fw-bold text-primary">${{ "%.2f"|format(r.net_revenue) }}</h3>
+                <h3 class="fw-bold text-primary">${{ r.net_revenue_cents|dollars }}</h3>
                 <small class="text-primary">Incl. tax, after refunds &bull; {{ r.order_count }} orders</small>
             </div>
         </div>
@@ -46,28 +46,28 @@
                     <tbody>
                         <tr><td>Orders</td><td class="text-end">{{ r.order_count }}</td></tr>
                         <tr><td>Gross sales <small class="text-muted">(before discounts, ex. tax)</small></td>
-                            <td class="text-end">${{ "%.2f"|format(r.gross_sales) }}</td></tr>
+                            <td class="text-end">${{ r.gross_sales_cents|dollars }}</td></tr>
                         <tr class="text-warning"><td class="ps-3">Line discounts</td>
-                            <td class="text-end">&minus;${{ "%.2f"|format(r.discounts.line) }}</td></tr>
+                            <td class="text-end">&minus;${{ r.discounts.line_cents|dollars }}</td></tr>
                         <tr class="text-warning"><td class="ps-3">Order discounts</td>
-                            <td class="text-end">&minus;${{ "%.2f"|format(r.discounts.order) }}</td></tr>
+                            <td class="text-end">&minus;${{ r.discounts.order_cents|dollars }}</td></tr>
                         <tr class="text-warning"><td class="ps-3">Coupons</td>
-                            <td class="text-end">&minus;${{ "%.2f"|format(r.discounts.coupon) }}</td></tr>
+                            <td class="text-end">&minus;${{ r.discounts.coupon_cents|dollars }}</td></tr>
                         <tr class="text-warning"><td class="ps-3">Cash discounts</td>
-                            <td class="text-end">&minus;${{ "%.2f"|format(r.discounts.cash) }}</td></tr>
+                            <td class="text-end">&minus;${{ r.discounts.cash_cents|dollars }}</td></tr>
                         <tr class="fw-bold"><td>Net sales <small class="text-muted fw-normal">(ex. tax)</small></td>
-                            <td class="text-end">${{ "%.2f"|format(r.net_sales) }}</td></tr>
-                        <tr><td>Tax collected</td><td class="text-end">${{ "%.2f"|format(r.tax_collected) }}</td></tr>
+                            <td class="text-end">${{ r.net_sales_cents|dollars }}</td></tr>
+                        <tr><td>Tax collected</td><td class="text-end">${{ r.tax_collected_cents|dollars }}</td></tr>
                         <tr><td>Sales total <small class="text-muted">(incl. tax)</small></td>
-                            <td class="text-end">${{ "%.2f"|format(r.sales_total) }}</td></tr>
+                            <td class="text-end">${{ r.sales_total_cents|dollars }}</td></tr>
                         <tr class="text-danger"><td>Refunds ({{ r.refunds.count }})</td>
-                            <td class="text-end">&minus;${{ "%.2f"|format(r.refunds.total) }}</td></tr>
+                            <td class="text-end">&minus;${{ r.refunds.total_cents|dollars }}</td></tr>
                         <tr class="text-danger"><td class="ps-3">of which tax</td>
-                            <td class="text-end">&minus;${{ "%.2f"|format(r.refunds.tax) }}</td></tr>
+                            <td class="text-end">&minus;${{ r.refunds.tax_cents|dollars }}</td></tr>
                         <tr class="fw-bold table-light"><td>Net revenue <small class="text-muted fw-normal">(incl. tax, after refunds)</small></td>
-                            <td class="text-end">${{ "%.2f"|format(r.net_revenue) }}</td></tr>
+                            <td class="text-end">${{ r.net_revenue_cents|dollars }}</td></tr>
                         <tr><td>Net sales after refunds <small class="text-muted">(ex. tax)</small></td>
-                            <td class="text-end">${{ "%.2f"|format(r.net_sales_after_refunds) }}</td></tr>
+                            <td class="text-end">${{ r.net_sales_after_refunds_cents|dollars }}</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -97,9 +97,9 @@
                             <tr>
                                 <td class="text-uppercase fw-bold">{{ t.label }}</td>
                                 <td class="text-center">{{ t.count }}</td>
-                                <td class="text-end">${{ "%.2f"|format(t.collected) }}</td>
-                                <td class="text-end text-danger">&minus;${{ "%.2f"|format(t.refunded) }}</td>
-                                <td class="text-end fw-bold">${{ "%.2f"|format(t.net) }}</td>
+                                <td class="text-end">${{ t.collected_cents|dollars }}</td>
+                                <td class="text-end text-danger">&minus;${{ t.refunded_cents|dollars }}</td>
+                                <td class="text-end fw-bold">${{ t.net_cents|dollars }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -121,25 +121,25 @@
             <div class="card-body">
                 <table class="table table-sm mb-2">
                     <tbody>
-                        <tr><td>Opening float(s)</td><td class="text-end">${{ "%.2f"|format(r.expected_cash.opening_float) }}</td></tr>
-                        <tr><td>+ Cash sales</td><td class="text-end">${{ "%.2f"|format(r.expected_cash.cash_sales) }}</td></tr>
-                        <tr><td>&minus; Cash refunds</td><td class="text-end">${{ "%.2f"|format(r.expected_cash.cash_refunds) }}</td></tr>
-                        <tr class="fw-bold"><td>Expected cash</td><td class="text-end">${{ "%.2f"|format(r.expected_cash.total) }}</td></tr>
+                        <tr><td>Opening float(s)</td><td class="text-end">${{ r.expected_cash.opening_float_cents|dollars }}</td></tr>
+                        <tr><td>+ Cash sales</td><td class="text-end">${{ r.expected_cash.cash_sales_cents|dollars }}</td></tr>
+                        <tr><td>&minus; Cash refunds</td><td class="text-end">${{ r.expected_cash.cash_refunds_cents|dollars }}</td></tr>
+                        <tr class="fw-bold"><td>Expected cash</td><td class="text-end">${{ r.expected_cash.total_cents|dollars }}</td></tr>
                     </tbody>
                 </table>
                 {% for s in r.drawer_sessions %}
                 <div class="small border-top pt-2">
                     <strong>Drawer #{{ s.id }}</strong> opened {{ s.opened_at | local_time }} by {{ s.opened_by_name or '?' }},
-                    float ${{ "%.2f"|format(s.opening_float or 0) }}.
+                    float ${{ (s.opening_float_cents or 0)|dollars }}.
                     {% if s.is_open %}
-                    <span class="badge bg-success">Open</span> expected now ${{ "%.2f"|format(s.expected_cash) }}
+                    <span class="badge bg-success">Open</span> expected now ${{ s.expected_cash_cents|dollars }}
                     {% else %}
-                    Closed {{ s.closed_at | local_time }}: counted ${{ "%.2f"|format(s.counted_cash or 0) }},
-                    expected ${{ "%.2f"|format(s.expected_cash or 0) }},
-                    {% if (s.over_short or 0) >= 0 %}
-                    <span class="fw-bold {{ 'text-success' if (s.over_short or 0) == 0 else 'text-warning' }}">over ${{ "%.2f"|format(s.over_short or 0) }}</span>
+                    Closed {{ s.closed_at | local_time }}: counted ${{ (s.counted_cash_cents or 0)|dollars }},
+                    expected ${{ (s.expected_cash_cents or 0)|dollars }},
+                    {% if (s.over_short_cents or 0) >= 0 %}
+                    <span class="fw-bold {{ 'text-success' if (s.over_short_cents or 0) == 0 else 'text-warning' }}">over ${{ (s.over_short_cents or 0)|dollars }}</span>
                     {% else %}
-                    <span class="fw-bold text-danger">short ${{ "%.2f"|format(-(s.over_short or 0)) }}</span>
+                    <span class="fw-bold text-danger">short ${{ (-(s.over_short_cents or 0))|dollars }}</span>
                     {% endif %}
                     {% endif %}
                 </div>

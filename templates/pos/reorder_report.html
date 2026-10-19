@@ -89,7 +89,7 @@
                                             {% endif %}
                                 </td>
                                 <td class="text-center table-warning fw-bold h5 mb-0">{{ item.suggested }}</td>
-                                <td class="text-end pe-3 text-muted">${{ "%.2f"|format(item.cost_est) }}</td>
+                                <td class="text-end pe-3 text-muted">${{ item.cost_est_cents|dollars }}</td>
                             </tr>
                             {% else %}
                             <tr>

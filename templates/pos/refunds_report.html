@@ -97,7 +97,7 @@
         <div class="row mb-4">
             <div class="col-md-4">
                 <div class="stat-card text-center">
-                    <div class="display-6 text-danger">${{ "%.2f"|format(stats.total_refunded or 0) }}</div>
+                    <div class="display-6 text-danger">${{ (stats.total_refunded_cents or 0)|dollars }}</div>
                     <div class="text-muted">Total Refunded</div>
                 </div>
             </div>
@@ -109,7 +109,7 @@
             </div>
             <div class="col-md-4">
                 <div class="stat-card text-center">
-                    <div class="display-6">${{ "%.2f"|format(stats.avg_refund or 0) }}</div>
+                    <div class="display-6">${{ (stats.avg_refund_cents or 0)|dollars }}</div>
                     <div class="text-muted">Average Refund</div>
                 </div>
             </div>
@@ -146,7 +146,7 @@
                             {% for r in recent %}
                             <tr>
                                 <td class="font-monospace">{{ r.order_number }}</td>
-                                <td class="text-danger fw-bold">-${{ "%.2f"|format(r.amount) }}</td>
+                                <td class="text-danger fw-bold">-${{ r.amount_cents|dollars }}</td>
                                 <td>{{ r.reason }}</td>
                                 <td>{{ r.manager_name }}</td>
                                 <td>{{ r.created_at | local_time }}</td>

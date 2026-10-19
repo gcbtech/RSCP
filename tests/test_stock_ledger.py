@@ -42,7 +42,7 @@ def conn(fresh_app):
 
 
 def _item(conn, sku='W-1', qty=10, **extra):
-    fields = {'sku': sku, 'name': f'{sku} item', 'quantity': qty, 'sell_price': 10.0,
+    fields = {'sku': sku, 'name': f'{sku} item', 'quantity': qty, 'sell_price_cents': 1000,
               'location_area': 'A'}
     fields.update(extra)
     return inv.create_item(conn, fields, user='admin')
@@ -58,8 +58,10 @@ def _last_id(conn):
 
 def _sell(conn, item_id, qty=2, sku='W-1'):
     line = {'inventory_item_id': item_id, 'sku': sku, 'name': f'{sku} item', 'quantity': qty,
-            'unit_price': 10.0, 'discount_amount': 0, 'discount_type': None, 'line_total': 10.0 * qty}
-    cart = {'items': [line], 'discount_amount': 0, 'discount_type': None, 'discount_reason': ''}
+            'unit_price_cents': 1000, 'discount_type': None, 'discount_percent': 0, 'discount_cents': 0,
+            'line_total_cents': 1000 * qty}
+    cart = {'items': [line], 'discount_type': None, 'discount_percent': 0, 'discount_cents': 0,
+            'discount_reason': ''}
     return pos_checkout.complete_sale(conn, pos_checkout.SessionCart(cart),
                                       pos_checkout.Payment('cash'), CASHIER,
                                       config=PricingConfig(tax_rate=0.0))
@@ -317,24 +319,27 @@ def test_concurrent_adjustments_keep_ledger_equal_to_cache(fresh_app, conn):
     item = _item(conn, qty=100)
     db = fresh_app.config['DATABASE']
     errors = []
-    start = threading.Barrier(3)
+    start = threading.Barrier(3, timeout=30)   # never wait forever on a failed worker
 
     def worker(sign):
-        c = get_db_connection(db)
+        c = None
         try:
+            c = get_db_connection(db)
             start.wait()
             for i in range(25):
                 inv.adjust_stock(c, item, sign * (1 + i % 3), inv.REASON_ADJUST, 'worker', allow_negative=True)
         except Exception as e:  # pragma: no cover - reported below
             errors.append(e)
         finally:
-            c.close()
+            if c is not None:
+                c.close()
 
-    threads = [threading.Thread(target=worker, args=(s,)) for s in (1, -1, -1)]
+    threads = [threading.Thread(target=worker, args=(s,), daemon=True) for s in (1, -1, -1)]
     for t in threads:
         t.start()
     for t in threads:
-        t.join()
+        t.join(timeout=60)
+    assert not any(t.is_alive() for t in threads), 'a worker hung'
     assert errors == []
     expected = 100 + sum(1 + i % 3 for i in range(25)) * (1 - 2)
     assert _qty(conn, item) == expected == inv.stock_on_hand(conn, item)
@@ -356,7 +361,7 @@ def test_caller_transaction_is_joined_and_rolled_back_together(conn):
 def test_works_with_foreign_keys_enforced(fresh_app):
     c = get_db_connection(fresh_app.config['DATABASE'])
     try:
-        c.execute('PRAGMA foreign_keys = ON')
+        assert c.execute('PRAGMA foreign_keys').fetchone()[0] == 1   # every app connection
         item = _item(c, qty=3)
         inv.adjust_stock(c, item, -1, inv.REASON_SALE, '2')
         with pytest.raises(sqlite3.IntegrityError):
@@ -366,15 +371,25 @@ def test_works_with_foreign_keys_enforced(fresh_app):
         fresh = _item(c, sku='FRESH', qty=2)
         inv.delete_item(c, fresh)
         assert inv.get_item(c, fresh) is None and inv.movement_count(c, fresh) == 0
-        # No movements, but an audit record points at it: refused politely
+        # Counted in an audit but no stock change: deleted, the audit record stays unlinked
         counted = _item(c, sku='COUNTED', qty=0)
         session = c.execute("INSERT INTO audit_sessions (user_id, mode) VALUES ('admin', 'item')").lastrowid
-        c.execute('INSERT INTO audit_records (session_id, item_id, expected_qty, counted_qty) VALUES (?, ?, 0, 0)',
-                  (session, counted))
+        record = c.execute('INSERT INTO audit_records (session_id, item_id, expected_qty, counted_qty) '
+                           'VALUES (?, ?, 0, 0)', (session, counted)).lastrowid
+        c.commit()
+        inv.delete_item(c, counted)
+        assert c.execute('SELECT item_id FROM audit_records WHERE id = ?', (record,)).fetchone()[0] is None
+        # Sold before the ledger existed (only an opening balance): the sales line keeps it
+        old_seller = _item(c, sku='OLDSALE', qty=4)
+        order = c.execute("INSERT INTO pos_orders (order_number, subtotal_cents, tax_rate, tax_amount_cents, "
+                          "total_cents, payment_method) VALUES ('OLD-1', 1000, 0, 0, 1000, 'cash')").lastrowid
+        c.execute("INSERT INTO pos_order_items (order_id, inventory_item_id, sku, name, quantity, unit_price_cents, "
+                  "line_total_cents) VALUES (?, ?, 'OLDSALE', 'Old sale', 1, 1000, 1000)", (order, old_seller))
         c.commit()
         with pytest.raises(inv.ItemHasHistory):
-            inv.delete_item(c, counted)
-        assert inv.get_item(c, counted) is not None and not c.in_transaction
+            inv.delete_item(c, old_seller)
+        assert inv.get_item(c, old_seller) is not None and inv.movement_count(c, old_seller) == 1
+        assert not c.in_transaction
         assert c.execute('PRAGMA foreign_key_check').fetchall() == []
     finally:
         c.close()
@@ -382,28 +397,29 @@ def test_works_with_foreign_keys_enforced(fresh_app):
 
 # --- migration 20 ------------------------------------------------------------
 
-def test_migration_backfills_one_opening_balance_per_item(tmp_path, monkeypatch):
+def test_migration_backfills_one_opening_balance_per_item(tmp_path):
     from app.services import migration
     db = str(tmp_path / 'old.db')
-    # A database as the previous release left it (schema v14, no ledger)
-    monkeypatch.setattr(migration, 'SCHEMA_MIGRATIONS', [m for m in migration.SCHEMA_MIGRATIONS if m[0] < 20])
-    monkeypatch.setattr(migration, 'LATEST_SCHEMA_VERSION', 14)
-    migration.run_migrations(db)
+    # A database as the previous release left it (schema v14: dollar prices,
+    # no enforced foreign keys, no ledger); then 15 (cents), 16 (foreign
+    # keys, rebuilds inventory_items) and 20 run on it.
+    migration.run_migrations(db, target=14)
     c = sqlite3.connect(db)
     c.row_factory = sqlite3.Row
     assert not c.execute("SELECT 1 FROM sqlite_master WHERE name = 'inventory_movements'").fetchone()
     for sku, qty in (('A', 5), ('B', 0), ('C', None), ('D', -2), ('E', 12)):
-        c.execute('INSERT INTO inventory_items (sku, name, quantity) VALUES (?, ?, ?)', (sku, sku, qty))
+        c.execute('INSERT INTO inventory_items (sku, name, quantity, sell_price) VALUES (?, ?, ?, 9.99)',
+                  (sku, sku, qty))
     # 2.x history that does not add up (deleted rows, unlogged changes)
     c.execute("INSERT INTO inventory_transactions (inventory_item_id, quantity_change, reason, user_id) "
               "VALUES (1, 3, 'Initial Stock', 'admin'), (1, -1, 'Sold/Consumed', '2')")
     c.commit()
     c.close()
 
-    monkeypatch.undo()
     migration.run_migrations(db)
     c = sqlite3.connect(db)
     c.row_factory = sqlite3.Row
+    c.execute('PRAGMA foreign_keys = ON')
     try:
         assert c.execute('PRAGMA user_version').fetchone()[0] == migration.LATEST_SCHEMA_VERSION >= 20
         rows = c.execute('''SELECT i.sku, i.quantity, m.delta, m.reason, m.user, m.created_at
@@ -414,6 +430,19 @@ def test_migration_backfills_one_opening_balance_per_item(tmp_path, monkeypatch)
             ('D', -2, -2, 'opening_balance'), ('E', 12, 12, 'opening_balance')]
         assert all(r['user'] == 'system' and r['created_at'] for r in rows)
         assert inv.ledger_drift(c) == []
+        assert c.execute('SELECT sell_price_cents FROM inventory_items WHERE id = 1').fetchone()[0] == 999
+        # The ledger references the (rebuilt) items table, enforced, and its triggers are in place
+        fk = c.execute('PRAGMA foreign_key_list(inventory_movements)').fetchall()
+        assert [(r['table'], r['from'], r['to']) for r in fk] == [('inventory_items', 'item_id', 'id')]
+        assert c.execute('PRAGMA foreign_key_check').fetchall() == []
+        triggers = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type = 'trigger' "
+                                            "AND tbl_name = 'inventory_movements'")}
+        assert triggers == {'trg_inventory_movements_no_update', 'trg_inventory_movements_no_delete'}
+        item_id = c.execute("SELECT id FROM inventory_items WHERE sku = 'A'").fetchone()[0]
+        inv.adjust_stock(c, item_id, -1, inv.REASON_SALE, '2')
+        assert inv.ledger_drift(c) == []
+        with pytest.raises(sqlite3.DatabaseError, match='append-only'):
+            c.execute('DELETE FROM inventory_movements WHERE item_id = ?', (item_id,))
         # The old trail is left where it was
         assert c.execute('SELECT COUNT(*) FROM inventory_transactions').fetchone()[0] == 2
     finally:
@@ -421,7 +450,7 @@ def test_migration_backfills_one_opening_balance_per_item(tmp_path, monkeypatch)
     # Re-running is a no-op (already at the latest version)
     migration.run_migrations(db)
     c = sqlite3.connect(db)
-    assert c.execute('SELECT COUNT(*) FROM inventory_movements').fetchone()[0] == 5
+    assert c.execute('SELECT COUNT(*) FROM inventory_movements').fetchone()[0] == 5 + 1   # + the sale above
     c.close()
 
 
@@ -454,7 +483,10 @@ def test_package_maintenance_job_repairs_drift(fresh_app, conn):
     from app import jobs
     item = _item(conn, qty=3)
     conn.execute('UPDATE inventory_items SET quantity = 7 WHERE id = ?', (item,))
+    # Orphans cannot happen with foreign keys on; a database edited by hand can have them
+    conn.execute('PRAGMA foreign_keys = OFF')
     conn.execute("INSERT INTO inventory_movements (item_id, delta, reason) VALUES (424242, 1, 'adjust')")
+    conn.execute('PRAGMA foreign_keys = ON')
     with fresh_app.app_context():
         detail = jobs.package_maintenance('test')
         assert 'stock cache repaired for 1 item(s)' in detail

@@ -21,9 +21,9 @@ import logging
 from collections import namedtuple
 from datetime import date
 
-from app.services import inventory, pos_pricing, pos_registers
+from app.services import inventory, money, pos_pricing, pos_registers
 from app.services.pos_ledger import allocate_payments, write_payments
-from app.services.pos_pricing import round_money, parse_money, parse_money_field
+from app.services.pos_pricing import parse_money, parse_money_field
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +52,9 @@ class SessionCart(namedtuple('SessionCart', 'cart')):
     empties the session cart after a successful sale."""
 
 
+# money fields are integer cents (payment_details uses *_cents keys)
 SaleResult = namedtuple('SaleResult',
-                        'order_id order_number total payment_method payment_details cash_discount')
+                        'order_id order_number total_cents payment_method payment_details cash_discount_cents')
 
 
 class CheckoutError(Exception):
@@ -147,19 +148,24 @@ def next_order_number(conn, today=None):
 # ---------------------------------------------------------------------------
 
 def settle_tender(payment, totals, config):
-    """(total due, payment_details, cash_discount) for this tender, or raise
-    TenderError. `totals` is pos_pricing.cart_totals() of the sold cart."""
-    total = totals['card_total']
+    """(total due, payment_details, cash_discount), all cents, for this tender,
+    or raise TenderError. `totals` is pos_pricing.cart_totals() of the sold cart.
+
+    The tendered amount must cover the total exactly. (The dollar version
+    compared floats with a 0.01 slack, so a tender one cent short was
+    sometimes accepted, depending on float rounding.)
+    """
+    total = totals['card_total_cents']
     if payment.method == 'cash':
-        cash_discount = totals['cash_discount_value'] if totals['cash_discount_enabled'] else 0
-        total = round_money(total - cash_discount)
+        cash_discount = totals['cash_discount_cents'] if totals['cash_discount_enabled'] else 0
+        total = total - cash_discount
         tendered = parse_money_field(payment.tendered, default=total)
-        if tendered is None or tendered < total - 0.01:
-            raise TenderError(f'Cash tendered must be at least ${total:.2f}.')
+        if tendered is None or tendered < total:
+            raise TenderError(f'Cash tendered must be at least {money.fmt(total)}.')
         return total, {
-            'tendered': tendered,
-            'change': round_money(max(0, tendered - total)),
-            'cash_discount': cash_discount,
+            'tendered_cents': tendered,
+            'change_cents': max(0, tendered - total),
+            'cash_discount_cents': cash_discount,
         }, cash_discount
 
     if payment.method == 'split':
@@ -170,24 +176,24 @@ def settle_tender(payment, totals, config):
 
         # The cash discount applies to the cash portion only
         cash_discount = pos_pricing.split_cash_discount(cash_amount, card_amounts, total, config)
-        if cash_discount:
-            total = round_money(total - cash_discount)
+        total = total - cash_discount
 
-        total_tendered = round_money(cash_amount + sum(card_amounts))
-        if total_tendered < total - 0.01:
-            raise TenderError(f'Split payments add up to ${total_tendered:.2f}, less than the ${total:.2f} total.')
+        total_tendered = cash_amount + sum(card_amounts)
+        if total_tendered < total:
+            raise TenderError(f'Split payments add up to {money.fmt(total_tendered)}, '
+                              f'less than the {money.fmt(total)} total.')
         # Change can only be given in cash: cards may not exceed the total
-        if round_money(sum(card_amounts)) > total + 0.005:
-            raise TenderError(f'Card amounts add up to more than the ${total:.2f} total.')
+        if sum(card_amounts) > total:
+            raise TenderError(f'Card amounts add up to more than the {money.fmt(total)} total.')
         return total, {
-            'cash': cash_amount,
-            'cards': card_amounts,
-            'total_tendered': total_tendered,
-            'change': round_money(min(cash_amount, max(0, total_tendered - total))),
-            'cash_discount': cash_discount,
+            'cash_cents': cash_amount,
+            'cards_cents': card_amounts,
+            'total_tendered_cents': total_tendered,
+            'change_cents': min(cash_amount, max(0, total_tendered - total)),
+            'cash_discount_cents': cash_discount,
         }, cash_discount
 
-    return total, {}, 0.0
+    return total, {}, 0
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +267,7 @@ def complete_sale(conn, cart_source, payment, user, token=None, expected_total=N
         if conn.in_transaction:
             conn.rollback()
         raise
-    logger.info(f"Order {result.order_number} completed by {user.username}, total: ${result.total}")
+    logger.info(f"Order {result.order_number} completed by {user.username}, total: {money.fmt(result.total_cents)}")
     return result
 
 
@@ -301,36 +307,35 @@ def _record_sale(conn, cart_source, register_id, payment, user, token,
                                             pos_pricing.cart_subtotal(cart['items']), conn, cart=cart)
         if not check.get('valid'):
             raise CouponInvalid(check.get('error', 'no longer valid'))
-        coupon['discount'] = check['discount_amount']
+        coupon['discount_cents'] = check['discount_cents']
 
     totals = pos_pricing.cart_totals(cart, config)
-    total = totals['card_total']
+    total = totals['card_total_cents']
 
-    # The cashier quoted the total shown on the checkout page. If the cart
-    # changed since, stop rather than record a different amount.
+    # The cashier quoted the total shown on the checkout page (dollars, as
+    # rendered). If the cart changed since, stop rather than record a
+    # different amount. An unparseable value is ignored, as before.
     if expected_total:
-        try:
-            if abs(float(expected_total) - total) > 0.005:
-                raise CartChanged()
-        except ValueError:
-            pass
+        quoted = money.parse(expected_total, allow_negative=True)
+        if quoted is not None and quoted != total:
+            raise CartChanged()
 
     total, payment_details, cash_discount = settle_tender(payment, totals, config)
 
     order_number = _order_number(conn, order_number_fn)
-    order_discount = totals['order_discount']
+    order_discount = totals['order_discount_cents']
     cursor = conn.execute('''
         INSERT INTO pos_orders (
-            order_number, status, subtotal, tax_rate, tax_amount,
-            discount_amount, discount_type, discount_reason, total,
-            payment_method, payment_details, operator_id, checkout_token, cash_discount
+            order_number, status, subtotal_cents, tax_rate, tax_amount_cents,
+            discount_amount_cents, discount_type, discount_reason, total_cents,
+            payment_method, payment_details, operator_id, checkout_token, cash_discount_cents
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
-        order_number, 'completed', round(totals['subtotal'], 2), config.tax_rate,
-        round(totals['tax_amount'], 2), round(order_discount, 2),
+        order_number, 'completed', totals['subtotal_cents'], config.tax_rate,
+        totals['tax_amount_cents'], order_discount,
         cart.get('discount_type') if order_discount else None, cart.get('discount_reason', ''),
         total, payment.method, json.dumps(payment_details), user.id, token,
-        round_money(cash_discount)
+        cash_discount
     ))
     order_id = cursor.lastrowid
 
@@ -339,37 +344,45 @@ def _record_sale(conn, cart_source, register_id, payment, user, token,
     write_payments(conn, order_id, allocate_payments(payment.method, payment_details, total))
 
     for item in cart['items']:
+        item_id = item.get('inventory_item_id')
+        if item_id and not conn.execute('SELECT 1 FROM inventory_items WHERE id = ?', (item_id,)).fetchone():
+            # Deleted while it sat in the cart: the sale still stands, without
+            # the (now dangling) link; the line keeps its sku and name.
+            logger.warning(f"Order {order_number}: inventory item {item_id} no longer exists; "
+                           f"line recorded without it")
+            item_id = None
+        dtype = item.get('discount_type')
         conn.execute('''
             INSERT INTO pos_order_items (
                 order_id, inventory_item_id, sku, name, quantity,
-                unit_price, discount_amount, discount_type, line_total
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                unit_price_cents, discount_type, discount_percent, discount_cents, line_total_cents
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
-            order_id, item.get('inventory_item_id'), item['sku'], item['name'],
-            item['quantity'], item['unit_price'], item.get('discount_amount', 0),
-            item.get('discount_type'), item['line_total']
+            order_id, item_id, item['sku'], item['name'],
+            item['quantity'], item['unit_price_cents'], dtype,
+            (item.get('discount_percent') or 0) if dtype == 'percent' else 0,
+            (item.get('discount_cents') or 0) if dtype == 'fixed' else 0,
+            item['line_total_cents']
         ))
-        if item.get('inventory_item_id'):
-            _sell_stock(conn, item['inventory_item_id'], item['quantity'], str(user.id), order_number,
-                        order_id)
+        if item_id:
+            _sell_stock(conn, item_id, item['quantity'], str(user.id), order_number, order_id)
 
     if coupon and coupon.get('id'):
-        _redeem_coupon(conn, coupon, order_id, order_number, totals['coupon_discount'], user)
+        _redeem_coupon(conn, coupon, order_id, order_number, totals['coupon_discount_cents'], user)
 
     # Empty exactly the cart that was just sold, in the same transaction
     if register_id:
         pos_registers.write_register_cart(conn, register_id, pos_registers.empty_cart())
 
-    return SaleResult(order_id, order_number, total, payment.method, payment_details,
-                      round_money(cash_discount))
+    return SaleResult(order_id, order_number, total, payment.method, payment_details, cash_discount)
 
 
 def _redeem_coupon(conn, coupon, order_id, order_number, coupon_discount, user):
     conn.execute('''
         INSERT INTO pos_coupon_redemptions (
-            coupon_id, order_id, serial_used, discount_applied, redeemed_by
+            coupon_id, order_id, serial_used, discount_applied_cents, redeemed_by
         ) VALUES (?, ?, ?, ?, ?)
-    ''', (coupon['id'], order_id, coupon.get('code'), round(coupon_discount, 2), user.id))
+    ''', (coupon['id'], order_id, coupon.get('code'), coupon_discount, user.id))
     used = conn.execute('''
         UPDATE pos_coupons
         SET current_uses = COALESCE(current_uses, 0) + 1

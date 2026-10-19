@@ -156,8 +156,8 @@ def _seed_core(app):
                  ('1ZNOJSRET', 'NOJS Return Widget', 'return_pending', '2020-01-01', None),
                  ('1ZNOJSREF', 'NOJS Refunded Widget', 'refunded', '2020-01-01', None)])
             conn.execute(
-                "INSERT INTO inventory_items (sku, name, quantity, location_area, sell_price) "
-                "VALUES ('NOJSSKU1', 'NOJS Inventory Item', 5, 'A', 9.99)")
+                "INSERT INTO inventory_items (sku, name, quantity, location_area, sell_price_cents) "
+                "VALUES ('NOJSSKU1', 'NOJS Inventory Item', 5, 'A', 999)")
             conn.execute(
                 "INSERT INTO error_logs (level, source, message, trace) "
                 "VALUES ('ERROR', 'test', 'NOJS log message', 'Traceback: NOJS')")

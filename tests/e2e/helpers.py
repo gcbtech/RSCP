@@ -90,9 +90,10 @@ def seed_settings(server, **values):
 
 
 def seed_pos_item(server, name, price, quantity=10, sku=None):
-    """A sellable inventory item (sell price set). Returns (id, sku)."""
+    """A sellable inventory item (sell price in dollars). Returns (id, sku)."""
+    from app.services import money
     sku = sku or 'E2E-' + ''.join(ch for ch in name.upper() if ch.isalnum())[:20]
-    item_id = seed_item(server, name, quantity=quantity, sku=sku, sell_price=price)
+    item_id = seed_item(server, name, quantity=quantity, sku=sku, sell_price_cents=money.from_dollars(price))
     return item_id, sku
 
 
@@ -102,10 +103,10 @@ def item_quantity(server, item_id):
 
 
 def order(server, order_number):
-    """(order row, [payment rows]) of a recorded sale."""
+    """(order row, [payment rows]) of a recorded sale; money in cents."""
     with db(server) as conn:
         row = conn.execute('SELECT * FROM pos_orders WHERE order_number = ?', (order_number,)).fetchone()
-        payments = conn.execute('SELECT method, amount, tendered, change_given FROM pos_payments '
+        payments = conn.execute('SELECT method, amount_cents, tendered_cents, change_given_cents FROM pos_payments '
                                 'WHERE order_id = ? ORDER BY id', (row['id'],)).fetchall() if row else []
         return row, [tuple(p) for p in payments]
 

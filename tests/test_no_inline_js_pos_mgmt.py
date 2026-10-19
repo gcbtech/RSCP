@@ -35,23 +35,23 @@ def seeded(fresh_app):
 
     conn = get_db_connection(fresh_app.config['DATABASE'])
     item_id = conn.execute(
-        "INSERT INTO inventory_items (sku, name, sell_price, buy_price, quantity, sale_enabled, sale_price) "
-        "VALUES ('NJ-POS-1', ?, 10, 4, 5, 1, 8)", (TRICKY_NAME,)).lastrowid
+        "INSERT INTO inventory_items (sku, name, sell_price_cents, buy_price_cents, quantity, sale_enabled, "
+        "sale_price_cents) VALUES ('NJ-POS-1', ?, 1000, 400, 5, 1, 800)", (TRICKY_NAME,)).lastrowid
     conn.execute(
-        "INSERT INTO inventory_items (sku, name, sell_price, buy_price, quantity) "
-        "VALUES ('NJ-POS-2', 'Dusty Widget', 3, 1, 9)")
+        "INSERT INTO inventory_items (sku, name, sell_price_cents, buy_price_cents, quantity) "
+        "VALUES ('NJ-POS-2', 'Dusty Widget', 300, 100, 9)")
     order_id = conn.execute(
-        "INSERT INTO pos_orders (order_number, status, subtotal, tax_rate, tax_amount, total, "
+        "INSERT INTO pos_orders (order_number, status, subtotal_cents, tax_rate, tax_amount_cents, total_cents, "
         "payment_method, payment_details, operator_id) "
-        "VALUES ('POS-NJ-001', 'completed', 10, 0, 0, 10, 'cash', '{}', 1)").lastrowid
+        "VALUES ('POS-NJ-001', 'completed', 1000, 0, 0, 1000, 'cash', '{}', 1)").lastrowid
     conn.execute(
-        "INSERT INTO pos_order_items (order_id, inventory_item_id, sku, name, quantity, unit_price, line_total) "
-        "VALUES (?, ?, 'NJ-POS-1', ?, 1, 10, 10)", (order_id, item_id, TRICKY_NAME))
+        "INSERT INTO pos_order_items (order_id, inventory_item_id, sku, name, quantity, unit_price_cents, "
+        "line_total_cents) VALUES (?, ?, 'NJ-POS-1', ?, 1, 1000, 1000)", (order_id, item_id, TRICKY_NAME))
     conn.execute(
-        "INSERT INTO pos_refunds (order_id, refund_type, amount, reason, manager_id) "
-        "VALUES (?, 'partial', 2, 'scuffed', 1)", (order_id,))
+        "INSERT INTO pos_refunds (order_id, refund_type, amount_cents, reason, manager_id) "
+        "VALUES (?, 'partial', 200, 'scuffed', 1)", (order_id,))
     coupon_id = conn.execute(
-        "INSERT INTO pos_coupons (name, code, coupon_type, discount_type, discount_value) "
+        "INSERT INTO pos_coupons (name, code, coupon_type, discount_type, discount_percent) "
         "VALUES (?, 'NJTEST', 'serialized', 'bogo_cross', 10)", (TRICKY_NAME,)).lastrowid
     conn.commit()
     conn.close()

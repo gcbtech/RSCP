@@ -64,14 +64,14 @@
                                 <div class="flex-grow-1">
                                     <div class="fw-bold">{{ item.name }}</div>
                                     <div class="text-muted small">
-                                        {{ item.sku }} • ${{ "%.2f"|format(item.unit_price) }} each
+                                        {{ item.sku }} • ${{ item.unit_price_cents|dollars }} each
                                         {% if item.refunded_qty > 0 %}
                                         <span class="text-danger">({{ item.refunded_qty }} refunded)</span>
                                         {% endif %}
                                     </div>
                                 </div>
                                 <div class="text-end" style="min-width: 120px;">
-                                    <div class="fw-bold">${{ "%.2f"|format(item.line_total) }}</div>
+                                    <div class="fw-bold">${{ item.line_total_cents|dollars }}</div>
                                     <div class="small text-muted">×{{ item.quantity }}</div>
                                 </div>
                             </div>
@@ -130,7 +130,7 @@
                                     Partial Refund (Selected Items)
                                 </button>
                                 <button type="submit" name="refund_type" value="full" class="btn btn-danger"
-                                    data-confirm="Process FULL refund of ${{ ' %.2f'|format(order.total) }}?">
+                                    data-confirm="Process FULL refund of ${{ ' ' ~ (order.total_cents|dollars) }}?">
                                     Full Refund
                                 </button>
                             </div>
@@ -148,13 +148,13 @@
                         {% for refund in refunds %}
                         <div class="mb-3 p-2 bg-light rounded">
                             <div class="d-flex justify-content-between">
-                                <strong class="text-danger">-${{ "%.2f"|format(refund.amount) }}</strong>
+                                <strong class="text-danger">-${{ refund.amount_cents|dollars }}</strong>
                                 <span class="text-muted small">{{ refund.created_at | local_time }}</span>
                             </div>
                             <div class="small">
                                 {{ refund.refund_type|capitalize }} • {{ refund.reason }}
                                 {% if refund.refund_method %} • Paid in {{ refund.refund_method }}{% endif %}
-                                {% if refund.tax_refunded %} • incl. ${{ "%.2f"|format(refund.tax_refunded) }} tax{% endif %}
+                                {% if refund.tax_refunded_cents %} • incl. ${{ refund.tax_refunded_cents|dollars }} tax{% endif %}
                                 • By: {{ refund.manager_name }}
                             </div>
                         </div>
@@ -173,31 +173,31 @@
                     <div class="card-body">
                         <div class="d-flex justify-content-between mb-2">
                             <span>Subtotal</span>
-                            <span>${{ "%.2f"|format(order.subtotal) }}</span>
+                            <span>${{ order.subtotal_cents|dollars }}</span>
                         </div>
-                        {% if order.discount_amount > 0 %}
+                        {% if order.discount_amount_cents > 0 %}
                         <div class="d-flex justify-content-between mb-2 text-warning">
                             <span>Discount</span>
-                            <span>-${{ "%.2f"|format(order.discount_amount) }}</span>
+                            <span>-${{ order.discount_amount_cents|dollars }}</span>
                         </div>
                         {% endif %}
                         <div class="d-flex justify-content-between mb-2">
                             <span>Tax</span>
-                            <span>${{ "%.2f"|format(order.tax_amount) }}</span>
+                            <span>${{ order.tax_amount_cents|dollars }}</span>
                         </div>
                         <hr>
                         <div class="d-flex justify-content-between fw-bold fs-5">
                             <span>Total</span>
-                            <span>${{ "%.2f"|format(order.total) }}</span>
+                            <span>${{ order.total_cents|dollars }}</span>
                         </div>
 
                         <hr>
                         <div class="small text-muted">
                             <strong>Payment:</strong> {{ order.payment_method|capitalize }}
                             {% for p in payments %}
-                            <br>{{ p.method|capitalize }}: ${{ "%.2f"|format(p.amount) }}
-                            {% if p.method == 'cash' and p.tendered is not none %}
-                            (tendered ${{ "%.2f"|format(p.tendered) }}, change ${{ "%.2f"|format(p.change_given or 0) }})
+                            <br>{{ p.method|capitalize }}: ${{ p.amount_cents|dollars }}
+                            {% if p.method == 'cash' and p.tendered_cents is not none %}
+                            (tendered ${{ p.tendered_cents|dollars }}, change ${{ (p.change_given_cents or 0)|dollars }})
                             {% endif %}
                             {% endfor %}
                         </div>

@@ -178,13 +178,14 @@ def peripheral_poll():
             return jsonify({'success': True, 'changed': False, 'version': version})
 
         from app.routes.pos.core import compute_cart_totals
+        from app.services.pos_pricing import totals_json
         return jsonify({
             'success': True,
             'changed': True,
             'version': version,
             'role': peripheral['role'],
             'register_name': peripheral['register_name'] or 'Register',
-            'cart': compute_cart_totals(cart),
+            'cart': totals_json(compute_cart_totals(cart)),
         })
     except Exception as e:
         logger.error(f"Error in peripheral poll: {e}")
@@ -427,13 +428,14 @@ def legacy_display_cart():
 
         cart, _version = pos_registers.load_register_cart(conn, peripheral['register_id'])
         from app.routes.pos.core import compute_cart_totals
+        from app.services.pos_pricing import totals_json
         return jsonify({
             'success': True,
             'paired': True,
             'staff_terminal_id': peripheral['register_id'],
             'staff_friendly_name': peripheral['register_name'] or 'Register',
             'session_code': None,
-            'cart': compute_cart_totals(cart),
+            'cart': totals_json(compute_cart_totals(cart)),
         })
     except Exception as e:
         logger.error(f"Error in legacy display cart shim: {e}")

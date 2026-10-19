@@ -10,8 +10,9 @@ from flask_login import current_user, login_required
 
 from app.routes.pos import pos_bp
 from app.services.db import get_db_connection, get_request_db
+from app.services import money
 from app.services.pos_ledger import (
-    get_open_session, session_figures, open_session, close_session, money
+    get_open_session, session_figures, open_session, close_session
 )
 from app.utils.permissions import require_permission
 
@@ -19,14 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 def _money_form(name):
-    raw = (request.form.get(name) or '').strip()
-    try:
-        value = float(raw)
-    except ValueError:
-        return None
-    if value != value or value < 0 or value == float('inf'):
-        return None
-    return money(value)
+    """Cents for a dollar amount typed into the form; None if blank/invalid/negative."""
+    return money.parse((request.form.get(name) or '').strip())
 
 
 @pos_bp.route('/drawer')
@@ -72,8 +67,9 @@ def drawer_open():
     if session_id is None:
         flash('A drawer session is already open. Close it before opening a new one.')
     else:
-        logger.info(f"Drawer session {session_id} opened by {current_user.username} with ${opening_float:.2f}")
-        flash(f'Drawer opened with a ${opening_float:.2f} float.')
+        logger.info(f"Drawer session {session_id} opened by {current_user.username} "
+                    f"with {money.fmt(opening_float)}")
+        flash(f'Drawer opened with a {money.fmt(opening_float)} float.')
     return redirect(url_for('pos.drawer'))
 
 
@@ -106,9 +102,10 @@ def drawer_close():
     if result is None:
         flash('That drawer session is already closed.')
         return redirect(url_for('pos.drawer'))
-    diff = result['over_short']
-    state = 'balanced' if abs(diff) < 0.005 else (f'over by ${diff:.2f}' if diff > 0 else f'short by ${-diff:.2f}')
-    logger.info(f"Drawer session {session_id} closed by {current_user.username}: counted ${counted:.2f}, "
-                f"expected ${result['expected_cash']:.2f} ({state})")
-    flash(f"Drawer closed: counted ${counted:.2f}, expected ${result['expected_cash']:.2f} ({state}).")
+    diff = result['over_short_cents']
+    state = 'balanced' if diff == 0 else (f'over by {money.fmt(diff)}' if diff > 0 else f'short by {money.fmt(-diff)}')
+    expected = money.fmt(result['expected_cash_cents'])
+    logger.info(f"Drawer session {session_id} closed by {current_user.username}: counted {money.fmt(counted)}, "
+                f"expected {expected} ({state})")
+    flash(f"Drawer closed: counted {money.fmt(counted)}, expected {expected} ({state}).")
     return redirect(url_for('pos.drawer'))

@@ -217,6 +217,7 @@ def _connect(db_path):
     from app import jobs
     from app.services.migration import MONITOR_TABLES_SQL
     conn = sqlite3.connect(db_path, timeout=30)
+    conn.execute('PRAGMA foreign_keys = ON')
     conn.row_factory = sqlite3.Row
     jobs.create_tables(conn)            # job_markers (the last-check marker)
     for sql in MONITOR_TABLES_SQL:
@@ -419,6 +420,7 @@ def admin_summary(db_path=None):
         summary['email_ready'] = email_ready()
         summary['recipients'] = alert_recipients()
         conn = sqlite3.connect(jobs._db_path(db_path), timeout=10)
+        conn.execute('PRAGMA foreign_keys = ON')
         conn.row_factory = sqlite3.Row
         try:
             summary['open'] = [dict(r) for r in conn.execute(

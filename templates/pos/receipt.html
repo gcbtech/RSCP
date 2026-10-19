@@ -230,17 +230,17 @@
                     <div class="receipt-item">
                         <div class="d-flex justify-content-between">
                             <span class="receipt-item-name">{{ item.name }}</span>
-                            <span>${{ "%.2f"|format(item.line_total) }}</span>
+                            <span>${{ item.line_total_cents|dollars }}</span>
                         </div>
                         <div class="receipt-item-detail">
-                            {{ item.sku }} × {{ item.quantity }} @ ${{ "%.2f"|format(item.unit_price) }}
-                            {% if item.current_reg_price and item.unit_price < item.current_reg_price %} <span
+                            {{ item.sku }} × {{ item.quantity }} @ ${{ item.unit_price_cents|dollars }}
+                            {% if item.current_reg_price_cents and item.unit_price_cents < item.current_reg_price_cents %} <span
                                 class="text-decoration-line-through text-muted small ms-1">Reg: ${{
-                                "%.2f"|format(item.current_reg_price) }}</span>
+                                item.current_reg_price_cents|dollars }}</span>
                                 {% endif %}
-                                {% set manual_item_discount = (item.unit_price * item.quantity) - item.line_total %}
-                                {% if manual_item_discount > 0.005 %}
-                                <span class="text-warning">(Discount: −${{ "%.2f"|format(manual_item_discount) }})</span>
+                                {% set manual_item_discount_cents = (item.unit_price_cents * item.quantity) - item.line_total_cents %}
+                                {% if manual_item_discount_cents > 0 %}
+                                <span class="text-warning">(Discount: −${{ manual_item_discount_cents|dollars }})</span>
                                 {% endif %}
                         </div>
                         {% if item.addon_1 and config and config.get('ITEM_ADDON_1_TEXT') %}
@@ -263,39 +263,39 @@
                 <div class="receipt-section">
                     <div class="receipt-row">
                         <span>Subtotal</span>
-                        <span>${{ "%.2f"|format(subtotal_before_discounts) }}</span>
+                        <span>${{ subtotal_before_discounts_cents|dollars }}</span>
                     </div>
-                    {% if total_item_discount > 0.005 %}
+                    {% if total_item_discount_cents > 0 %}
                     <div class="receipt-row text-warning">
                         <span>Item Discounts</span>
-                        <span>−${{ "%.2f"|format(total_item_discount) }}</span>
+                        <span>−${{ total_item_discount_cents|dollars }}</span>
                     </div>
                     {% endif %}
-                    {% if order.discount_amount > 0.005 %}
+                    {% if order.discount_amount_cents > 0 %}
                     <div class="receipt-row text-warning">
                         <span>Order Discount</span>
-                        <span>−${{ "%.2f"|format(order.discount_amount) }}</span>
+                        <span>−${{ order.discount_amount_cents|dollars }}</span>
                     </div>
                     {% endif %}
-                    {% if coupon_redemption and coupon_redemption.discount_applied > 0.005 %}
+                    {% if coupon_redemption and coupon_redemption.discount_applied_cents > 0 %}
                     <div class="receipt-row text-warning">
                         <span>Coupon ({{ coupon_redemption.coupon_code }})</span>
-                        <span>−${{ "%.2f"|format(coupon_redemption.discount_applied) }}</span>
+                        <span>−${{ coupon_redemption.discount_applied_cents|dollars }}</span>
                     </div>
                     {% endif %}
                     <div class="receipt-row">
                         <span>Tax ({{ "%.2f"|format(order.tax_rate * 100) }}%)</span>
-                        <span>${{ "%.2f"|format(order.tax_amount) }}</span>
+                        <span>${{ order.tax_amount_cents|dollars }}</span>
                     </div>
-                    {% if cash_discount > 0.005 %}
+                    {% if cash_discount_cents > 0 %}
                     <div class="receipt-row text-warning">
                         <span>Cash Discount</span>
-                        <span>−${{ "%.2f"|format(cash_discount) }}</span>
+                        <span>−${{ cash_discount_cents|dollars }}</span>
                     </div>
                     {% endif %}
                     <div class="receipt-row total">
                         <span>Total</span>
-                        <span>${{ "%.2f"|format(order.total) }}</span>
+                        <span>${{ order.total_cents|dollars }}</span>
                     </div>
                 </div>
 
@@ -308,23 +308,23 @@
                     {% if payments|length > 1 %}
                     <div class="receipt-row">
                         <span>Cash</span>
-                        <span>${{ "%.2f"|format(p.amount) }}</span>
+                        <span>${{ p.amount_cents|dollars }}</span>
                     </div>
                     {% endif %}
-                    {% if p.tendered is not none %}
+                    {% if p.tendered_cents is not none %}
                     <div class="receipt-row">
                         <span>Cash Tendered</span>
-                        <span>${{ "%.2f"|format(p.tendered) }}</span>
+                        <span>${{ p.tendered_cents|dollars }}</span>
                     </div>
                     <div class="receipt-row">
                         <span>Change</span>
-                        <span>${{ "%.2f"|format(p.change_given or 0) }}</span>
+                        <span>${{ (p.change_given_cents or 0)|dollars }}</span>
                     </div>
                     {% endif %}
                     {% elif payments|length > 1 %}
                     <div class="receipt-row">
                         <span>{{ p.method|capitalize }}{% if card_rows|length > 1 and p.method == 'card' %} {{ loop.index }}{% endif %}</span>
-                        <span>${{ "%.2f"|format(p.amount) }}</span>
+                        <span>${{ p.amount_cents|dollars }}</span>
                     </div>
                     {% endif %}
                     {% endfor %}

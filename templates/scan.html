@@ -277,10 +277,10 @@
                         data-action="promptCustomQty" data-id="{{ inventory_item.id }}">{{ inventory_item.quantity }}</div>
                     <div style="font-size: 0.9rem; color: #aaa;">In Stock</div>
                 </div>
-                {% if inventory_item.sell_price %}
+                {% if inventory_item.sell_price_cents %}
                 <div
                     style="background: rgba(255,255,255,0.1); padding: 20px 30px; border-radius: 12px; text-align: center;">
-                    <div style="font-size: 2rem; font-weight: bold;">${{ "%.2f"|format(inventory_item.sell_price) }}
+                    <div style="font-size: 2rem; font-weight: bold;">${{ inventory_item.sell_price_cents|dollars }}
                     </div>
                     <div style="font-size: 0.9rem; color: #aaa;">Sell Price</div>
                 </div>

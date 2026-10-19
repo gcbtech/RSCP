@@ -138,9 +138,10 @@ def test_cash_sale_with_order_discount_shows_change_and_receipt(cashier_page, e2
     expect(page.locator('.receipt-row', has_text='Change')).to_contain_text('$5.55')
 
     order, payments = helpers.order(e2e_server, order_number)
-    assert (order['subtotal'], order['discount_amount'], order['tax_amount'], order['total']) == \
-        (15.0, 1.5, 0.95, 14.45)
-    assert payments == [('cash', 14.45, 20.0, 5.55)]
+    assert (order['subtotal_cents'], order['discount_amount_cents'], order['tax_amount_cents'],
+            order['total_cents']) == \
+        (1500, 150, 95, 1445)
+    assert payments == [('cash', 1445, 2000, 555)]
     assert helpers.item_quantity(e2e_server, mug) == 9
     assert helpers.item_quantity(e2e_server, pen) == 9
     page.watcher.assert_clean()
@@ -162,8 +163,8 @@ def test_split_payment(cashier_page, e2e_server):
     expect_receipt(page, order_number, '$32.10')
 
     order, payments = helpers.order(e2e_server, order_number)
-    assert order['payment_method'] == 'split' and order['total'] == 32.10
-    assert payments == [('card', 22.10, None, 0.0), ('cash', 10.0, 10.0, 0.0)]
+    assert order['payment_method'] == 'split' and order['total_cents'] == 3210
+    assert payments == [('card', 2210, None, 0), ('cash', 1000, 1000, 0)]
     assert helpers.item_quantity(e2e_server, item) == 3
     page.watcher.assert_clean()
 
@@ -181,7 +182,7 @@ def test_card_sale_then_manager_refunds_one_item(page, e2e_server):
     order_number = complete_sale(page)
     expect_receipt(page, order_number, '$32.10')
     _order, payments = helpers.order(e2e_server, order_number)
-    assert payments == [('card', 32.10, None, 0.0)]
+    assert payments == [('card', 3210, None, 0)]
     assert helpers.item_quantity(e2e_server, bulb) == 4
 
     # Manager finds the sale on the refunds page and returns the bulb

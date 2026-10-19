@@ -34,29 +34,31 @@ def test_split_cash_discount_uses_cash_applied_not_handed_over(fresh_app, fresh_
     with fresh_app.app_context():
         conn = _db(fresh_app)
         conn.execute("INSERT OR REPLACE INTO pos_settings (key, value) VALUES ('TAX_RATE', '0')")
-        cur = conn.execute("INSERT INTO inventory_items (sku, name, sell_price, quantity) VALUES ('S54', 'Item', 54, 5)")
+        cur = conn.execute("INSERT INTO inventory_items (sku, name, sell_price_cents, quantity) "
+                           "VALUES ('S54', 'Item', 5400, 5)")
         item_id = cur.lastrowid
         conn.commit()
         conn.close()
         set_pos_setting('TAX_RATE', '0')
         set_pos_setting('CASH_DISCOUNT_ENABLED', 'true')
         set_pos_setting('CASH_DISCOUNT_TYPE', 'percent')
-        set_pos_setting('CASH_DISCOUNT_AMOUNT', '3')
+        set_pos_setting('CASH_DISCOUNT_PERCENT', '3')
     login(fresh_client, 2)
     with fresh_client.session_transaction() as sess:
         sess['pos_cart'] = {'items': [{'inventory_item_id': item_id, 'sku': 'S54', 'name': 'Item', 'quantity': 1,
-                                       'unit_price': 54.0, 'discount_amount': 0, 'discount_type': None,
-                                       'line_total': 54.0}],
-                            'discount_amount': 0, 'discount_type': None, 'discount_reason': ''}
+                                       'unit_price_cents': 5400, 'discount_type': None, 'discount_percent': 0,
+                                       'discount_cents': 0, 'line_total_cents': 5400}],
+                            'discount_type': None, 'discount_percent': 0, 'discount_cents': 0,
+                            'discount_reason': ''}
     fresh_client.post('/pos/checkout/process', data={'payment_method': 'split', 'cash_amount': '100',
                                                      'card_amount': ['34']})
     conn = _db(fresh_app)
-    order = conn.execute('SELECT total, payment_details FROM pos_orders').fetchone()
+    order = conn.execute('SELECT total_cents, payment_details FROM pos_orders').fetchone()
     conn.close()
     assert order is not None
     # $20 of cash pays the sale: 3% of 20 = 0.60, not 3% of 100 = 3.00
-    assert order['total'] == pytest.approx(53.40)
-    assert json.loads(order['payment_details'])['cash_discount'] == pytest.approx(0.60)
+    assert order['total_cents'] == 5340
+    assert json.loads(order['payment_details'])['cash_discount_cents'] == 60
 
 
 def test_legacy_manifest_skips_known_shipments(fresh_app, tmp_path):

@@ -17,6 +17,7 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 
 from app.routes.pos.core import get_pos_setting
+from app.services import money
 from app.services.pos_reports import generate_daily_report_data
 from app.services.security import decrypt
 
@@ -26,8 +27,9 @@ logger = logging.getLogger(__name__)
 SMTP_TIMEOUT_S = 60
 
 
-def _money(v):
-    return f"${(v or 0):,.2f}"
+def _money(cents):
+    """Cents -> "$1,234.56" (negatives "$-5.00", as the email always showed)."""
+    return '$' + money.dollars_grouped(cents or 0)
 
 
 def render_eod_email_html(report_date, data):
@@ -43,46 +45,46 @@ def render_eod_email_html(report_date, data):
     d = r['discounts']
     sales_rows = ''.join([
         row('Orders', r['order_count']),
-        row('Gross Sales <small>(before discounts, ex. tax)</small>', _money(r['gross_sales'])),
-        row('&nbsp;&nbsp;Line discounts', '-' + _money(d['line'])),
-        row('&nbsp;&nbsp;Order discounts', '-' + _money(d['order'])),
-        row('&nbsp;&nbsp;Coupons', '-' + _money(d['coupon'])),
-        row('&nbsp;&nbsp;Cash discounts', '-' + _money(d['cash'])),
-        row('<strong>Net Sales</strong> <small>(ex. tax)</small>', f"<strong>{_money(r['net_sales'])}</strong>"),
-        row('Tax Collected', _money(r['tax_collected'])),
-        row('Sales Total <small>(incl. tax)</small>', _money(r['sales_total'])),
-        row(f"Refunds ({r['refunds']['count']})", '-' + _money(r['refunds']['total']), ' color: #dc3545;'),
-        row('&nbsp;&nbsp;of which tax', '-' + _money(r['refunds']['tax']), ' color: #dc3545;'),
-        row('Tax (net of refunds)', _money(r['tax_net'])),
+        row('Gross Sales <small>(before discounts, ex. tax)</small>', _money(r['gross_sales_cents'])),
+        row('&nbsp;&nbsp;Line discounts', '-' + _money(d['line_cents'])),
+        row('&nbsp;&nbsp;Order discounts', '-' + _money(d['order_cents'])),
+        row('&nbsp;&nbsp;Coupons', '-' + _money(d['coupon_cents'])),
+        row('&nbsp;&nbsp;Cash discounts', '-' + _money(d['cash_cents'])),
+        row('<strong>Net Sales</strong> <small>(ex. tax)</small>', f"<strong>{_money(r['net_sales_cents'])}</strong>"),
+        row('Tax Collected', _money(r['tax_collected_cents'])),
+        row('Sales Total <small>(incl. tax)</small>', _money(r['sales_total_cents'])),
+        row(f"Refunds ({r['refunds']['count']})", '-' + _money(r['refunds']['total_cents']), ' color: #dc3545;'),
+        row('&nbsp;&nbsp;of which tax', '-' + _money(r['refunds']['tax_cents']), ' color: #dc3545;'),
+        row('Tax (net of refunds)', _money(r['tax_net_cents'])),
         row('<strong>NET REVENUE</strong> <small>(incl. tax, after refunds)</small>',
-            f"<strong>{_money(r['net_revenue'])}</strong>", ' background: #f8f9fa;'),
+            f"<strong>{_money(r['net_revenue_cents'])}</strong>", ' background: #f8f9fa;'),
     ])
 
     tender_rows = ''.join(
-        f"<tr><td style='{td}'>{escape(t['label'])}</td><td style='{num}'>{_money(t['collected'])}</td>"
-        f"<td style='{num}'>-{_money(t['refunded'])}</td><td style='{num}'><strong>{_money(t['net'])}</strong></td></tr>"
+        f"<tr><td style='{td}'>{escape(t['label'])}</td><td style='{num}'>{_money(t['collected_cents'])}</td>"
+        f"<td style='{num}'>-{_money(t['refunded_cents'])}</td><td style='{num}'><strong>{_money(t['net_cents'])}</strong></td></tr>"
         for t in r['tenders'])
 
     ec = r['expected_cash']
     cash_rows = ''.join([
-        row('Opening float(s)', _money(ec['opening_float'])),
-        row('+ Cash sales', _money(ec['cash_sales'])),
-        row('- Cash refunds', _money(ec['cash_refunds'])),
-        row('<strong>Expected cash</strong>', f"<strong>{_money(ec['total'])}</strong>"),
+        row('Opening float(s)', _money(ec['opening_float_cents'])),
+        row('+ Cash sales', _money(ec['cash_sales_cents'])),
+        row('- Cash refunds', _money(ec['cash_refunds_cents'])),
+        row('<strong>Expected cash</strong>', f"<strong>{_money(ec['total_cents'])}</strong>"),
     ])
     drawer_rows = ''
     for s in r['drawer_sessions']:
         if s['is_open']:
-            status = f"open, expected {_money(s['expected_cash'])}"
+            status = f"open, expected {_money(s['expected_cash_cents'])}"
         else:
-            status = (f"counted {_money(s['counted_cash'])} vs expected {_money(s['expected_cash'])}: "
-                      f"<strong>{'over' if (s['over_short'] or 0) >= 0 else 'short'} "
-                      f"{_money(abs(s['over_short'] or 0))}</strong>")
-        drawer_rows += row(f"Drawer #{s['id']} (float {_money(s['opening_float'])})", status)
+            status = (f"counted {_money(s['counted_cash_cents'])} vs expected {_money(s['expected_cash_cents'])}: "
+                      f"<strong>{'over' if (s['over_short_cents'] or 0) >= 0 else 'short'} "
+                      f"{_money(abs(s['over_short_cents'] or 0))}</strong>")
+        drawer_rows += row(f"Drawer #{s['id']} (float {_money(s['opening_float_cents'])})", status)
 
     item_rows = ''.join(
         f"<tr><td style='{td}'>{escape(str(i['name']))}</td><td style='{num}'>{i['qty']}</td>"
-        f"<td style='{num}'>{_money(i['total'])}</td></tr>"
+        f"<td style='{num}'>{_money(i['total_cents'])}</td></tr>"
         for i in data['top_items'][:5])
 
     return f"""
