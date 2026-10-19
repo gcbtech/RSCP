@@ -48,11 +48,17 @@
                     <div class="card-header bg-white border-bottom d-flex justify-content-between">
                         <strong>Order Items</strong>
                         <span
-                            class="badge bg-{% if order.status == 'completed' %}success{% elif order.status == 'refunded' %}danger{% else %}warning{% endif %}">
+                            class="badge bg-{% if order.status == 'completed' %}success{% elif order.status in ('refunded', 'voided') %}danger{% else %}warning{% endif %}">
                             {{ order.status }}
                         </span>
                     </div>
 
+                    {% if state.voided %}
+                    <div class="p-3">
+                        <div class="alert alert-danger mb-0">This sale was voided
+                            {{ state.void.created_at | local_time }} by {{ state.void.user_name }}; there is nothing left to refund.</div>
+                    </div>
+                    {% else %}
                     <form action="{{ url_for('pos.refund_process') }}" method="POST" id="refundForm">
                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="order_id" value="{{ order.id }}">
@@ -130,12 +136,13 @@
                                     Partial Refund (Selected Items)
                                 </button>
                                 <button type="submit" name="refund_type" value="full" class="btn btn-danger"
-                                    data-confirm="Process FULL refund of ${{ ' ' ~ (order.total_cents|dollars) }}?">
+                                    data-confirm="Process FULL refund of ${{ ' ' ~ (state.refundable_cents|dollars) }}?">
                                     Full Refund
                                 </button>
                             </div>
                         </div>
                     </form>
+                    {% endif %}
                 </div>
 
                 <!-- Previous Refunds -->
@@ -187,8 +194,30 @@
                         </div>
                         <hr>
                         <div class="d-flex justify-content-between fw-bold fs-5">
-                            <span>Total</span>
+                            <span>Total{% if state.has_corrections %} <small class="fw-normal text-muted">(corrected)</small>{% endif %}</span>
                             <span>${{ order.total_cents|dollars }}</span>
+                        </div>
+                        {% if state.has_corrections %}
+                        <div class="d-flex justify-content-between small text-muted">
+                            <span>Rung up</span>
+                            <span>${{ state.original.total_cents|dollars }}</span>
+                        </div>
+                        {% for c in state.corrections %}
+                        <div class="d-flex justify-content-between small text-muted">
+                            <span>{{ c.label }} {{ c.created_at | local_time }}</span>
+                            <span>{{ c.total_delta_cents|money }}</span>
+                        </div>
+                        {% endfor %}
+                        {% endif %}
+                        {% if state.refunded_cents %}
+                        <div class="d-flex justify-content-between text-danger">
+                            <span>Refunded</span>
+                            <span>{{ (-state.refunded_cents)|money }}</span>
+                        </div>
+                        {% endif %}
+                        <div class="d-flex justify-content-between fw-bold">
+                            <span>Left to refund</span>
+                            <span>${{ state.refundable_cents|dollars }}</span>
                         </div>
 
                         <hr>

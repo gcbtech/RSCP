@@ -96,6 +96,7 @@ def delete_user_action(username):
 
 # Records that must stay attributed to their user (ON DELETE RESTRICT)
 _SALES_HISTORY_REFS = (('pos_orders', 'operator_id'), ('pos_refunds', 'manager_id'),
+                       ('pos_sale_corrections', 'user_id'),
                        ('pos_coupon_redemptions', 'redeemed_by'),
                        ('drawer_sessions', 'opened_by'), ('drawer_sessions', 'closed_by'))
 # Timeclock rows belong to the user and are deleted with the account (ON DELETE CASCADE)

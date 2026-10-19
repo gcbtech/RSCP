@@ -1,5 +1,6 @@
-/* POS edit sale (templates/pos/edit_sale.html): live re-pricing as lines change, and
-   removing lines. Tax rate and the sale's adjustments come from RSCP.pageData(). */
+/* POS edit sale (templates/pos/edit_sale.html): live re-pricing as lines change,
+   removing lines, and what the correction pays back / collects. Tax rate and the
+   sale's adjustments come from RSCP.pageData(). */
 (function () {
     'use strict';
 
@@ -48,12 +49,32 @@
         const coupon = Math.round(adj.coupon * scale * 100) / 100;
         const cashDiscount = Math.round(adj.cash_discount * scale * 100) / 100;
         const afterCoupon = Math.max(0, afterDiscount - Math.min(coupon, afterDiscount));
-        const tax = Math.round(afterCoupon * adj.tax_rate * 100) / 100;
-        const total = Math.round(Math.max(0, afterCoupon + tax - cashDiscount) * 100) / 100;
+        // offsets: how far the sale's stored figures are from re-pricing its
+        // current lines (zero for sales rung up at checkout); saving keeps them
+        const tax = Math.round((afterCoupon * adj.tax_rate + (adj.tax_offset || 0)) * 100) / 100;
+        const total = Math.round((Math.max(0, afterCoupon + Math.round(afterCoupon * adj.tax_rate * 100) / 100
+            - cashDiscount) + (adj.total_offset || 0)) * 100) / 100;
 
         document.getElementById('editSubtotal').textContent = '$' + subtotal.toFixed(2);
         document.getElementById('editTax').textContent = '$' + tax.toFixed(2);
         document.getElementById('editTotal').textContent = '$' + total.toFixed(2);
+
+        // What changes hands when this correction is saved
+        const diff = Math.round((total - (adj.current_total || 0)) * 100) / 100;
+        const label = document.getElementById('editDifferenceLabel');
+        const value = document.getElementById('editDifference');
+        if (label && value) {
+            if (diff < 0) {
+                label.textContent = 'Pay the customer back';
+                value.textContent = '$' + (-diff).toFixed(2);
+            } else if (diff > 0) {
+                label.textContent = 'Collect from the customer';
+                value.textContent = '$' + diff.toFixed(2);
+            } else {
+                label.textContent = 'Difference';
+                value.textContent = 'No change';
+            }
+        }
     }
 
     function removeItem(itemId) {

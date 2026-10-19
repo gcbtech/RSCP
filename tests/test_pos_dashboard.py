@@ -12,7 +12,7 @@ from app.services import inventory as inv
 from app.services import pos_checkout, pos_refunds
 from app.services.db import get_db_connection
 from app.services.pos_pricing import PricingConfig
-from tests.conftest import login
+from tests.conftest import login, sales_unlocked
 
 CASHIER = SimpleNamespace(id=2, username='cashier')
 MANAGER = SimpleNamespace(id=3, username='manager')
@@ -108,8 +108,9 @@ def _seed_day(conn):
     assert (full_d.amount_cents, full_d.tax_refunded_cents, full_d.refund_method) == (2625, 250, 'cash')
 
     # Pin everything to the middle of the local day so the test never straddles midnight
-    conn.execute('UPDATE pos_orders SET created_at = ?', (_utc_at_local(_today(), 12),))
-    conn.execute('UPDATE pos_refunds SET created_at = ?', (_utc_at_local(_today(), 13),))
+    with sales_unlocked(conn):
+        conn.execute('UPDATE pos_orders SET created_at = ?', (_utc_at_local(_today(), 12),))
+        conn.execute('UPDATE pos_refunds SET created_at = ?', (_utc_at_local(_today(), 13),))
     return a, b, c, d
 
 
@@ -192,12 +193,14 @@ def test_dashboard_range_and_daily_series_add_up_to_the_engine(fresh_app, fresh_
     today = _today()
     widget = conn.execute("SELECT id FROM inventory_items WHERE sku = 'WIDGET'").fetchone()[0]
     earlier = _sell(conn, _cart(widget, 'WIDGET', 1000), 'card', TAX10)
-    conn.execute('UPDATE pos_orders SET created_at = ? WHERE id = ?',
-                 (_utc_at_local(today - timedelta(days=3), 23), earlier.order_id))
+    with sales_unlocked(conn):
+        conn.execute('UPDATE pos_orders SET created_at = ? WHERE id = ?',
+                     (_utc_at_local(today - timedelta(days=3), 23), earlier.order_id))
     held = conn.execute('''INSERT INTO pos_orders (order_number, status, subtotal_cents, tax_rate, tax_amount_cents,
                                                    total_cents, payment_method, operator_id)
                            VALUES ('HELD-1', 'held', 10000, 0, 0, 10000, 'cash', 2)''').lastrowid
-    conn.execute('UPDATE pos_orders SET created_at = ? WHERE id = ?', (_utc_at_local(today, 12), held))
+    with sales_unlocked(conn):
+        conn.execute('UPDATE pos_orders SET created_at = ? WHERE id = ?', (_utc_at_local(today, 12), held))
     login(fresh_client, 3)
 
     start = today - timedelta(days=6)

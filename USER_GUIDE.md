@@ -74,6 +74,10 @@ The POS is where you monetize your inventory. It is optimized for speed and work
 *   **Money Management**:
     *   **End of Day**: reconcile cash, card, and other payments. The system generates a "Z-Report" ensuring your drawer balances perfectly.
 *   **Receipts**: Print professional receipts on standard 58mm/80mm thermal printers
+*   **Finished sales are permanent**: a completed sale is never changed or deleted.
+    *   **Edit Sale** (Sales History, ✏️) records a *correction*: change quantities or prices, or take an item off. The page tells you what to pay back or collect, and in which tender; the correction is dated when you save it and counts in that day's reports, like a refund. The sale's own day never changes.
+    *   **Void Sale** (on the receipt, administrators) takes everything off a sale and pays it back per tender. The sale stays in the history, marked voided. A sale with refunds can't be voided: refund the rest instead.
+    *   The receipt shows the sale as rung up, then every correction and refund (when and by whom), then what the customer paid in the end.
 
 ---
 

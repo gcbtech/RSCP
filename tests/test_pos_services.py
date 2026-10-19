@@ -349,18 +349,21 @@ def test_refund_manager_falls_back_to_acting_user(conn):
     assert _ledger(conn, g)[-1] == (1, 'refund', '3', sale.order_number)
 
 
-# --- sale edits / deletes ------------------------------------------------------
+# --- sale corrections / voids (the sale itself never changes) ------------------
 
-def test_edit_sale_moves_stock_reprices_and_rebuilds_ledger(conn):
+def test_edit_sale_moves_stock_reprices_and_records_a_correction(conn):
     sale, w, g, lines = _two_line_sale(conn)
+    before = [tuple(r) for r in conn.execute('SELECT * FROM pos_orders')]
     edits = [pos_sales.SaleLineEdit(str(lines['WIDGET']), '3', '10.00', 'WIDGET item')]
     res = pos_sales.edit_sale(conn, sale.order_id, edits, [str(lines['GADGET'])], MANAGER, ip='127.0.0.1')
-    assert res.new_total_cents == 3210 and not res.date_rejected
+    assert res.new_total_cents == 3210 and res.money_cents == -1070 and res.method == 'card'
     assert 'Removed: GADGET item x1' in res.changes and 'WIDGET item: qty 2 → 3' in res.changes
     assert _qty(conn, w) == 7 and _qty(conn, g) == 10
     assert _ledger(conn, w)[-1] == (-1, 'sale_edit', 'manager', f'{sale.order_number}: qty increased')
     assert _ledger(conn, g)[-1] == (1, 'sale_edit', 'manager', f'{sale.order_number}: item removed')
-    assert _payments(conn, sale.order_id) == [('card', 3210, None, 0)]
+    # The checkout's payment stays; the difference is paid back on its own row
+    assert _payments(conn, sale.order_id) == [('card', 4280, None, 0), ('card', -1070, None, 0)]
+    assert [tuple(r) for r in conn.execute('SELECT * FROM pos_orders')] == before
     audit = conn.execute("SELECT details FROM pos_audit_log WHERE action = 'edit_sale'").fetchone()
     assert json.loads(audit[0])['new_total'] == 32.10   # the audit log stays human-readable dollars
     assert not conn.in_transaction
@@ -375,23 +378,39 @@ def test_edit_sale_refusals_change_nothing(conn):
         pos_sales.edit_sale(conn, 99999, [], [], MANAGER)
     pos_refunds.process_refund(conn, sale.order_id, 'partial', 'defective', MANAGER,
                                items=[(str(lines['GADGET']), '1')])
-    with pytest.raises(pos_sales.SaleHasRefunds):
-        pos_sales.edit_sale(conn, sale.order_id, [], [str(lines['WIDGET'])], MANAGER)
+    # the refunded gadget can't come off the sale (refund the rest instead)
+    with pytest.raises(pos_sales.RefundedLine):
+        pos_sales.edit_sale(conn, sale.order_id, [], [str(lines['GADGET'])], MANAGER)
+    with pytest.raises(pos_sales.UnknownMethod):
+        pos_sales.edit_sale(conn, sale.order_id, [], [str(lines['WIDGET'])], MANAGER, method='gold')
     assert _qty(conn, w) == 8 and not conn.in_transaction
+    assert conn.execute('SELECT COUNT(*) FROM pos_sale_corrections').fetchone()[0] == 0
 
 
-def test_delete_order_restores_unrefunded_units_only(conn):
+def test_void_restores_units_and_pays_back_per_tender(conn):
+    sale, w, g, lines = _two_line_sale(conn)
+    admin = SimpleNamespace(id=1, username='admin')
+    res = pos_sales.void_order(conn, sale.order_number, True, admin, reason='rung up twice')
+    assert res.restored_units == 3 and res.payments == {'card': -4280} and res.money_cents == -4280
+    assert _qty(conn, w) == 10 and _qty(conn, g) == 10
+    assert _ledger(conn, w)[-1] == (2, 'sale_void', '1', f'{sale.order_number}: sale voided')
+    # The sale stays, with the void beside it
+    for table, n in (('pos_orders', 1), ('pos_order_items', 2), ('pos_payments', 2),
+                     ('pos_sale_corrections', 1)):
+        assert conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0] == n
+    with pytest.raises(pos_sales.SaleVoided):
+        pos_sales.void_order(conn, sale.order_number, True, admin)
+    with pytest.raises(pos_sales.OrderNotFound):
+        pos_sales.void_order(conn, 'NOPE-1', True, admin)
+
+
+def test_void_is_refused_once_part_of_the_sale_was_refunded(conn):
     sale, w, g, lines = _two_line_sale(conn)
     pos_refunds.process_refund(conn, sale.order_id, 'partial', 'customer_changed_mind', MANAGER,
                                items=[(str(lines['WIDGET']), '1')])
-    res = pos_sales.delete_order(conn, sale.order_number, True, SimpleNamespace(id=1, username='admin'))
-    assert res.restored_units == 2  # 1 widget (the other was restocked by the refund) + 1 gadget
-    assert _qty(conn, w) == 10 and _qty(conn, g) == 10
-    assert _ledger(conn, w)[-1] == (1, 'sale_delete', '1', f'{sale.order_number}: sale deleted')
-    for table in ('pos_orders', 'pos_order_items', 'pos_payments', 'pos_refunds', 'pos_refund_items'):
-        assert conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0] == 0
-    with pytest.raises(pos_sales.OrderNotFound):
-        pos_sales.delete_order(conn, sale.order_number, True, MANAGER)
+    with pytest.raises(pos_sales.SaleHasRefunds):
+        pos_sales.void_order(conn, sale.order_number, True, SimpleNamespace(id=1, username='admin'))
+    assert _qty(conn, w) == 9 and not conn.in_transaction
 
 
 def test_item_sale_fields(conn):

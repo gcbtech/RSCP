@@ -1,0 +1,79 @@
+{# What happened to a sale after checkout, then where it stands now. Every
+   figure comes from pos_order_state.order_state (passed in as `state`);
+   the sale above it is shown exactly as it was rung up.
+   `row` is the CSS class of one label/amount line (receipt: 'receipt-row',
+   printable receipt: 'row'); `section` the class of a block. #}
+{% set row = row or 'receipt-row' %}
+{% set section = section or 'receipt-section' %}
+{% if state.corrections or state.refunds %}
+<div class="{{ section }} sale-changes">
+    <strong class="d-block mb-2">Changes after the sale</strong>
+    {% for c in state.corrections %}
+    <div class="sale-change mb-2">
+        <div class="{{ row }} fw-bold">
+            <span>{{ c.label }}</span>
+            <span>{{ c.created_at | local_time }}</span>
+        </div>
+        <div class="small text-muted">By {{ c.user_name }}{% if c.reason %} &bull; {{ c.reason }}{% endif %}</div>
+        {% if c.kind == 'void' %}
+        <div class="small">Every item taken off the sale.</div>
+        {% else %}
+        {% for ci in c['items'] %}
+        {% if ci.qty_delta or ci.name or ci.unit_price_cents != ci.before_unit_price_cents %}
+        <div class="small">
+            {{ ci.before_name or ci.line_name }}:
+            {% if ci.qty_delta and ci.after_quantity == 0 %}removed (was {{ ci.before_quantity }})
+            {% elif ci.qty_delta %}qty {{ ci.before_quantity }} &rarr; {{ ci.after_quantity }}{% endif %}
+            {% if ci.unit_price_cents != ci.before_unit_price_cents %}price {{ ci.before_unit_price_cents|money }} &rarr; {{ ci.unit_price_cents|money }}{% endif %}
+            {% if ci.name %}renamed &ldquo;{{ ci.name }}&rdquo;{% endif %}
+        </div>
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+        <div class="{{ row }}">
+            <span>Total change</span>
+            <span>{{ c.total_delta_cents|money }}</span>
+        </div>
+        {% for p in c.payments %}
+        <div class="{{ row }}">
+            <span>{% if p.amount_cents < 0 %}Paid back to customer{% else %}Collected from customer{% endif %} ({{ p.method|capitalize }})</span>
+            <span>{{ p.amount_cents|money }}</span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endfor %}
+    {% for r in state.refunds %}
+    <div class="sale-change mb-2">
+        <div class="{{ row }} fw-bold">
+            <span>Refund</span>
+            <span>{{ r.created_at | local_time }}</span>
+        </div>
+        <div class="small text-muted">By {{ r.manager_name or '?' }}{% if r.reason %} &bull; {{ r.reason }}{% endif %}</div>
+        {% for ri in r['items'] %}
+        <div class="small">{{ ri.name }} &times; {{ ri.quantity }}</div>
+        {% endfor %}
+        <div class="{{ row }}">
+            <span>Paid back to customer ({{ (r.refund_method or state.default_method)|capitalize }})</span>
+            <span>{{ (-(r.amount_cents or 0))|money }}</span>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="{{ section }} sale-net">
+    <div class="{{ row }}">
+        <span>Sale total now</span>
+        <span>{{ state.net.total_cents|money }}</span>
+    </div>
+    {% if state.refunded_cents %}
+    <div class="{{ row }}">
+        <span>Refunded</span>
+        <span>{{ (-state.refunded_cents)|money }}</span>
+    </div>
+    {% endif %}
+    <div class="{{ row }} {{ 'total-row' if row == 'row' else 'fw-bold fs-5' }}">
+        <span>{% if state.voided %}Voided{% else %}Net paid{% endif %}</span>
+        <span>{{ state.refundable_cents|money }}</span>
+    </div>
+</div>
+{% endif %}

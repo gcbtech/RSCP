@@ -2230,6 +2230,102 @@ def _m22_retire_oidc_sso(conn):
                          (uid, SSO_RETIRED_TITLE, SSO_RETIRED_MESSAGE, SSO_RETIRED_LINK))
 
 
+# --- v23: finished sales are permanent; corrections are recorded beside them --
+# Edit Sale and Void no longer change a sale: each save is one correction
+# (pos_sale_corrections, with its line changes in pos_sale_correction_items)
+# dated when it is made, like a refund. Money that changes hands because of
+# a correction is a pos_payments row of its own (correction_id set, dated
+# then; negative = paid back to the customer). app/services/pos_order_state.py
+# replays original + corrections + refunds into the sale's net state.
+#
+# Correction items: qty_delta / line_total_delta_cents are the change to the
+# line, unit_price_cents the line's unit price afterwards, name the new line
+# name when it was renamed. revenue_delta_cents / tax_delta_cents are the
+# change to the line's share of the sale (ex. tax) and of its tax, so item
+# reports (Top Sellers) can count the correction on its own day; across a
+# correction's items they add up exactly to its total - tax and tax deltas.
+SALE_CORRECTIONS_SQL = (
+    '''CREATE TABLE IF NOT EXISTS pos_sale_corrections (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id INTEGER NOT NULL REFERENCES pos_orders(id) ON DELETE RESTRICT,
+        kind TEXT NOT NULL CHECK (kind IN ('edit', 'void')),
+        user_id INTEGER REFERENCES users(id) ON DELETE RESTRICT,
+        user_name TEXT NOT NULL,
+        reason TEXT,
+        method TEXT,                   -- tender the difference moved in (cash/card); NULL if none
+        subtotal_delta_cents INTEGER NOT NULL DEFAULT 0,
+        discount_delta_cents INTEGER NOT NULL DEFAULT 0,
+        coupon_delta_cents INTEGER NOT NULL DEFAULT 0,
+        cash_discount_delta_cents INTEGER NOT NULL DEFAULT 0,
+        tax_delta_cents INTEGER NOT NULL DEFAULT 0,
+        total_delta_cents INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP   -- UTC
+    )''',
+    'CREATE INDEX IF NOT EXISTS idx_pos_corrections_order ON pos_sale_corrections(order_id)',
+    'CREATE INDEX IF NOT EXISTS idx_pos_corrections_created ON pos_sale_corrections(created_at)',
+    # A sale is voided at most once
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_pos_corrections_one_void ON pos_sale_corrections(order_id) "
+    "WHERE kind = 'void'",
+    '''CREATE TABLE IF NOT EXISTS pos_sale_correction_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        correction_id INTEGER NOT NULL REFERENCES pos_sale_corrections(id) ON DELETE RESTRICT,
+        order_item_id INTEGER NOT NULL REFERENCES pos_order_items(id) ON DELETE RESTRICT,
+        qty_delta INTEGER NOT NULL DEFAULT 0,
+        unit_price_cents INTEGER NOT NULL,
+        line_total_delta_cents INTEGER NOT NULL DEFAULT 0,
+        name TEXT,
+        revenue_delta_cents INTEGER NOT NULL DEFAULT 0,
+        tax_delta_cents INTEGER NOT NULL DEFAULT 0
+    )''',
+    'CREATE INDEX IF NOT EXISTS idx_pos_correction_items_corr ON pos_sale_correction_items(correction_id)',
+    'CREATE INDEX IF NOT EXISTS idx_pos_correction_items_line ON pos_sale_correction_items(order_item_id)',
+)
+
+# Tables of a finished sale and what happened to it afterwards: rows are
+# only ever inserted. (Held carts live in pos_held_orders, which is not
+# here.) pos_orders.status is not updated either: a sale's status is derived
+# from its refunds and corrections (pos_order_state.STATUS_SQL), so no
+# column of pos_orders needs to change after checkout. Table rebuilds in
+# later migrations keep these triggers (_rebuild_table re-creates them).
+SALE_IMMUTABLE_TABLES = ('pos_orders', 'pos_order_items', 'pos_payments', 'pos_coupon_redemptions',
+                         'pos_refunds', 'pos_refund_items', 'pos_sale_corrections',
+                         'pos_sale_correction_items')
+SALE_IMMUTABLE_MESSAGE = 'finished sales are permanent: record a correction or refund instead'
+
+
+def sale_immutable_triggers_sql():
+    """CREATE TRIGGER statements refusing UPDATE and DELETE on the sales tables."""
+    out = []
+    for table in SALE_IMMUTABLE_TABLES:
+        for op in ('update', 'delete'):
+            out.append(f'''CREATE TRIGGER IF NOT EXISTS trg_{table}_no_{op}
+                BEFORE {op.upper()} ON {table}
+                BEGIN
+                    SELECT RAISE(ABORT, '{table}: {SALE_IMMUTABLE_MESSAGE}');
+                END''')
+    return out
+
+
+def _m23_sale_corrections(conn):
+    """Finished sales become permanent: correction tables, the payments
+    ledger's link to them, and triggers refusing UPDATE/DELETE on every
+    sales table.
+
+    Sales edited in place before this cannot be reconstructed and are left
+    as they are (migration 15 logged those whose parts don't add up);
+    deleted sales are gone. Each order's stored status is kept: from now on
+    status is derived from refunds and corrections, and for orders without
+    any it reads the same."""
+    for sql in SALE_CORRECTIONS_SQL:
+        conn.execute(sql)
+    _add_column_in_txn(conn, 'pos_payments', 'correction_id',
+                       'INTEGER REFERENCES pos_sale_corrections(id) ON DELETE RESTRICT')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_pos_payments_correction ON pos_payments(correction_id) '
+                 'WHERE correction_id IS NOT NULL')
+    for sql in sale_immutable_triggers_sql():
+        conn.execute(sql)
+
+
 # (version, description, function). Version 1 is the ensure_db_ready() baseline.
 SCHEMA_MIGRATIONS = [
     (2, 'PTO tables', _m2_pto_tables),
@@ -2249,6 +2345,8 @@ SCHEMA_MIGRATIONS = [
     (16, 'foreign keys: orphans handled, REFERENCES rebuilt, foreign_key_check', _m16_foreign_keys),
     (20, 'stock ledger: inventory_movements with opening balances', _m20_stock_ledger),
     (22, 'retire Google/OIDC sign-in settings (feature removed)', _m22_retire_oidc_sso),
+    (23, 'permanent sales: correction tables, payments linked to corrections, no-update triggers',
+     _m23_sale_corrections),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 assert len({v for v, _, _ in SCHEMA_MIGRATIONS}) == len(SCHEMA_MIGRATIONS), "duplicate schema version"

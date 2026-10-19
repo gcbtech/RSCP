@@ -47,11 +47,11 @@
                 <div>
                     <span class="fw-bold font-monospace">{{ order.order_number }}</span>
                     <span
-                        class="badge bg-{% if order.status == 'completed' %}success{% elif order.status == 'refunded' %}danger{% else %}warning{% endif %} ms-2">{{
+                        class="badge bg-{% if order.status == 'completed' %}success{% elif order.status in ('refunded', 'voided') %}danger{% else %}warning{% endif %} ms-2">{{
                         order.status }}</span>
                 </div>
                 <div class="text-end">
-                    <div class="fw-bold">${{ order.total_cents|dollars }}</div>
+                    <div class="fw-bold">${{ order.net_total_cents|dollars }}</div>
                     <small class="text-muted">{{ order.created_at | local_time }}</small>
                 </div>
                 <a href="{{ url_for('pos.refund_order', order_number=order.order_number) }}"

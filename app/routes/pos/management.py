@@ -18,6 +18,8 @@ from app.routes.pos import pos_bp
 from app.routes.pos.core import get_pos_setting, set_pos_setting, get_tax_rate
 from app.services import money, pos_sales
 from app.services.db import get_db_connection, get_request_db
+from app.services.pos_ledger import REFUND_METHODS
+from app.services.pos_order_state import STATUS_SQL, list_columns_sql, list_rows, order_state, order_view
 from app.utils.permissions import require_permission
 
 logger = logging.getLogger(__name__)
@@ -101,8 +103,10 @@ def sales_history():
     status = request.args.get('status', '')
     item_query = request.args.get('item_query', '').strip()
     
-    sql = '''
-        SELECT DISTINCT o.*, u.username as operator_name
+    # Totals after corrections and the status derived from refunds and
+    # corrections (a finished sale's own row never changes)
+    sql = f'''
+        SELECT DISTINCT o.*, u.username as operator_name{list_columns_sql()}
         FROM pos_orders o
         LEFT JOIN users u ON o.operator_id = u.id
     '''
@@ -140,13 +144,13 @@ def sales_history():
         sql += " AND date(o.created_at, 'localtime') <= ?"
         params.append(date_to)
     if status:
-        sql += ' AND o.status = ?'
+        sql += f' AND {STATUS_SQL} = ?'
         params.append(status)
     
     # Count total (distinct orders)
     # For count, we can wrap the query or count distinct IDs
     # Simplest way given complex joins:
-    count_offset = sql.find('FROM')
+    count_offset = sql.find('FROM pos_orders o')
     if item_query:
         count_sql = "SELECT COUNT(DISTINCT o.id) as cnt " + sql[count_offset:]
     else:
@@ -158,7 +162,7 @@ def sales_history():
     sql += ' ORDER BY o.created_at DESC LIMIT ? OFFSET ?'
     params.extend([per_page, (page - 1) * per_page])
     
-    orders = conn.execute(sql, params).fetchall()
+    orders = list_rows(conn.execute(sql, params).fetchall())
     
     return render_template('pos/sales_history.html',
                            orders=orders,
@@ -392,8 +396,8 @@ def export_data():
     
     if report_type == 'orders':
         writer.writerow(['Order Number', 'Date', 'Status', 'Subtotal', 'Tax', 'Discount', 'Total', 'Payment', 'Operator'])
-        orders = conn.execute('''
-            SELECT o.order_number, o.created_at, o.status, o.subtotal_cents, o.tax_amount_cents,
+        orders = conn.execute(f'''
+            SELECT o.order_number, o.created_at, {STATUS_SQL} AS status, o.subtotal_cents, o.tax_amount_cents,
                    o.discount_amount_cents, o.total_cents, o.payment_method, u.username
             FROM pos_orders o
             LEFT JOIN users u ON o.operator_id = u.id
@@ -678,16 +682,23 @@ def reorder_report():
     days_lookback = 30
     start_date = (date.today() - timedelta(days=days_lookback)).strftime('%Y-%m-%d')
     
+    # Units sold, plus quantity changes from sale corrections made in the window
     velocity_query = '''
-        SELECT 
-            oi.sku, 
-            SUM(oi.quantity) as total_sold
-        FROM pos_order_items oi
-        JOIN pos_orders o ON oi.order_id = o.id
-        WHERE o.created_at >= ? AND o.status != 'held'
-        GROUP BY oi.sku
+        SELECT sku, SUM(qty) as total_sold FROM (
+            SELECT oi.sku AS sku, oi.quantity AS qty
+            FROM pos_order_items oi
+            JOIN pos_orders o ON oi.order_id = o.id
+            WHERE o.created_at >= ? AND o.status != 'held'
+            UNION ALL
+            SELECT oi.sku, ci.qty_delta
+            FROM pos_sale_correction_items ci
+            JOIN pos_sale_corrections c ON c.id = ci.correction_id
+            JOIN pos_order_items oi ON oi.id = ci.order_item_id
+            WHERE c.created_at >= ?
+        )
+        GROUP BY sku
     '''
-    sales_data = conn.execute(velocity_query, (start_date,)).fetchall()
+    sales_data = conn.execute(velocity_query, (start_date, start_date)).fetchall()
     velocity_map = {row['sku']: (row['total_sold'] / days_lookback) for row in sales_data}
     
     # 2. Get Current Inventory
@@ -793,25 +804,36 @@ def daily_items_report():
 
     # 3. Query
     # Prioritize Inventory SKU (RSCP) over Order SKU (which might be UPC/Part)
+    # Lines sold that day, plus the changes sale corrections made that day
+    # (corrections count on the day they are made)
     query = f'''
-        SELECT 
+        SELECT
             COALESCE(inv.sku, oi.sku) as sku,
-            oi.name, 
-            SUM(oi.quantity) as qty, 
-            SUM(oi.line_total_cents) as total_cents,
-            AVG(oi.unit_price_cents) as avg_price_cents,
+            oi.name,
+            SUM(f.qty) as qty,
+            SUM(f.total_cents) as total_cents,
+            AVG(CASE WHEN f.is_sale = 1 THEN oi.unit_price_cents END) as avg_price_cents,
             MAX(inv.quantity) as current_stock,
             MAX(inv.location_aisle) as aisle
-        FROM pos_order_items oi
-        JOIN pos_orders o ON oi.order_id = o.id
+        FROM (
+            SELECT oi2.id AS line_id, oi2.quantity AS qty, oi2.line_total_cents AS total_cents, 1 AS is_sale
+            FROM pos_order_items oi2
+            JOIN pos_orders o ON oi2.order_id = o.id
+            WHERE o.created_at BETWEEN ? AND ?
+              AND o.status != 'held'
+            UNION ALL
+            SELECT ci.order_item_id, ci.qty_delta, ci.line_total_delta_cents, 0
+            FROM pos_sale_correction_items ci
+            JOIN pos_sale_corrections c ON c.id = ci.correction_id
+            WHERE c.created_at BETWEEN ? AND ?
+        ) f
+        JOIN pos_order_items oi ON oi.id = f.line_id
         LEFT JOIN inventory_items inv ON oi.inventory_item_id = inv.id
-        WHERE o.created_at BETWEEN ? AND ? 
-          AND o.status != 'held'
         GROUP BY COALESCE(inv.sku, oi.sku)
         ORDER BY {order_clause}
     '''
-    
-    rows = conn.execute(query, (start_dt, end_dt)).fetchall()
+
+    rows = conn.execute(query, (start_dt, end_dt, start_dt, end_dt)).fetchall()
     
     # 4. Process Category logic (Python side) & Format
     items = []
@@ -862,56 +884,54 @@ def _sale_adjustments(conn, order):
     return pos_sales.sale_adjustments(conn, order, default_tax_rate=get_tax_rate())
 
 
-# (order_discount, tax, total) for an edited sale; mirrors edit_sale.html's preview
+# (order_discount, tax, total) for an edited sale; mirrors pos-edit-sale.js
 _reprice_sale = pos_sales.reprice_sale
 
 
 @pos_bp.route('/management/edit-sale/<int:order_id>')
 @require_permission('pos.manage')
 def edit_sale(order_id):
-    """Load a sale for editing (admin only)."""
+    """Correct a sale (managers). The page starts from the sale as it stands
+    now (earlier corrections and refunds applied); saving records a
+    correction, the sale itself never changes."""
     conn = get_request_db()
-    
+
     order = conn.execute('''
         SELECT o.*, u.username as operator_name
         FROM pos_orders o
         LEFT JOIN users u ON o.operator_id = u.id
         WHERE o.id = ?
     ''', (order_id,)).fetchone()
-    
+
     if not order:
         flash("Order not found.")
         return redirect(url_for('pos.sales_history'))
-    
-    items = conn.execute('''
-        SELECT * FROM pos_order_items WHERE order_id = ?
-    ''', (order_id,)).fetchall()
 
-    if _sale_has_refunds(conn, order_id):
-        flash("This sale has refunds and can no longer be edited. Use a refund instead.")
+    state = order_state(conn, order)
+    if state['voided']:
+        flash("This sale was voided and can no longer be changed.")
         return redirect(url_for('pos.sales_history'))
 
     adj = _sale_adjustments(conn, order)
-    from app.utils.helpers import utc_to_local_dt
-    local_dt = utc_to_local_dt(order['created_at'])
-
     return render_template('pos/edit_sale.html',
-                           order=order,
-                           items=items,
+                           order=order_view(state),
+                           state=state,
+                           items=state['live_lines'],
                            tax_rate=adj['tax_rate'] * 100,
                            adjustments=adj,
-                           adjustments_json=_adjustments_json(adj),
-                           local_date=local_dt.strftime('%Y-%m-%d') if local_dt else '',
-                           local_time=local_dt.strftime('%H:%M:%S') if local_dt else '')
+                           adjustments_json=_adjustments_json(adj, state),
+                           refund_methods=REFUND_METHODS)
 
 
-_sale_has_refunds = pos_sales.has_refunds
-
-
-def _adjustments_json(adj):
-    """sale_adjustments() as the dollar JSON edit_sale's preview script reads
-    (discount_pct as a fraction of the subtotal)."""
+def _adjustments_json(adj, state):
+    """sale_adjustments() as the dollar JSON pos-edit-sale.js's preview reads
+    (discount_pct as a fraction of the subtotal), plus the sale's current
+    total and the amounts by which its stored tax/total differ from what
+    re-pricing its current lines gives (zero for every sale recorded by
+    checkout), so the preview shows exactly what saving records."""
     pct = adj['discount_pct']
+    lines_now = sum(ln['line_total_cents'] for ln in state['lines'])
+    repriced = pos_sales.reprice_parts(lines_now, adj)
     return {
         'discount_pct': (pct[0] / pct[1]) if pct else None,
         'discount_fixed': money.to_dollars(adj['discount_fixed']),
@@ -919,13 +939,17 @@ def _adjustments_json(adj):
         'cash_discount': money.to_dollars(adj['cash_discount']),
         'tax_rate': adj['tax_rate'],
         'orig_subtotal': money.to_dollars(adj['orig_subtotal']),
+        'current_total': money.to_dollars(state['net']['total_cents']),
+        'tax_offset': money.to_dollars(state['net']['tax_cents'] - repriced['tax']),
+        'total_offset': money.to_dollars(state['net']['total_cents'] - repriced['total']),
+        'refunded': money.to_dollars(state['refunded_cents']),
     }
 
 
 @pos_bp.route('/management/edit-sale/<int:order_id>', methods=['POST'])
 @require_permission('pos.manage')
 def edit_sale_post(order_id):
-    """Process sale edit (admin only): pos_sales.edit_sale."""
+    """Save a correction (managers): pos_sales.edit_sale."""
     form = request.form
     item_ids = form.getlist('item_id')
     quantities = form.getlist('item_quantity')
@@ -938,24 +962,33 @@ def edit_sale_post(order_id):
     lines = [pos_sales.SaleLineEdit(item_ids[i], _at(quantities, i), _at(prices, i), _at(names, i) or '')
              for i in range(len(item_ids))]
 
+    method = form.get('correction_method') or None
     conn = get_request_db()
     try:
         result = pos_sales.edit_sale(
             conn, order_id, lines, form.getlist('deleted_items'), current_user,
-            new_date=form.get('sale_date', ''), new_time=form.get('sale_time', ''),
+            method=method, reason=(form.get('reason') or '').strip()[:500],
             default_tax_rate=get_tax_rate(), ip=request.remote_addr)
-    except pos_sales.InvalidSaleItems as e:
+    except (pos_sales.InvalidSaleItems, pos_sales.RefundedLine, pos_sales.BelowRefunded,
+            pos_sales.UnknownMethod) as e:
         flash(str(e))
         return redirect(url_for('pos.edit_sale', order_id=order_id))
-    except pos_sales.SaleError as e:  # not found / has refunds
+    except pos_sales.SaleError as e:  # not found / voided
         flash(str(e))
         return redirect(url_for('pos.sales_history'))
     if conn.in_transaction:
         conn.commit()
 
-    if result.date_rejected:
-        flash("Invalid date or time; the sale date was not changed.")
-    flash(f"Sale {result.order_number} updated successfully. {len(result.changes)} change(s) made.")
+    if not result.changes:
+        flash(f"No changes to sale {result.order_number}.")
+        return redirect(url_for('pos.sales_history'))
+    message = f"Sale {result.order_number} corrected: {len(result.changes)} change(s)."
+    label = REFUND_METHODS.get(result.method, result.method)
+    if result.money_cents < 0:
+        message += f" Pay the customer back {money.fmt(-result.money_cents)} ({label})."
+    elif result.money_cents > 0:
+        message += f" Collect {money.fmt(result.money_cents)} from the customer ({label})."
+    flash(message)
     return redirect(url_for('pos.sales_history'))
 
 

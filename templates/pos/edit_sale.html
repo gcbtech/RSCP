@@ -124,29 +124,29 @@
             <a href="{{ url_for('pos.sales_history') }}" class="btn btn-outline-secondary">← Back to Sales History</a>
         </div>
 
+        {% include 'pos/_flashes.html' %}
+
         <div class="warning-banner">
-            ⚠️ <strong>Editing a completed sale</strong> — Changes will be logged to the audit trail.
-            Inventory adjustments will be made automatically if item quantities change.
+            ⚠️ <strong>Correcting a completed sale</strong> — the sale itself stays as it was rung up;
+            your changes are saved as a correction dated now (it counts in today's reports, like a refund)
+            and logged to the audit trail. Inventory is adjusted automatically if item quantities change.
         </div>
 
         <form method="POST" id="editForm">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 
-            <!-- Date/Time -->
+            <!-- Date/Time (a finished sale keeps its date) -->
             <div class="edit-card">
-                <h5 class="mb-3">📅 Sale Date & Time</h5>
-                <div class="row g-2">
-                    <div class="col-md-6">
-                        <label class="form-label">Date</label>
-                        <input type="date" name="sale_date" class="form-control"
-                            value="{{ local_date }}">
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label">Time</label>
-                        <input type="time" name="sale_time" class="form-control" step="1"
-                            value="{{ local_time }}">
-                    </div>
+                <h5 class="mb-1">📅 Sale Date & Time</h5>
+                <div class="fw-bold">{{ order.created_at | local_time }}</div>
+                <small class="text-muted">A sale keeps the date it was rung up. Corrections are dated when they are saved.</small>
+                {% if state.corrections %}
+                <div class="small mt-2">
+                    {% for c in state.corrections %}
+                    <div>{{ c.label }} {{ c.created_at | local_time }} by {{ c.user_name }}: {{ c.total_delta_cents|money }}</div>
+                    {% endfor %}
                 </div>
+                {% endif %}
             </div>
 
             <!-- Items -->
@@ -169,23 +169,31 @@
                         <input type="hidden" name="item_id" value="{{ item.id }}">
                         <div class="item-name-col">
                             <input type="text" name="item_name" value="{{ item.name }}" data-input="recalculate">
-                            <div class="item-sku">{{ item.sku }}</div>
+                            <div class="item-sku">{{ item.sku }}{% if item.refunded_qty %}
+                                <span class="text-danger">({{ item.refunded_qty }} refunded)</span>{% endif %}</div>
                             <input type="hidden" name="item_sku" value="{{ item.sku }}">
                         </div>
                         <div class="item-qty-col">
-                            <input type="number" name="item_quantity" value="{{ item.quantity }}" min="1"
+                            <input type="number" name="item_quantity" value="{{ item.quantity }}"
+                                min="{{ item.refunded_qty if item.refunded_qty > 1 else 1 }}"
                                 data-input="recalculate">
                         </div>
                         <div class="item-price-col">
                             <input type="number" name="item_price" value="{{ item.unit_price_cents|dollars }}"
-                                step="0.01" min="0" data-input="recalculate">
+                                step="0.01" min="0" data-input="recalculate"{% if item.refunded_qty %} readonly
+                                title="Units of this item were refunded, so its price can't change"{% endif %}>
                         </div>
                         <div class="item-total-col" id="line-total-{{ item.id }}">
                             ${{ item.line_total_cents|dollars }}
                         </div>
                         <div class="item-action-col">
+                            {% if item.refunded_qty %}
+                            <button type="button" class="btn btn-sm btn-outline-secondary" disabled
+                                title="Units of this item were refunded">🗑️</button>
+                            {% else %}
                             <button type="button" class="btn btn-sm btn-outline-danger"
                                 data-action="removeItem" data-item-id="{{ item.id }}" title="Remove Item">🗑️</button>
+                            {% endif %}
                         </div>
                     </div>
                     {% endfor %}
@@ -211,6 +219,37 @@
                         <span>Total</span>
                         <span id="editTotal">${{ order.total_cents|dollars }}</span>
                     </div>
+                    <div class="total-row fw-bold" id="editDifferenceRow">
+                        <span id="editDifferenceLabel">Difference</span>
+                        <span id="editDifference">No change</span>
+                    </div>
+                    {% if state.refunded_cents %}
+                    <div class="total-row text-danger small">
+                        <span>Already refunded</span>
+                        <span>${{ state.refunded_cents|dollars }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- The correction: why, and how a difference changes hands -->
+            <div class="edit-card">
+                <h5 class="mb-3">💵 Correction</h5>
+                <div class="row g-2">
+                    <div class="col-md-4">
+                        <label class="form-label" for="correctionMethod">Difference paid back / collected in</label>
+                        <select name="correction_method" id="correctionMethod" class="form-select">
+                            {% for key, label in refund_methods.items() %}
+                            <option value="{{ key }}" {% if key == state.default_method %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Cash comes out of (or goes into) the drawer now.</div>
+                    </div>
+                    <div class="col-md-8">
+                        <label class="form-label" for="correctionReason">Reason</label>
+                        <input type="text" name="reason" id="correctionReason" class="form-control" maxlength="500"
+                            placeholder="e.g. rang up the wrong quantity">
+                    </div>
                 </div>
             </div>
 
@@ -229,7 +268,7 @@
                         <small class="text-muted">Status</small>
                         <div>
                             <span
-                                class="badge bg-{% if order.status == 'completed' %}success{% elif order.status == 'refunded' %}danger{% else %}warning{% endif %}">
+                                class="badge bg-{% if order.status == 'completed' %}success{% elif order.status in ('refunded', 'voided') %}danger{% else %}warning{% endif %}">
                                 {{ order.status }}
                             </span>
                         </div>
@@ -244,7 +283,7 @@
             <div class="d-flex gap-2 mb-5">
                 <a href="{{ url_for('pos.sales_history') }}" class="btn btn-outline-secondary flex-grow-1">Cancel</a>
                 <button type="submit" class="btn btn-warning flex-grow-1 fw-bold"
-                    data-confirm="Save changes to this sale? Inventory will be adjusted automatically.">
+                    data-confirm="Save this correction? It is dated now, and inventory will be adjusted automatically.">
                     💾 Save Changes
                 </button>
             </div>

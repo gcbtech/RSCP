@@ -57,7 +57,8 @@ REASON_INITIAL = 'initial'           # stock entered with a new item (form or sp
 REASON_SALE = 'sale'                 # POS checkout (ref: order)
 REASON_REFUND = 'refund'             # refund restock (ref: refund)
 REASON_SALE_EDIT = 'sale_edit'       # Edit Sale changed or removed a line (ref: order)
-REASON_SALE_DELETE = 'sale_delete'   # deleted sale, stock put back (ref: order)
+REASON_SALE_DELETE = 'sale_delete'   # deleted sale, stock put back (ref: order; before schema v23)
+REASON_SALE_VOID = 'sale_void'       # voided sale, stock put back (ref: order)
 REASON_RECEIVE = 'receive'           # received from a package / scan (ref: package when known)
 REASON_RETURN = 'return'             # manual adjustment: "Returned"
 REASON_CONSUMED = 'consumed'         # manual adjustment / scan screen -1: "Sold/Consumed"
@@ -74,6 +75,7 @@ REASON_LABELS = {
     REASON_REFUND: 'Refund restock',
     REASON_SALE_EDIT: 'Sale edited',
     REASON_SALE_DELETE: 'Sale deleted',
+    REASON_SALE_VOID: 'Sale voided',
     REASON_RECEIVE: 'Received',
     REASON_RETURN: 'Returned',
     REASON_CONSUMED: 'Sold/Consumed',

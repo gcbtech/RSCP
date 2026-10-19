@@ -6,13 +6,17 @@ taken BEFORE reading what was already refunded, so a double-click or two
 managers cannot both pass the caps). All money is integer cents; the
 pro-rata steps are exact fractions rounded half-up once:
 
+  * everything is measured against the sale as it stands now
+    (pos_order_state: corrections from Edit Sale applied), so a refund
+    after a correction never pays back more than the corrected sale;
   * a refunded unit is worth its line value times the order's paid ratio
     (order discount, coupon, cash discount and tax folded in), never more;
   * the refund never exceeds what is left of what was paid, and the refund
     that empties the order takes exactly what is left (no stray cent);
   * tax_refunded is the order's tax share of the amount (or exactly the tax
     not yet refunded on the last refund);
-  * restocked units go back through inventory.adjust_stock.
+  * restocked units go back through inventory.adjust_stock;
+  * a voided sale can't be refunded.
 
 No Flask request/session here: inputs, the approving manager and the
 fallback acting user are passed in.
@@ -23,6 +27,7 @@ from fractions import Fraction
 
 from app.services import inventory, money
 from app.services.pos_ledger import REFUND_METHODS, default_refund_method
+from app.services.pos_order_state import order_state
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +66,11 @@ class OverRefund(RefundError):
         super().__init__(f'Cannot refund {qty} of that item — only {remaining} left to refund.', order_number)
         self.qty = qty
         self.remaining = remaining
+
+
+class SaleVoided(RefundError):
+    def __init__(self, order_number):
+        super().__init__('This sale was voided, so there is nothing left to refund.', order_number)
 
 
 class NothingToRefund(RefundError):
@@ -126,29 +136,17 @@ def _record_refund(conn, order_id, refund_type, reason, reason_notes, refund_met
     order_id = order['id']
     order_number = order['order_number']
 
-    order_total = order['total_cents'] or 0
-    order_tax = order['tax_amount_cents'] or 0
-
-    # What of each line is ALREADY refunded, and the cents already refunded
-    lines = conn.execute('''
-        SELECT oi.id, oi.quantity, oi.line_total_cents, oi.inventory_item_id,
-               COALESCE((SELECT SUM(ri.quantity) FROM pos_refund_items ri
-                         JOIN pos_refunds r ON ri.refund_id = r.id
-                         WHERE ri.order_item_id = oi.id), 0) AS refunded_qty
-        FROM pos_order_items oi
-        WHERE oi.order_id = ?
-    ''', (order_id,)).fetchall()
-    lines_by_id = {row['id']: row for row in lines}
-    already_refunded_total = 0
-    already_tax_refunded = 0
-    for r in conn.execute('SELECT amount_cents, tax_refunded_cents FROM pos_refunds WHERE order_id = ?',
-                          (order_id,)).fetchall():
-        amount = r['amount_cents'] or 0
-        already_refunded_total += amount
-        if r['tax_refunded_cents'] is not None:
-            already_tax_refunded += r['tax_refunded_cents']
-        else:   # (not written by anything since schema v8) the order's tax share
-            already_tax_refunded += money.prorate(amount, order_tax, order_total) if order_total > 0 else 0
+    # The sale as it stands now: corrections applied, what of each line is
+    # ALREADY refunded, and the cents already refunded
+    state = order_state(conn, order)
+    if state['voided']:
+        raise SaleVoided(order_number)
+    order_total = state['net']['total_cents']
+    order_tax = state['net']['tax_cents']
+    lines = state['lines']
+    lines_by_id = {line['id']: line for line in lines}
+    already_refunded_total = state['refunded_cents']
+    already_tax_refunded = state['refunded_tax_cents']
     remaining_paid = order_total - already_refunded_total
 
     # What the customer actually paid per cent of line value
@@ -253,11 +251,11 @@ def _record_refund(conn, order_id, refund_type, reason, reason_notes, refund_met
                 logger.warning(f"Refund on {order_number}: inventory item {item['inventory_item_id']} "
                                f"no longer exists; not restocked")
 
-    # Fully refunded once no unit is left to refund
+    # Fully refunded once no unit is left to refund. (The status is derived
+    # from the refunds, never stored: the sale itself is permanent.)
     units_left = sum(r['quantity'] - r['refunded_qty'] for r in lines)
     fully_refunded = refund_type == 'full' or sum(i['quantity'] for i in to_refund) >= units_left
     status = 'refunded' if fully_refunded else 'partial_refund'
-    conn.execute('UPDATE pos_orders SET status = ? WHERE id = ?', (status, order_id))
 
     return RefundResult(refund_id, order_id, order_number, refund_amount, tax_refunded, refund_method,
                         status, items_restocked, items_damaged, manager_name)

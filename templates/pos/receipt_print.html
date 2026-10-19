@@ -117,6 +117,11 @@
         {% endif %}
         <div class="order-number">{{ order.order_number }}</div>
         <div>{{ order.created_at | local_time }}</div>
+        {% if state.voided %}
+        <div class="order-number">*** VOIDED ***</div>
+        {% elif state.has_corrections %}
+        <div>(corrected)</div>
+        {% endif %}
     </div>
 
     <div class="section">
@@ -224,6 +229,8 @@
         {% endif %}
         {% endfor %}
     </div>
+
+    {% with row='row', section='section' %}{% include 'pos/_sale_changes.html' %}{% endwith %}
 
     <div class="footer">
         {% if receipt_footer %}

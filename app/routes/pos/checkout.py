@@ -19,6 +19,7 @@ from app.routes.pos.core import (
 from app.services import money, pos_checkout, pos_sales
 from app.services.db import get_db_connection, get_request_db
 from app.services.pos_ledger import order_payments
+from app.services.pos_order_state import load_order, order_state
 from app.services.pos_pricing import parse_money, parse_money_field
 
 logger = logging.getLogger(__name__)
@@ -157,6 +158,10 @@ def _prepare_receipt_data(conn, order):
     pos_orders.cash_discount_cents -- never from today's coupon or settings
     definitions. Tenders come from the payments ledger. Money is cents; the
     templates format it.
+
+    The sale is shown as it was rung up; `state` (pos_order_state) adds what
+    happened after it -- corrections and refunds, with dates and who -- and
+    where it stands now.
     """
     items = [dict(row) for row in conn.execute('''
         SELECT oi.*, ii.addon_1, ii.addon_2, ii.sell_price_cents as current_reg_price_cents
@@ -200,6 +205,7 @@ def _prepare_receipt_data(conn, order):
         'cash_discount_cents': cash_discount,
         'payment_details': payment_details,
         'payments': order_payments(conn, order['id']),
+        'state': order_state(conn, order),
     }
 
 
@@ -222,12 +228,7 @@ def _receipt_branding():
 
 
 def _load_receipt_order(conn, order_number):
-    return conn.execute('''
-        SELECT o.*, u.username as operator_name
-        FROM pos_orders o
-        LEFT JOIN users u ON o.operator_id = u.id
-        WHERE o.order_number = ?
-    ''', (order_number,)).fetchone()
+    return load_order(conn, order_number=order_number)
 
 
 @pos_bp.route('/receipt/<order_number>')
@@ -254,27 +255,35 @@ def receipt_print(order_number):
                            **_prepare_receipt_data(conn, order), **_receipt_branding())
 
 
-@pos_bp.route('/order/<order_number>/delete', methods=['POST'])
+@pos_bp.route('/order/<order_number>/void', methods=['POST'])
 @require_permission('admin.manage')
-def delete_order(order_number):
-    """Delete an order (admin only): pos_sales.delete_order."""
+def void_order(order_number):
+    """Void a sale (admin only, as deleting was): pos_sales.void_order. The
+    sale stays in the history, marked voided; the customer is paid back."""
     restore_inventory = request.form.get('restore_inventory') == 'on'
+    reason = (request.form.get('reason') or '').strip()[:500]
     conn = get_db_connection()
     try:
-        pos_sales.delete_order(conn, order_number, restore_inventory, current_user,
-                               ip=request.remote_addr)
+        result = pos_sales.void_order(conn, order_number, restore_inventory, current_user,
+                                      reason=reason, ip=request.remote_addr)
     except pos_sales.OrderNotFound:
         flash('Order not found.')
-        return redirect(url_for('pos.management'))
+        return redirect(url_for('pos.sales_history'))
+    except pos_sales.SaleError as e:   # already voided / has refunds
+        flash(str(e))
+        return redirect(url_for('pos.receipt', order_number=order_number))
     except Exception as e:
-        logger.error(f"Error deleting order {order_number}: {e}")
-        flash(f'Error deleting order: {str(e)}')
+        logger.error(f"Error voiding order {order_number}: {e}")
+        flash(f'Error voiding order: {str(e)}')
         return redirect(url_for('pos.receipt', order_number=order_number))
     finally:
         conn.close()
 
+    paid_back = ', '.join(f"{money.fmt(-cents)} {method}" for method, cents in result.payments.items())
+    message = f'Order {order_number} voided.'
+    if paid_back:
+        message += f' Pay the customer back {paid_back}.'
     if restore_inventory:
-        flash(f'Order {order_number} deleted and inventory quantities restored.')
-    else:
-        flash(f'Order {order_number} has been permanently deleted.')
-    return redirect(url_for('pos.sales_history'))
+        message += f' {result.restored_units} item(s) put back in stock.'
+    flash(message)
+    return redirect(url_for('pos.receipt', order_number=order_number))
