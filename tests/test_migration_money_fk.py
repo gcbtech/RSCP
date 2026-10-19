@@ -231,8 +231,13 @@ def _row(conn, sql, *args):
 
 def test_schema_is_current_and_foreign_keys_are_clean(migrated):
     conn, _ids, _log = migrated
-    assert conn.execute('PRAGMA user_version').fetchone()[0] == migration.LATEST_SCHEMA_VERSION == 16
+    assert conn.execute('PRAGMA user_version').fetchone()[0] == migration.LATEST_SCHEMA_VERSION >= 16
     assert conn.execute('PRAGMA foreign_key_check').fetchall() == []
+    # ...and the stock ledger (v20) starts from these items' quantities
+    from app.services import inventory
+    assert inventory.ledger_drift(conn) == []
+    assert conn.execute("SELECT COUNT(*) FROM inventory_movements WHERE reason = 'opening_balance'"
+                        ).fetchone()[0] == conn.execute('SELECT COUNT(*) FROM inventory_items').fetchone()[0]
     for table, gone, new in (('pos_orders', 'total', 'total_cents'), ('inventory_items', 'sell_price',
                                                                       'sell_price_cents'),
                              ('pos_payments', 'amount', 'amount_cents'), ('pos_refunds', 'amount', 'amount_cents'),

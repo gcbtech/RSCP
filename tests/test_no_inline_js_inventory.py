@@ -123,6 +123,11 @@ def app_with_all_features(fresh_app, monkeypatch):
                     ('NJ-SKU-LOW', 'Low Widget', 500, 1, 1, 5, '/static/img/c.png'))
         cur.execute('INSERT INTO inventory_transactions (inventory_item_id, quantity_change, reason, user_id) '
                     'VALUES (?, ?, ?, ?)', (item_id, 5, 'Received', 'admin'))
+        # Stock history: an opening balance and a reversible receipt
+        cur.execute("INSERT INTO inventory_movements (item_id, delta, reason, user) VALUES (?, 20, 'opening_balance', 'system')",
+                    (item_id,))
+        cur.execute("INSERT INTO inventory_movements (item_id, delta, reason, note, user) VALUES (?, 5, 'receive', ?, 'admin')",
+                    (item_id, TRICKY_NAME))
         cur.execute("INSERT INTO audit_sessions (user_id, mode, status) VALUES ('admin', 'shelf', 'active')")
         active_id = cur.lastrowid
         cur.execute("INSERT INTO audit_sessions (user_id, mode, status, end_time) "

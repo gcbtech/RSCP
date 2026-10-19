@@ -109,6 +109,34 @@ def test_inventory_create_adjust_and_list(admin_page, e2e_server):
     page.watcher.assert_clean()
 
 
+def test_item_stock_history_and_reverse(admin_page, e2e_server):
+    page = admin_page
+    name = 'E2E History Widget'
+    item_id = helpers.seed_item(e2e_server, name, quantity=5)
+    with helpers.db(e2e_server) as conn:
+        from app.services import inventory
+        inventory.adjust_stock(conn, item_id, -2, inventory.REASON_DAMAGED, 'admin', 'dropped')
+
+    page.goto(f'/inventory/edit/{item_id}')
+    helpers.settle(page)
+    history = page.locator('#stock-history')
+    expect(history).to_contain_text('Stock history')
+    expect(history).to_contain_text('Initial stock')
+    expect(history).to_contain_text('Damaged')
+    expect(history).to_contain_text('dropped')
+
+    # Reverse the damage entry (confirmed): a new +2 entry, the original stays
+    page.once('dialog', lambda dialog: dialog.accept())
+    history.locator('button[title="Reverse this entry"]').first.click()
+    page.wait_for_load_state('load')
+    assert helpers.item_quantity(e2e_server, item_id) == 5
+    page.goto(f'/inventory/edit/{item_id}')
+    history = page.locator('#stock-history')
+    expect(history).to_contain_text('Reversal')
+    expect(history).to_contain_text('reversed by')
+    page.watcher.assert_clean()
+
+
 def test_admin_setting_persists(admin_page, e2e_server):
     page = admin_page
     page.goto('/admin/?tab=settings')

@@ -213,11 +213,13 @@ def end_sale_if_depleted(conn, item_id, quantity):
     return False
 
 
-def _sell_stock(conn, item_id, quantity, user_ref, order_number):
-    """Take sold units off the shelf (a sale is never refused for stock)."""
+def _sell_stock(conn, item_id, quantity, user_ref, order_number, order_id=None):
+    """Take sold units off the shelf (a sale is never refused for stock):
+    one 'sale' movement referencing the order."""
     try:
-        change = inventory.adjust_stock(conn, item_id, -quantity, inventory.REASON_SOLD,
-                                        user_ref, order_number, allow_negative=True)
+        change = inventory.adjust_stock(conn, item_id, -quantity, inventory.REASON_SALE,
+                                        user_ref, order_number, ref_type=inventory.REF_ORDER,
+                                        ref_id=order_id, allow_negative=True)
     except inventory.ItemNotFound:
         # Item deleted while it sat in the cart: the sale still stands
         logger.warning(f"Order {order_number}: inventory item {item_id} no longer exists; stock not changed")
@@ -363,7 +365,7 @@ def _record_sale(conn, cart_source, register_id, payment, user, token,
             item['line_total_cents']
         ))
         if item_id:
-            _sell_stock(conn, item_id, item['quantity'], str(user.id), order_number)
+            _sell_stock(conn, item_id, item['quantity'], str(user.id), order_number, order_id)
 
     if coupon and coupon.get('id'):
         _redeem_coupon(conn, coupon, order_id, order_number, totals['coupon_discount_cents'], user)

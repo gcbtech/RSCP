@@ -232,7 +232,8 @@ def link_package_to_item(conn, tracking, sku, user, save_mapping=False, package_
     """Tie a package (all rows of a tracking number) to an inventory SKU,
     optionally remembering the package name -> SKU mapping for future
     receipts. Units of rows already received are added to that item's stock
-    (logged as received, with the tracking number). Returns units added."""
+    (one 'receive' movement referencing the package, noted with the
+    tracking number). Returns units added."""
     added = 0
     with write_transaction(conn):
         conn.execute("UPDATE packages SET sku = ? WHERE tracking_number = ?", (sku, tracking))
@@ -253,8 +254,9 @@ def link_package_to_item(conn, tracking, sku, user, save_mapping=False, package_
         if total_qty > 0:
             item = conn.execute("SELECT id, name FROM inventory_items WHERE sku = ?", (sku,)).fetchone()
             if item:
-                inventory.adjust_stock(conn, item['id'], total_qty, inventory.REASON_RECEIVED_SCAN,
-                                       user, tracking)
+                inventory.adjust_stock(conn, item['id'], total_qty, inventory.REASON_RECEIVE,
+                                       user, tracking, ref_type=inventory.REF_PACKAGE,
+                                       ref_id=inventory.package_ref(conn, tracking))
                 added = total_qty
                 logger.info(f"Linked & Added Stock: ID={item['id']} ({item['name']}) += {total_qty}")
             else:

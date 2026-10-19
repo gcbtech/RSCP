@@ -2073,6 +2073,72 @@ def _m14_monitor_alerts(conn):
         conn.execute(sql)
 
 
+# The stock ledger (app/services/inventory.py). Append-only: the triggers
+# refuse any UPDATE, and any DELETE unless every row of that item is an
+# opening entry (opening balance / initial stock): inventory.delete_item
+# removes those together with an item that has no real history, and refuses
+# the rest. The triggers only look at this table, so rebuilding
+# inventory_items later (create/copy/drop/rename) is not blocked by them.
+# ON DELETE RESTRICT (as for the other history tables of migration 16): an
+# item is never deleted out from under its ledger, and a movement can never
+# point at a missing item.
+# ref_id has no foreign key: it points at different tables by ref_type (and
+# sales can still be hard-deleted).
+STOCK_LEDGER_SQL = (
+    '''CREATE TABLE IF NOT EXISTS inventory_movements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        item_id INTEGER NOT NULL
+            REFERENCES inventory_items(id) ON DELETE RESTRICT,
+        delta INTEGER NOT NULL,
+        reason TEXT NOT NULL,          -- inventory.REASON_* code
+        ref_type TEXT,                 -- order | refund | package | audit | movement
+        ref_id INTEGER,
+        note TEXT,
+        user TEXT,                     -- username, or user id (POS, scan screen)
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP   -- UTC
+    )''',
+    'CREATE INDEX IF NOT EXISTS idx_movements_item ON inventory_movements(item_id, id)',
+    'CREATE INDEX IF NOT EXISTS idx_movements_created ON inventory_movements(created_at)',
+    'CREATE INDEX IF NOT EXISTS idx_movements_ref ON inventory_movements(ref_type, ref_id)',
+    '''CREATE TRIGGER IF NOT EXISTS trg_inventory_movements_no_update
+        BEFORE UPDATE ON inventory_movements
+        BEGIN
+            SELECT RAISE(ABORT, 'inventory_movements is append-only: rows cannot be changed');
+        END''',
+    '''CREATE TRIGGER IF NOT EXISTS trg_inventory_movements_no_delete
+        BEFORE DELETE ON inventory_movements
+        WHEN EXISTS (SELECT 1 FROM inventory_movements x WHERE x.item_id = OLD.item_id
+                     AND x.reason NOT IN ('opening_balance', 'initial'))
+        BEGIN
+            SELECT RAISE(ABORT, 'inventory_movements is append-only: rows cannot be deleted');
+        END''',
+)
+
+
+def _m20_stock_ledger(conn):
+    """Stock on hand becomes a ledger: inventory_movements, with
+    inventory_items.quantity kept as its cached sum. Every item gets one
+    opening-balance movement equal to its quantity now (dated now), so
+    SUM(delta) == quantity for every item right after this step.
+
+    The 2.x audit trail (inventory_transactions) is not converted: rows were
+    deletable ("delete & revert") and older versions changed stock without
+    logging, so it does not add up to the stock on hand. It is left as it is
+    and stays readable as each item's earlier history."""
+    for sql in STOCK_LEDGER_SQL:
+        conn.execute(sql)
+    # The cache must be a whole number for the ledger to equal it
+    conn.execute('UPDATE inventory_items SET quantity = CAST(COALESCE(quantity, 0) AS INTEGER) '
+                 "WHERE quantity IS NULL OR typeof(quantity) != 'integer'")
+    conn.execute('''
+        INSERT INTO inventory_movements (item_id, delta, reason, note, user)
+        SELECT id, quantity, 'opening_balance', 'Stock on hand when the stock ledger started', 'system'
+        FROM inventory_items
+        WHERE id NOT IN (SELECT item_id FROM inventory_movements)
+        ORDER BY id
+    ''')
+
+
 # (version, description, function). Version 1 is the ensure_db_ready() baseline.
 SCHEMA_MIGRATIONS = [
     (2, 'PTO tables', _m2_pto_tables),
@@ -2090,6 +2156,7 @@ SCHEMA_MIGRATIONS = [
     (14, 'monitor_alerts table (email alerts)', _m14_monitor_alerts),
     (15, 'money as integer cents', _m15_money_to_cents),
     (16, 'foreign keys: orphans handled, REFERENCES rebuilt, foreign_key_check', _m16_foreign_keys),
+    (20, 'stock ledger: inventory_movements with opening balances', _m20_stock_ledger),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 assert len({v for v, _, _ in SCHEMA_MIGRATIONS}) == len(SCHEMA_MIGRATIONS), "duplicate schema version"

@@ -135,7 +135,7 @@ def test_item_with_sales_is_kept_with_a_message(fresh_app, fresh_client):
     unsold = _item(fresh_app, 'UNSOLD', 500)
     login(fresh_client, 1)
     resp = fresh_client.post(f'/inventory/delete/{sold}', follow_redirects=True)
-    assert 'has sales history' in resp.get_data(as_text=True)
+    assert 'has sales or stock history' in resp.get_data(as_text=True)
     fresh_client.post(f'/inventory/delete/{unsold}')
     conn = _db(fresh_app)
     left = {r[0] for r in conn.execute('SELECT sku FROM inventory_items')}

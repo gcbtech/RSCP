@@ -53,8 +53,8 @@ def _qty(conn, item_id):
 
 def _ledger(conn, item_id):
     return [tuple(r) for r in conn.execute(
-        'SELECT quantity_change, reason, user_id, source_tracking FROM inventory_transactions '
-        'WHERE inventory_item_id = ? ORDER BY id', (item_id,))][1:]  # skip the initial stock row
+        'SELECT delta, reason, user, note FROM inventory_movements '
+        'WHERE item_id = ? ORDER BY id', (item_id,))][1:]  # skip the initial stock row
 
 
 def _payments(conn, order_id):
@@ -182,7 +182,7 @@ def test_cash_sale_records_order_payments_and_sells_stock(conn):
             order['operator_id']) == (2000, 140, 2140, 2)
     assert _payments(conn, sale.order_id) == [('cash', 2140, 3000, 860)]
     assert _qty(conn, item) == 3
-    assert _ledger(conn, item) == [(-2, 'Sold/Consumed', '2', sale.order_number)]
+    assert _ledger(conn, item) == [(-2, 'sale', '2', sale.order_number)]
     assert not conn.in_transaction
 
 
@@ -198,7 +198,7 @@ def test_sale_of_a_deleted_item_still_records(conn):
     sale = _sell(conn, _cart(_line(999999)), 'card')
     assert conn.execute('SELECT COUNT(*) FROM pos_order_items WHERE order_id = ? AND inventory_item_id IS NULL '
                         "AND sku = 'WIDGET'", (sale.order_id,)).fetchone()[0] == 1
-    assert conn.execute('SELECT COUNT(*) FROM inventory_transactions WHERE inventory_item_id = 999999'
+    assert conn.execute('SELECT COUNT(*) FROM inventory_movements WHERE item_id = 999999'
                         ).fetchone()[0] == 0
 
 
@@ -311,7 +311,7 @@ def test_partial_refund_paid_share_tax_and_restock(conn):
     assert res.amount_cents == 1070 and res.tax_refunded_cents == 70
     assert res.refund_method == 'card' and res.status == 'partial_refund'
     assert _qty(conn, w) == 9  # 10 - 2 sold + 1 restocked
-    assert _ledger(conn, w)[-1] == (1, 'Refund Restock', '3', None)
+    assert _ledger(conn, w)[-1] == (1, 'refund', '3', sale.order_number)
     assert not conn.in_transaction
 
 
@@ -346,7 +346,7 @@ def test_refund_manager_falls_back_to_acting_user(conn):
     pos_refunds.process_refund(conn, sale.order_id, 'partial', 'wrong_item', CASHIER,
                                items=[(str(lines['GADGET']), '1')], manager_username='manager')
     assert conn.execute('SELECT manager_id FROM pos_refunds').fetchone()[0] == 3
-    assert _ledger(conn, g)[-1] == (1, 'Refund Restock', '3', None)
+    assert _ledger(conn, g)[-1] == (1, 'refund', '3', sale.order_number)
 
 
 # --- sale edits / deletes ------------------------------------------------------
@@ -358,8 +358,8 @@ def test_edit_sale_moves_stock_reprices_and_rebuilds_ledger(conn):
     assert res.new_total_cents == 3210 and not res.date_rejected
     assert 'Removed: GADGET item x1' in res.changes and 'WIDGET item: qty 2 → 3' in res.changes
     assert _qty(conn, w) == 7 and _qty(conn, g) == 10
-    assert _ledger(conn, w)[-1] == (-1, 'Sale Edit (qty increased)', 'manager', sale.order_number)
-    assert _ledger(conn, g)[-1] == (1, 'Sale Edit (item removed)', 'manager', sale.order_number)
+    assert _ledger(conn, w)[-1] == (-1, 'sale_edit', 'manager', f'{sale.order_number}: qty increased')
+    assert _ledger(conn, g)[-1] == (1, 'sale_edit', 'manager', f'{sale.order_number}: item removed')
     assert _payments(conn, sale.order_id) == [('card', 3210, None, 0)]
     audit = conn.execute("SELECT details FROM pos_audit_log WHERE action = 'edit_sale'").fetchone()
     assert json.loads(audit[0])['new_total'] == 32.10   # the audit log stays human-readable dollars
@@ -387,7 +387,7 @@ def test_delete_order_restores_unrefunded_units_only(conn):
     res = pos_sales.delete_order(conn, sale.order_number, True, SimpleNamespace(id=1, username='admin'))
     assert res.restored_units == 2  # 1 widget (the other was restocked by the refund) + 1 gadget
     assert _qty(conn, w) == 10 and _qty(conn, g) == 10
-    assert _ledger(conn, w)[-1] == (1, 'Order Deleted', '1', sale.order_number)
+    assert _ledger(conn, w)[-1] == (1, 'sale_delete', '1', f'{sale.order_number}: sale deleted')
     for table in ('pos_orders', 'pos_order_items', 'pos_payments', 'pos_refunds', 'pos_refund_items'):
         assert conn.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0] == 0
     with pytest.raises(pos_sales.OrderNotFound):
