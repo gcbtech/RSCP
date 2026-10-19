@@ -198,11 +198,6 @@ def _rendered_pages(fresh_app, fresh_client, world):
     pages.append(('/pos/scan', _get(cashier, '/pos/scan')))
     pages.append(('/pos/customer-display', _get(fresh_client, '/pos/customer-display')))
 
-    # Anonymous GET /pos/login is bounced by the global session guard; render it directly.
-    from flask import render_template
-    with fresh_app.test_request_context('/pos/login'):
-        pages.append(('pos/login.html', render_template('pos/login.html')))
-
     # Cart fragments swapped into the register page
     pages.append(('/pos/cart/fragment', _get(reg, '/pos/cart/fragment', hdr)))
     resp = reg.post('/pos/cart/add', data={'sku': 'NJ-BBB', 'quantity': '1'},
@@ -286,7 +281,7 @@ POS_JS = sorted('js/pages/' + name for name in os.listdir(os.path.join(STATIC, '
 
 def test_pos_js_files_exist():
     for name in ('sales', 'scan', 'customer-display', 'checkout', 'receipt', 'receipt-print',
-                 'receipt-preview', 'login', 'refunds', 'edit-sale'):
+                 'receipt-preview', 'refunds', 'edit-sale'):
         assert 'js/pages/pos-%s.js' % name in POS_JS, name
 
 

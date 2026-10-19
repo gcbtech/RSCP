@@ -260,9 +260,7 @@ def test_sso_user_role_maps_to_operator(app):
     with app.app_context():
         legacy = User.get(SSO_USER)
         assert legacy.roles == ['operator'] and not legacy.is_admin
-        created = User.create_sso_user('newbie', 'newbie@example.com')
-        assert created.roles == ['operator']
-    c = client_as(app, SSO_USER)
+        c = client_as(app, SSO_USER)
     assert outcome(c.get('/pos/')) == A
     assert outcome(c.get('/timeclock/')) == A
     assert outcome(c.get('/inventory/add')) == D
@@ -328,10 +326,49 @@ def test_access_policies_declared_and_consistent(app):
             assert endpoint.startswith(name + '.'), endpoint
     pos_public = app.blueprints['pos'].access_policy['public']
     # every POS public endpoint must also be on the global login allowlist
-    for endpoint in pos_public - {'pos.pos_login', 'pos.pos_logout'}:
+    for endpoint in pos_public:
         rule = next(r for r in app.url_map.iter_rules() if r.endpoint == endpoint)
-        assert rule.rule.startswith(('/pos/customer-display', '/pos/api/pairing/',
-                                     '/pos/api/peripheral/', '/pos/api/customer-display/')), rule.rule
+        assert rule.rule == '/pos/logout' or rule.rule.startswith((
+            '/pos/customer-display', '/pos/api/pairing/',
+            '/pos/api/peripheral/', '/pos/api/customer-display/')), rule.rule
+
+
+REMOVED_AUTH_ENDPOINTS = {
+    'auth.login_sso': '/login/sso',            # RSCP's own Google/OIDC sign-in
+    'auth.sso_callback': '/login/callback',
+    'pos.pos_login': '/pos/login',             # POS PIN/badge sign-in page
+    'admin.set_user_pin': '/admin/set_user_pin/cashier',
+    'admin.set_badge_id': '/admin/set_badge_id/cashier',
+}
+
+
+def test_removed_sign_in_routes_are_gone(app):
+    rules = {r.rule for r in app.url_map.iter_rules()}
+    for endpoint, path in REMOVED_AUTH_ENDPOINTS.items():
+        assert endpoint not in app.view_functions, endpoint
+        assert path not in rules and not any(r.startswith(path + '/') for r in rules), path
+    admin = client_as(app, ADMIN)
+    assert admin.get('/login/sso').status_code == 404
+    assert admin.get('/login/callback').status_code == 404
+    assert admin.get('/pos/login').status_code == 404
+    assert admin.post('/admin/set_user_pin/cashier', data={'pin': '1234'}).status_code in (404, 405)
+    assert admin.post('/admin/set_badge_id/cashier', data={'badge_id': 'B1'}).status_code in (404, 405)
+
+
+def test_anonymous_pos_login_goes_to_login(app):
+    resp = client_as(app, ANON).get('/pos/login')
+    assert resp.status_code == 302 and urlparse(resp.headers['Location']).path == '/login'
+
+
+def test_pos_logout_uses_the_normal_logout(app):
+    for who in (ANON, CASHIER, ADMIN):
+        c = client_as(app, who)
+        resp = c.get('/pos/logout')
+        assert resp.status_code == 302 and urlparse(resp.headers['Location']).path == '/logout', who
+        resp = c.get('/logout')
+        assert resp.status_code == 302 and urlparse(resp.headers['Location']).path == '/login'
+        with c.session_transaction() as sess:
+            assert '_user_id' not in sess
 
 
 # --- migration 9 -----------------------------------------------------------

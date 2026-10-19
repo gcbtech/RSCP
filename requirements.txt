@@ -9,13 +9,11 @@ Flask>=3.1,<4
 Werkzeug>=3.1,<4
 itsdangerous>=2.2,<3
 Flask-Login>=0.6.3,<0.7
-# Google/OIDC sign-in (SSO) and Cloudflare Access JWT checks.
-Authlib>=1.3,<2
 gunicorn>=22.0
-# GitHub update checks, product lookups, CF Access keys; Authlib's Flask
-# OAuth client also needs it (an import Authlib does not declare).
+# GitHub update checks, product lookups, Cloudflare Access signing keys.
 requests>=2.31,<3
 openpyxl>=3.1,<4
 Pillow>=10.0
+# Encrypted settings (Fernet) and Cloudflare Access JWT signatures (RS256).
 cryptography>=42.0
 pyserial>=3.5,<4

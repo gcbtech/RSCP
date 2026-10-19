@@ -2139,6 +2139,97 @@ def _m20_stock_ledger(conn):
     ''')
 
 
+# Notice for every administrator when migration 22 retires a configured SSO.
+SSO_RETIRED_TITLE = 'Google sign-in (SSO) was removed: move staff to Cloudflare Access'
+SSO_RETIRED_MESSAGE = (
+    "RSCP 3.0 no longer has its own \"Sign in with Google\"; its SSO settings were deleted. "
+    "Staff who used it can sign in with a password (Admin > Settings > User Management > Edit) "
+    "or through Cloudflare Access: turn on Admin > Settings > Cloudflare Access Sign-in and set each "
+    "person's sign-in email under User Management > Edit (emails that SSO used are already there). "
+    "With Google as the Access login method, staff keep signing in with Google.")
+SSO_RETIRED_LINK = '/admin/?tab=settings#cf-access-card'
+
+
+def _m22_retire_oidc_sso(conn):
+    """RSCP's own Google/OIDC sign-in was removed: delete its SSO_* settings
+    (including the client secret).
+
+    Cloudflare Access used SSO_ALLOWED_DOMAINS when its own domain list was
+    blank; that restriction is kept by copying it into
+    CF_ACCESS_ALLOWED_DOMAINS. If SSO was configured, every administrator
+    gets a one-time notification on how staff sign in now. users.email stays
+    (Cloudflare Access matches on it); users.auth_provider is left unused.
+    Self-contained on purpose: the SSO_* keys are no longer in the settings
+    registry.
+    """
+    import json
+    has_settings = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'settings'").fetchone()
+    if not has_settings:
+        return
+    rows = dict(conn.execute("SELECT key, value FROM settings WHERE key LIKE 'SSO!_%' ESCAPE '!'").fetchall())
+    if not rows:
+        return
+
+    def value(key):
+        raw = rows.get(key)
+        try:
+            return json.loads(raw) if raw is not None else None
+        except (TypeError, ValueError):
+            return raw
+
+    def is_true(v):
+        if isinstance(v, str):
+            return v.strip().lower() in ('1', 'true', 'on', 'yes', 'y')
+        return bool(v)
+
+    def domain_list(v):
+        if isinstance(v, str):
+            v = v.split(',')
+        if not isinstance(v, list):
+            return []
+        out = []
+        for d in v:
+            d = str(d).strip().lower()
+            if d:
+                d = d if d.startswith('@') else '@' + d
+                if d not in out:
+                    out.append(d)
+        return out
+
+    configured = is_true(value('SSO_ENABLED')) or bool(str(value('SSO_CLIENT_ID') or '').strip())
+
+    sso_domains = domain_list(value('SSO_ALLOWED_DOMAINS'))
+    if sso_domains:
+        row = conn.execute("SELECT value FROM settings WHERE key = 'CF_ACCESS_ALLOWED_DOMAINS'").fetchone()
+        try:
+            cf_domains = domain_list(json.loads(row[0])) if row else []
+        except (TypeError, ValueError):
+            cf_domains = domain_list(row[0])
+        if not cf_domains:
+            conn.execute("INSERT OR REPLACE INTO settings (key, value, updated_at, updated_by) "
+                         "VALUES ('CF_ACCESS_ALLOWED_DOMAINS', ?, CURRENT_TIMESTAMP, 'migration 22')",
+                         (json.dumps(sso_domains),))
+
+    conn.execute(f"DELETE FROM settings WHERE key IN ({', '.join('?' * len(rows))})", tuple(rows))
+    # Tell every worker's settings cache to reload.
+    conn.execute("UPDATE settings_meta SET token = lower(hex(randomblob(16))) WHERE id = 1")
+
+    has_notifications = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notifications'").fetchone()
+    if not configured or not has_notifications:
+        return
+    for uid, is_admin, roles in conn.execute('SELECT id, is_admin, roles FROM users').fetchall():
+        try:
+            role_list = json.loads(roles) if roles else []
+        except (TypeError, ValueError):
+            role_list = []
+        if is_true(is_admin) or (isinstance(role_list, list) and 'super_admin' in role_list):
+            conn.execute("INSERT INTO notifications (user_id, title, message, type, link) "
+                         "VALUES (?, ?, ?, 'warning', ?)",
+                         (uid, SSO_RETIRED_TITLE, SSO_RETIRED_MESSAGE, SSO_RETIRED_LINK))
+
+
 # (version, description, function). Version 1 is the ensure_db_ready() baseline.
 SCHEMA_MIGRATIONS = [
     (2, 'PTO tables', _m2_pto_tables),
@@ -2157,6 +2248,7 @@ SCHEMA_MIGRATIONS = [
     (15, 'money as integer cents', _m15_money_to_cents),
     (16, 'foreign keys: orphans handled, REFERENCES rebuilt, foreign_key_check', _m16_foreign_keys),
     (20, 'stock ledger: inventory_movements with opening balances', _m20_stock_ledger),
+    (22, 'retire Google/OIDC sign-in settings (feature removed)', _m22_retire_oidc_sso),
 ]
 LATEST_SCHEMA_VERSION = max(v for v, _, _ in SCHEMA_MIGRATIONS)
 assert len({v for v, _, _ in SCHEMA_MIGRATIONS}) == len(SCHEMA_MIGRATIONS), "duplicate schema version"

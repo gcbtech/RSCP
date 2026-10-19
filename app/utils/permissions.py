@@ -288,10 +288,11 @@ def require_permission(permission, json=None):
 
 
 # Manager authorization (void/discount approval, refund sign-off) checks a
-# manager's PIN, password or badge on top of the cashier's session. A 4-digit
-# PIN has only 10,000 values, so unthrottled checks could be brute-forced in
-# minutes; each check also costs N password hashes. All counts are shared
-# across gunicorn workers (services/throttle):
+# manager's username and password on top of the cashier's session
+# (check_manager_password). PIN and badge approvals were removed in 3.0 and
+# will be rebuilt from scratch. Unthrottled checks could be used to guess a
+# manager's password from a register, so all counts are shared across
+# gunicorn workers (services/throttle):
 #   * per cashier account: 5 failures / 5 min (the account asking for the
 #     override is the one that would be guessing);
 #   * per register IP: 10 failures / 5 min, so switching accounts on one
@@ -325,3 +326,31 @@ def record_manager_auth_failure(manager_username=None):
 def record_manager_auth_success(manager_username=None):
     throttle.clear('manager_auth', f'user:{current_user.id}')
     MANAGER_PIN.succeeded(manager_username)
+
+
+def check_manager_password(username, password):
+    """The User named `username` (case-insensitive) if they hold pos.manage and
+    `password` is their account password, else None. The only way to approve
+    a void, discount or refund; callers apply the MANAGER_PIN throttle."""
+    from werkzeug.security import check_password_hash
+    from app.services.auth import User
+    from app.services.db import get_request_db
+
+    if not isinstance(username, str) or not isinstance(password, str):
+        return None
+    username = username.strip()
+    if not username or not password:
+        return None
+    user = User.get_by_username(username)
+    if user is None or not has_permission(user, 'pos.manage'):
+        return None
+    row = get_request_db().execute('SELECT password_hash FROM users WHERE id = ?', (user.id,)).fetchone()
+    pw_hash = row['password_hash'] if row else None
+    # sso_managed_*: account made by the removed Google sign-in, no password yet.
+    if not pw_hash or pw_hash.startswith('sso_managed_'):
+        return None
+    try:
+        ok = check_password_hash(pw_hash, password)
+    except (ValueError, TypeError):
+        ok = False
+    return user if ok else None

@@ -20,13 +20,13 @@ TABS = {
     'settings': ('settings', [
         'action="/admin/add_user"', 'action="/admin/set_user_roles/admin"',
         'action="/admin/reset_password/cashier"', 'name="group" value="security"',
-        'name="group" value="sso"',
+        'name="group" value="cf_access"', 'action="/admin/set_user_email/cashier"',
         'name="group" value="notifications"', 'name="group" value="modules"',
         'data-action="checkForUpdates"', 'id="updateProgressModal"', 'id="rollbackSection"']),
 }
 
 SECRETS = {
-    'sso': {'SSO_CLIENT_SECRET': 'sso-secret-ui-admin-111'},
+    'api': {'PUBLIC_API_KEY': 'api-secret-ui-admin-111'},
     'pos': {'POS_EMAIL_PASSWORD': 'smtp-secret-ui-admin-333'},
     'notifications': {'WEBHOOK_URL': 'https://discord.com/api/webhooks/ui-admin-444'},
 }
@@ -101,7 +101,7 @@ def test_admin_panel_never_renders_secrets(fresh_app, fresh_client):
     with fresh_app.app_context():
         from app.services import settings
         settings.set_many({k: v for fields in SECRETS.values() for k, v in fields.items()})
-        assert settings.get('SSO_CLIENT_SECRET') == SECRETS['sso']['SSO_CLIENT_SECRET']
+        assert settings.get('PUBLIC_API_KEY') == SECRETS['api']['PUBLIC_API_KEY']
         assert settings.get('WEBHOOK_URL') == SECRETS['notifications']['WEBHOOK_URL']
         stored_pw = settings.get('POS_EMAIL_PASSWORD')
         assert stored_pw
@@ -113,7 +113,7 @@ def test_admin_panel_never_renders_secrets(fresh_app, fresh_client):
                 assert value not in body, (tab, value)
         assert stored_pw not in body, tab
     body = _get(fresh_client, 'settings')
-    assert '(saved - leave blank to keep)' in body       # SSO secret shown only as "set"
+    assert '(saved - leave blank to keep)' in body       # API key shown only as "set"
 
 
 def test_settings_tab_has_no_email_ingest_card(fresh_client):
@@ -127,3 +127,13 @@ def test_settings_tab_has_no_email_ingest_card(fresh_client):
     # the POS end-of-day SMTP settings are a different feature and stay
     assert 'name="POS_EMAIL_PASSWORD"' in body
     assert fresh_client.post('/admin/run_email_ingest').status_code in (400, 404)
+
+
+def test_settings_tab_has_no_sso_card(fresh_client):
+    """RSCP's own Google/OIDC sign-in was removed in 3.0: no card, no fields."""
+    login(fresh_client, 1)
+    body = _get(fresh_client, 'settings')
+    for gone in ('name="group" value="sso"', 'SSO_CLIENT_ID', 'SSO_CLIENT_SECRET', 'SSO_DISCOVERY_URL',
+                 'SSO_ALLOWED_DOMAINS', 'SSO_ALLOW_NEW_USERS', 'ssoSwitch', 'OpenID', '/login/sso'):
+        assert gone not in body, gone
+    assert 'SSO' not in fresh_client.get('/login').get_data(as_text=True)

@@ -51,11 +51,8 @@
             </div>
 
             <div class="mb-3">
-                <label class="form-label">Password or PIN</label>
-                <input type="password" name="password" class="form-control" placeholder="Password">
-                <div class="text-center my-2 text-muted">— or —</div>
-                <input type="password" name="pin" class="form-control" placeholder="PIN" pattern="[0-9]*"
-                    inputmode="numeric">
+                <label class="form-label">Manager Password</label>
+                <input type="password" name="password" class="form-control" autocomplete="off" required>
             </div>
 
             <button type="submit" class="btn btn-danger w-100">Authenticate</button>

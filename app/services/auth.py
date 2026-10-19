@@ -15,15 +15,14 @@ def load_users():
         users = {}
         for r in rows:
             roles = normalize_roles(r['roles'] if 'roles' in r.keys() else None)
+            # users.pin_hash / badge_id are deliberately not exposed: nothing
+            # uses them until PIN/badge sign-in is rebuilt.
             users[r['username']] = {
-                "pin": r['password_hash'], # Legacy code might expect 'pin' key
                 "password_hash": r['password_hash'],
-                "pin_hash": r['pin_hash'] if 'pin_hash' in r.keys() else None,
                 # Derived from roles; the users.is_admin column is only a
                 # mirror kept for rollback to pre-3.0 code.
                 "is_admin": 'super_admin' in roles,
                 "roles": roles,
-                "badge_id": r['badge_id'] if 'badge_id' in r.keys() else '',
                 "email": r['email'] if 'email' in r.keys() else None,
             }
         return users
@@ -137,7 +136,7 @@ def update_user_admin_status(username, is_admin):
 # -------------------------------------------------------
 
 class User(UserMixin):
-    def __init__(self, id, username, is_admin=None, roles=None, email=None, auth_provider=None):
+    def __init__(self, id, username, is_admin=None, roles=None, email=None):
         # `is_admin` is accepted for call compatibility but ignored: admin
         # status is derived from roles (super_admin), never stored apart.
         from app.utils.permissions import normalize_roles
@@ -145,7 +144,6 @@ class User(UserMixin):
         self.username = username
         self._roles = normalize_roles(roles)
         self.email = email
-        self.auth_provider = auth_provider
 
     @property
     def roles(self):
@@ -174,11 +172,8 @@ class User(UserMixin):
         
         roles = user['roles'] if 'roles' in user.keys() else None  # normalized by User()
 
-        # Safely get new columns (might handle migration lag)
         email = user['email'] if 'email' in user.keys() else None
-        auth_provider = user['auth_provider'] if 'auth_provider' in user.keys() else None
-        
-        return User(user['id'], user['username'], roles=roles, email=email, auth_provider=auth_provider)
+        return User(user['id'], user['username'], roles=roles, email=email)
 
     @staticmethod
     def get_by_email(email):
@@ -208,43 +203,6 @@ class User(UserMixin):
             conn.close()
 
     @staticmethod
-    def create_sso_user(username, email, provider='oidc'):
-        """Create a new user from SSO data."""
-        conn = get_db_connection()
-        try:
-            # Generate random password (they should only login via SSO)
-            import secrets
-            pwd_hash = "sso_managed_" + secrets.token_hex(8) 
-            
-            conn.execute("""
-                INSERT INTO users (username, password_hash, is_admin, roles, email, auth_provider) 
-                VALUES (?, ?, 0, '["operator"]', ?, ?)
-            """, (username, pwd_hash, email, provider))
-            conn.commit()
-            
-            # Fetch and return the new user
-            return User.get_by_username(username)
-        except Exception as e:
-            logger.error(f"Failed to create SSO user {username}: {e}")
-            return None
-        finally:
-            conn.close()
-
-    @staticmethod
-    def link_sso_account(user_id, email, provider):
-        """Link an existing user account to an SSO identity."""
-        conn = get_db_connection()
-        try:
-            conn.execute("UPDATE users SET email = ?, auth_provider = ? WHERE id = ?", (email, provider, user_id))
-            conn.commit()
-            return True
-        except Exception as e:
-            logger.error(f"Failed to link SSO account for user {user_id}: {e}")
-            return False
-        finally:
-            conn.close()
-
-    @staticmethod
     def authenticate(username, password):
         conn = get_db_connection()
         user = conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
@@ -257,7 +215,8 @@ class User(UserMixin):
         # In production, use werkzeug.security.check_password_hash
         
         from werkzeug.security import check_password_hash
-        # Block SSO-only users from password login if password starts with sso_managed
+        # Accounts created by the removed Google sign-in (2.x auto-provisioning)
+        # have no usable password until an admin sets one.
         if user['password_hash'] and user['password_hash'].startswith('sso_managed_'):
             return None
 

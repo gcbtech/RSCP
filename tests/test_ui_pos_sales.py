@@ -127,15 +127,22 @@ def test_lock_screen_is_gone(fresh_client):
     assert fresh_client.post('/pos/lock').status_code in (400, 404)  # 400 = CSRF before routing
 
 
-def test_pos_login(fresh_app):
-    # Rendered directly: anonymous GET /pos/login is currently bounced to
-    # /login by the global session guard (the path is not on its allowlist),
-    # and a logged-in GET redirects to the register.
-    from flask import render_template
-    with fresh_app.test_request_context('/pos/login'):
-        html = render_template('pos/login.html')
-    _assert_layout(html, 'id="badgeInput"', nav=False, bootstrap_js=False)
-    assert '<title>RSCP | POS Login</title>' in html
+def test_pos_login_page_is_gone(fresh_app, fresh_client):
+    # The PIN/badge sign-in page was removed in 3.0 (POS staff use /login).
+    import os
+    from jinja2 import TemplateNotFound
+    with fresh_app.test_request_context('/'):
+        with pytest.raises(TemplateNotFound):
+            fresh_app.jinja_env.get_template('pos/login.html')
+    assert not os.path.exists(os.path.join(fresh_app.static_folder, 'js', 'pages', 'pos-login.js'))
+    assert login(fresh_client, 2).get('/pos/login').status_code == 404
+
+
+def test_refund_auth_asks_for_password_only(fresh_client):
+    html = _page(login(fresh_client, 2), '/pos/refunds/auth')
+    assert 'name="username"' in html and 'name="password"' in html
+    for gone in ('name="pin"', 'name="badge_id"', 'PIN', 'Badge'):
+        assert gone not in html, gone
 
 
 # --- receipts ---------------------------------------------------------------

@@ -1064,6 +1064,9 @@
                                         {% else %}
                                         <span class="badge bg-secondary ms-1">Staff</span>
                                         {% endif %}
+                                        <div class="small text-muted user-signin-email">
+                                            {% if data.get('email') %}✉️ {{ data.email }}{% else %}No sign-in email{% endif %}
+                                        </div>
                                     </div>
                                     <div class="d-flex gap-1">
                                         {% if name != session.get('user') and not (name|lower == 'admin' and
@@ -1080,7 +1083,8 @@
                                         {% if (not data.is_admin or name == local_user) and name|lower != 'admin' %}
                                         <button class="btn btn-sm btn-outline-warning" type="button"
                                             data-bs-toggle="collapse"
-                                            data-bs-target="#reset_{{ loop.index }}">Edit</button>
+                                            data-bs-target="#reset_{{ loop.index }}"
+                                            title="Password, sign-in email and roles">Edit</button>
                                         {% endif %}
                                         {% if name != session.get('user') and name|lower != 'admin' %}
                                         <form action="/admin/delete_user/{{ name }}" method="POST"
@@ -1099,35 +1103,19 @@
                                             placeholder="New Password" required>
                                         <button class="btn btn-warning" type="submit">Update</button>
                                     </form>
-                                    <!-- Sign-in email (matched by SSO and Cloudflare Access) -->
+                                    <!-- Sign-in email (matched by Cloudflare Access sign-in) -->
                                     <form action="/admin/set_user_email/{{ name }}" method="POST"
                                         class="input-group input-group-sm mt-2">
                                         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <span class="input-group-text">✉️</span>
-                                        <input type="email" name="email" class="form-control" placeholder="Sign-in email (SSO / Cloudflare Access)"
-                                            value="{{ data.get('email') or '' }}">
+                                        <span class="input-group-text">✉️ Sign-in email</span>
+                                        <input type="email" name="email" class="form-control" placeholder="name@company.com"
+                                            aria-label="Sign-in email for Cloudflare Access" value="{{ data.get('email') or '' }}">
                                         <button class="btn btn-secondary" type="submit">Set</button>
                                     </form>
-                                    {% if pos_enabled %}
-                                    <!-- PIN Setup -->
-                                    <form action="/admin/set_user_pin/{{ name }}" method="POST"
-                                        class="input-group input-group-sm mt-2">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <span class="input-group-text">PIN</span>
-                                        <input type="password" name="pin" class="form-control" placeholder="4-6 digits"
-                                            maxlength="6" pattern="\d{4,6}">
-                                        <button class="btn btn-primary" type="submit">Set PIN</button>
-                                    </form>
-                                    <!-- Badge ID Setup -->
-                                    <form action="/admin/set_badge_id/{{ name }}" method="POST"
-                                        class="input-group input-group-sm mt-2">
-                                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                        <span class="input-group-text">🪪</span>
-                                        <input type="text" name="badge_id" class="form-control" placeholder="Badge ID"
-                                            value="{{ data.get('badge_id', '') or '' }}">
-                                        <button class="btn btn-secondary" type="submit">Set</button>
-                                    </form>
-                                    {% endif %}
+                                    <div class="form-text small">Cloudflare Access signs this person in when their
+                                        Access (Google) email matches. Blank: password only.</div>
+                                    {# POS PIN and badge setup was removed in 3.0 (nothing used them);
+                                       PIN/badge sign-in will be rebuilt from scratch. #}
 
                                     <!-- RBAC Roles -->
                                     <form action="/admin/set_user_roles/{{ name }}" method="POST" class="mt-2">
@@ -1473,73 +1461,6 @@
 
                     <!-- Right Column -->
                     <div class="col-lg-6">
-                        <!-- SSO / OIDC Configuration -->
-                        <div class="admin-card">
-                            <div class="card-header">
-                                <div class="icon" style="background: #e8eaf6; color: #3f51b5;">🔐</div>
-                                <span>SSO / OIDC Configuration</span>
-                            </div>
-                            <div class="card-body">
-                                <form action="{{ url_for('settings.save') }}" method="POST">
-                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                    <input type="hidden" name="group" value="sso">
-
-                                    <div class="form-check form-switch mb-3">
-                                        <input type="hidden" name="SSO_ENABLED" value="false">
-                                        <input class="form-check-input" type="checkbox" name="SSO_ENABLED" value="true"
-                                            id="ssoSwitch" {% if config.SSO_ENABLED %}checked{% endif %}>
-                                        <label class="form-check-label fw-bold" for="ssoSwitch">Enable SSO (OpenID
-                                            Connect)</label>
-                                    </div>
-
-                                    <div class="mb-2">
-                                        <label class="form-label small fw-bold">Client ID</label>
-                                        <input type="text" name="SSO_CLIENT_ID" class="form-control form-control-sm"
-                                            value="{{ config.SSO_CLIENT_ID or '' }}" placeholder="Required">
-                                    </div>
-
-                                    <div class="mb-2">
-                                        <label class="form-label small fw-bold">Client Secret</label>
-                                        <input type="password" name="SSO_CLIENT_SECRET"
-                                            class="form-control form-control-sm" autocomplete="new-password"
-                                            value="" placeholder="{{ '(saved - leave blank to keep)' if config.SSO_CLIENT_SECRET_SET else 'Required' }}">
-                                    </div>
-
-                                    <div class="mb-2">
-                                        <label class="form-label small fw-bold">Discovery URL</label>
-                                        <input type="text" name="SSO_DISCOVERY_URL" class="form-control form-control-sm"
-                                            value="{{ config.SSO_DISCOVERY_URL or 'https://accounts.google.com/.well-known/openid-configuration' }}"
-                                            placeholder="https://.../.well-known/openid-configuration">
-                                        <div class="form-text small">Default: Google Workspace</div>
-                                    </div>
-
-                                    <div class="mb-3">
-                                        <label class="form-label small fw-bold">Allowed Domains (comma
-                                            separated)</label>
-                                        <input type="text" name="SSO_ALLOWED_DOMAINS"
-                                            class="form-control form-control-sm"
-                                            value="{{ config.SSO_ALLOWED_DOMAINS|join(', ') if config.SSO_ALLOWED_DOMAINS else '' }}"
-                                            placeholder="@company.com, @subsidiary.com">
-                                        <div class="form-text small">Required. Only emails from these domains can log in. An existing user signs in with SSO once their account's email is set.</div>
-                                    </div>
-
-                                    <div class="form-check mb-3">
-                                        <input type="hidden" name="SSO_ALLOW_NEW_USERS" value="false">
-                                        <input class="form-check-input" type="checkbox" name="SSO_ALLOW_NEW_USERS" value="true"
-                                            id="ssoAutoProvision" {% if config.get('SSO_ALLOW_NEW_USERS', False)
-                                            %}checked{% endif %}>
-                                        <label class="form-check-label small" for="ssoAutoProvision">
-                                            <strong>Auto-Provision New Users</strong><br>
-                                            <span class="text-muted">Automatically create accounts for valid SSO
-                                                logins.</span>
-                                        </label>
-                                    </div>
-
-                                    <button class="btn btn-primary w-100" type="submit">Save SSO Settings</button>
-                                </form>
-                            </div>
-                        </div>
-
                         <!-- Network -->
                         <div class="admin-card">
                             <div class="card-header">
@@ -1597,7 +1518,9 @@
                             <div class="card-body">
                                 <div class="form-text small mb-2">
                                     Staff who already passed Cloudflare Access are signed in to RSCP automatically,
-                                    matched by the email on their RSCP account (set it under Users). RSCP checks the
+                                    matched by the email on their RSCP account (User Management &rarr; Edit &rarr;
+                                    Sign-in email). With a Google login method in Access, this is how staff sign in
+                                    with Google. RSCP checks the
                                     Access token's signature, so a forged header gets nobody in.
                                 </div>
                                 <form action="{{ url_for('settings.save') }}" method="POST">
@@ -1622,7 +1545,8 @@
                                     <input type="text" name="CF_ACCESS_ALLOWED_DOMAINS" class="form-control form-control-sm mb-1"
                                         value="{{ config.CF_ACCESS_ALLOWED_DOMAINS|join(', ') if config.CF_ACCESS_ALLOWED_DOMAINS else '' }}"
                                         placeholder="@company.com">
-                                    <div class="form-text small mb-2">Blank: the SSO allowed domains apply, if set.</div>
+                                    <div class="form-text small mb-2">Blank: any email your Access policy lets through
+                                        (it must still match an RSCP account).</div>
                                     <button class="btn btn-outline-primary btn-sm w-100" type="submit">Save</button>
                                 </form>
                                 <hr>

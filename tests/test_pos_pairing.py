@@ -15,10 +15,6 @@ import unittest
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from unittest.mock import MagicMock
-sys.modules['authlib'] = MagicMock()
-sys.modules['authlib.integrations'] = MagicMock()
-sys.modules['authlib.integrations.flask_client'] = MagicMock()
 
 from app import create_app
 from app.services.db import get_db_connection

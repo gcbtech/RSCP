@@ -18,7 +18,7 @@ import tempfile
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 SKIP_WORDS = ('logout', 'sync', 'update', 'restart', 'rollback', 'export', 'download',
-              'delete', 'run_', 'test', 'trigger', 'debug', 'login/sso', 'callback',
+              'delete', 'run_', 'test', 'trigger', 'debug', 'callback',
               'print', 'backup', 'reset', 'clear', 'unpair', 'fetch')
 
 

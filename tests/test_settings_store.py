@@ -32,14 +32,14 @@ def test_typed_round_trips(fresh_app, st):
         st.set('AUTO_TRIM', 'on')
         st.set('SESSION_TIMEOUT_MINUTES', '45')
         st.set('TAX_RATE', '0.0825')
-        st.set('SSO_ALLOWED_DOMAINS', 'Example.com, @shop.org')
+        st.set('CF_ACCESS_ALLOWED_DOMAINS', 'Example.com, @shop.org')
         st.set('LOCATION_OPTIONS', {'area': ['A', 'B']})
         st.set_many({'RECEIPT_FOOTER': 'Thanks!', 'POS_EMAIL_PORT': 465.0})
     with fresh_app.app_context():
         assert st.get('AUTO_TRIM') is True
         assert st.get('SESSION_TIMEOUT_MINUTES') == 45
         assert st.get('TAX_RATE') == pytest.approx(0.0825)
-        assert st.get('SSO_ALLOWED_DOMAINS') == ['@example.com', '@shop.org']
+        assert st.get('CF_ACCESS_ALLOWED_DOMAINS') == ['@example.com', '@shop.org']
         assert st.get('LOCATION_OPTIONS') == {'area': ['A', 'B']}
         assert st.get('RECEIPT_FOOTER') == 'Thanks!'
         assert st.get('POS_EMAIL_PORT') == 465
@@ -59,11 +59,11 @@ def test_validation_errors(fresh_app, st):
                            ('AUTO_TRIM', 'maybe')):
             with pytest.raises(st.SettingsError):
                 st.set(key, value)
-        with pytest.raises(st.SettingsError, match='allowed domain'):
-            st.set('SSO_ENABLED', True)
+        with pytest.raises(st.SettingsError, match='AUD tag'):
+            st.set('CF_ACCESS_ENABLED', True)
         # nothing invalid was stored
         assert st.get('TAX_RATE') == 0.0
-        assert st.get('SSO_ENABLED') is False
+        assert st.get('CF_ACCESS_ENABLED') is False
 
 
 def test_pos_setting_shims_keep_string_conventions(fresh_app, st):
@@ -241,26 +241,28 @@ def test_invalid_submission_saves_nothing(fresh_app, fresh_client, st):
     login(fresh_client, 1)
     r = _save(fresh_client, 'network', TRUSTED_PROXIES='127.0.0.1, bogus')
     assert r.status_code == 302
-    _save(fresh_client, 'sso', SSO_ENABLED='true', SSO_ALLOWED_DOMAINS='', SSO_CLIENT_ID='abc')
+    _save(fresh_client, 'cf_access', CF_ACCESS_ENABLED='true', CF_ACCESS_AUD='',
+          CF_ACCESS_TEAM_DOMAIN='gcbcomputers')
     with fresh_app.app_context():
         assert st.get('TRUSTED_PROXIES') == ['127.0.0.1', '::1']
-        assert st.get('SSO_ENABLED') is False
-        assert st.get('SSO_CLIENT_ID') == ''
-    _save(fresh_client, 'sso', SSO_ENABLED='true', SSO_ALLOWED_DOMAINS='Company.com')
+        assert st.get('CF_ACCESS_ENABLED') is False
+        assert st.get('CF_ACCESS_TEAM_DOMAIN') == ''
+    _save(fresh_client, 'cf_access', CF_ACCESS_ENABLED='true', CF_ACCESS_AUD='a' * 64,
+          CF_ACCESS_TEAM_DOMAIN='gcbcomputers')
     with fresh_app.app_context():
-        assert st.get('SSO_ENABLED') is True
-        assert st.get('SSO_ALLOWED_DOMAINS') == ['@company.com']
+        assert st.get('CF_ACCESS_ENABLED') is True
+        assert st.get('CF_ACCESS_TEAM_DOMAIN') == 'gcbcomputers.cloudflareaccess.com'
     assert _save(fresh_client, 'no_such_group').status_code == 302
 
 
 def test_secrets_are_write_only_and_never_rendered(fresh_app, fresh_client, st):
     login(fresh_client, 1)
-    _save(fresh_client, 'sso', SSO_CLIENT_SECRET='sso-secret-value-123')
+    _save(fresh_client, 'api', PUBLIC_API_KEY='api-secret-value-123')
     _save(fresh_client, 'pos', POS_EMAIL_PASSWORD='smtp-secret-value-789')
     # blank / placeholder keeps the stored secret
-    _save(fresh_client, 'sso', SSO_CLIENT_SECRET='', SSO_CLIENT_ID='client')
+    _save(fresh_client, 'api', PUBLIC_API_KEY='')
     with fresh_app.app_context():
-        assert st.get('SSO_CLIENT_SECRET') == 'sso-secret-value-123'
+        assert st.get('PUBLIC_API_KEY') == 'api-secret-value-123'
         stored_pw = st.get('POS_EMAIL_PASSWORD')
         assert stored_pw and stored_pw != 'smtp-secret-value-789'   # encrypted at rest
         from app.services.security import decrypt
@@ -270,16 +272,16 @@ def test_secrets_are_write_only_and_never_rendered(fresh_app, fresh_client, st):
         r = fresh_client.get(url)
         assert r.status_code == 200, url
         body = r.get_data(as_text=True)
-        for secret in ('sso-secret-value-123', 'smtp-secret-value-789', stored_pw):
+        for secret in ('api-secret-value-123', 'smtp-secret-value-789', stored_pw):
             assert secret not in body, url
     body = fresh_client.get('/admin/?tab=settings').get_data(as_text=True)
-    assert '(saved - leave blank to keep)' in body                    # SSO_CLIENT_SECRET_SET
+    assert '(saved - leave blank to keep)' in body                    # PUBLIC_API_KEY_SET
 
     with fresh_app.app_context():
         from app import _template_config
         from app.services.data_manager import load_config
         view = _template_config(load_config())
-    assert view['SSO_CLIENT_SECRET_SET'] is True and 'SSO_CLIENT_SECRET' not in view
+    assert view['PUBLIC_API_KEY_SET'] is True and 'PUBLIC_API_KEY' not in view
 
 
 def test_json_save_for_auto_confirm(fresh_app, fresh_client, st):
@@ -401,3 +403,137 @@ def test_upgrade_from_2x_does_not_keep_email_ingest_settings(fresh_app, tmp_path
     conn.close()
     assert 'ORG_NAME' in keys
     assert not keys & set(EMAIL_INGEST_KEYS)
+
+
+# --- migration 22: RSCP's own Google/OIDC sign-in removed -----------------------
+
+SSO_ROWS = [('SSO_ENABLED', 'true'), ('SSO_CLIENT_ID', '"client-123.apps.googleusercontent.com"'),
+            ('SSO_CLIENT_SECRET', '"oidc-client-secret"'),
+            ('SSO_DISCOVERY_URL', '"https://accounts.google.com/.well-known/openid-configuration"'),
+            ('SSO_ALLOWED_DOMAINS', '["@gcbcomputers.com", "Shop.org"]'), ('SSO_ALLOW_NEW_USERS', 'false')]
+
+
+def _v21_with(fresh_app, tmp_path, rows):
+    db = str(tmp_path / 'v21.db')
+    conn = _db_copy_at(fresh_app, db, 21)   # the real schema just before migration 22
+    conn.executemany("INSERT OR REPLACE INTO settings (key, value, updated_by) VALUES (?, ?, 'test')", rows)
+    conn.executemany("INSERT INTO users (id, username, password_hash, is_admin, roles) VALUES (?, ?, 'x', ?, ?)",
+                     [(1, 'admin', 1, '["super_admin"]'), (2, 'cashier', 0, '["operator"]'),
+                      (3, 'manager', 0, '["pos_admin"]'), (7, 'boss2', 1, '["super_admin"]')])
+    conn.commit()
+    conn.close()
+    return db
+
+
+def _token(db):
+    conn = sqlite3.connect(db)
+    try:
+        return conn.execute('SELECT token FROM settings_meta').fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _notices(conn):
+    from app.services.migration import SSO_RETIRED_TITLE
+    return sorted(r[0] for r in conn.execute('SELECT user_id FROM notifications WHERE title = ?',
+                                             (SSO_RETIRED_TITLE,)))
+
+
+def test_sso_settings_are_gone_from_the_registry(fresh_app, st):
+    assert not [k for k in st.SETTINGS if k.startswith('SSO_')]
+    assert 'sso' not in st.GROUPS
+    assert not [k for k in st.ENV_OVERRIDES if k.startswith('SSO_')]
+    with fresh_app.app_context():
+        with pytest.raises(st.SettingsError):
+            st.set('SSO_ENABLED', True)
+
+
+def test_migration_22_retires_configured_sso(fresh_app, tmp_path):
+    from app.services import migration
+    db = _v21_with(fresh_app, tmp_path, SSO_ROWS + [('ORG_NAME', '"Kept Shop"')])
+    token_before = _token(db)
+
+    migration.run_migrations(db)
+
+    conn = sqlite3.connect(db)
+    assert conn.execute('PRAGMA user_version').fetchone()[0] == migration.LATEST_SCHEMA_VERSION >= 22
+    keys = {r[0] for r in conn.execute('SELECT key FROM settings')}
+    assert not {k for k in keys if k.startswith('SSO_')}          # client secret included
+    assert 'ORG_NAME' in keys
+    # Cloudflare Access fell back to the SSO domains: that restriction stays.
+    cf = conn.execute("SELECT value FROM settings WHERE key = 'CF_ACCESS_ALLOWED_DOMAINS'").fetchone()[0]
+    assert json.loads(cf) == ['@gcbcomputers.com', '@shop.org']
+    assert conn.execute('SELECT token FROM settings_meta').fetchone()[0] != token_before
+    # One notice per administrator (admin + boss2), nobody else.
+    assert _notices(conn) == [1, 7]
+    row = conn.execute('SELECT message, type, link, is_read FROM notifications WHERE user_id = 1').fetchone()
+    assert 'Cloudflare Access' in row[0] and 'sign-in email' in row[0]
+    assert row[1] == 'warning' and row[2].startswith('/admin/') and row[3] == 0
+    conn.close()
+
+    migration.run_migrations(db)                                   # runs once
+    conn = sqlite3.connect(db)
+    assert _notices(conn) == [1, 7]
+    conn.close()
+
+
+def test_migration_22_keeps_an_existing_cf_domain_list(fresh_app, tmp_path):
+    from app.services import migration
+    db = _v21_with(fresh_app, tmp_path, SSO_ROWS + [('CF_ACCESS_ALLOWED_DOMAINS', '["@cf.example"]')])
+    migration.run_migrations(db)
+    conn = sqlite3.connect(db)
+    cf = conn.execute("SELECT value FROM settings WHERE key = 'CF_ACCESS_ALLOWED_DOMAINS'").fetchone()[0]
+    assert json.loads(cf) == ['@cf.example']
+    conn.close()
+
+
+def test_migration_22_unconfigured_sso_leaves_no_notice(fresh_app, tmp_path):
+    from app.services import migration
+    # Saved once with defaults (switched off, no client): nothing to tell anyone.
+    db = _v21_with(fresh_app, tmp_path, [('SSO_ENABLED', 'false'), ('SSO_CLIENT_ID', '""'),
+                                         ('SSO_ALLOWED_DOMAINS', '[]')])
+    migration.run_migrations(db)
+    conn = sqlite3.connect(db)
+    assert not conn.execute("SELECT 1 FROM settings WHERE key LIKE 'SSO%'").fetchone()
+    assert not conn.execute("SELECT 1 FROM settings WHERE key = 'CF_ACCESS_ALLOWED_DOMAINS'").fetchone()
+    assert _notices(conn) == []
+    conn.close()
+
+
+def test_migration_22_without_sso_settings_is_a_no_op(fresh_app, tmp_path):
+    from app.services import migration
+    db = _v21_with(fresh_app, tmp_path, [])
+    token_before = _token(db)
+    migration.run_migrations(db)
+    conn = sqlite3.connect(db)
+    assert conn.execute('SELECT token FROM settings_meta').fetchone()[0] == token_before
+    assert _notices(conn) == []
+    conn.close()
+
+
+def test_upgrade_from_2x_config_json_drops_sso(fresh_app, tmp_path, monkeypatch):
+    """Migration 6 imports config.json wholesale; migration 22 then drops the SSO keys."""
+    from app import paths
+    from app.services import migration
+    db = str(tmp_path / 'v5.db')
+    conn = _db_copy_at(fresh_app, db, 5)   # no settings tables at v5
+    # 2.x accounts: an is_admin admin (migration 9 gives it super_admin) and staff
+    conn.executemany("INSERT INTO users (id, username, password_hash, is_admin, roles) VALUES (?, ?, 'x', ?, ?)",
+                     [(1, 'admin', 1, '[]'), (2, 'cashier', 0, '["user"]')])
+    conn.commit()
+    conn.close()
+    cfg = tmp_path / 'config.json'
+    cfg.write_text(json.dumps({'SECRET_KEY': 'k', 'ORG_NAME': 'Old Shop', 'SSO_ENABLED': True,
+                               'SSO_CLIENT_ID': 'cid', 'SSO_CLIENT_SECRET': 'csecret',
+                               'SSO_ALLOWED_DOMAINS': ['@old.example']}))
+    monkeypatch.setattr(paths, 'CONFIG_FILE', str(cfg))
+
+    migration.run_migrations(db)
+
+    conn = sqlite3.connect(db)
+    keys = {r[0] for r in conn.execute('SELECT key FROM settings')}
+    cf = conn.execute("SELECT value FROM settings WHERE key = 'CF_ACCESS_ALLOWED_DOMAINS'").fetchone()[0]
+    assert 'ORG_NAME' in keys and not {k for k in keys if k.startswith('SSO_')}
+    assert json.loads(cf) == ['@old.example']
+    assert _notices(conn) == [1]
+    conn.close()

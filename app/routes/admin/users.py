@@ -158,73 +158,14 @@ def reset_users_route():
     return redirect(url_for('admin.admin_panel'))
 
 
-@admin_bp.route('/set_user_pin/<username>', methods=['POST'])
-def set_user_pin(username):
-    """Set or update a user's POS PIN."""
-    pin = request.form.get('pin', '').strip()
-    
-    if not pin:
-        flash("PIN cannot be empty.")
-        return redirect(url_for('admin.admin_panel', tab='settings'))
-    
-    if not pin.isdigit() or len(pin) < 4 or len(pin) > 6:
-        flash("PIN must be 4-6 digits.")
-        return redirect(url_for('admin.admin_panel', tab='settings'))
-    
-    try:
-        from app.services.db import get_db_connection
-        pin_hash = generate_password_hash(pin)
-        conn = get_db_connection()
-        conn.execute('UPDATE users SET pin_hash = ? WHERE username = ?', (pin_hash, username))
-        conn.commit()
-        conn.close()
-        flash(f"PIN set for {username}.")
-    except Exception as e:
-        logger.error(f"Set PIN Error: {e}")
-        flash(f"Error setting PIN: {e}")
-    
-    return redirect(url_for('admin.admin_panel', tab='settings'))
-
-
-@admin_bp.route('/set_badge_id/<username>', methods=['POST'])
-def set_badge_id(username):
-    """Set or update a user's badge ID for POS login."""
-    badge_id = request.form.get('badge_id', '').strip()
-    
-    try:
-        from app.services.db import get_db_connection
-        conn = get_db_connection()
-        
-        # Check for duplicate badge ID (if provided)
-        if badge_id:
-            existing = conn.execute(
-                'SELECT username FROM users WHERE badge_id = ? AND username != ?', 
-                (badge_id, username)
-            ).fetchone()
-            if existing:
-                flash(f"Badge ID already assigned to {existing['username']}.")
-                conn.close()
-                return redirect(url_for('admin.admin_panel', tab='settings'))
-        
-        conn.execute('UPDATE users SET badge_id = ? WHERE username = ?', 
-                     (badge_id if badge_id else None, username))
-        conn.commit()
-        conn.close()
-        
-        if badge_id:
-            flash(f"Badge ID set for {username}.")
-        else:
-            flash(f"Badge ID cleared for {username}.")
-    except Exception as e:
-        logger.error(f"Set Badge ID Error: {e}")
-        flash(f"Error setting Badge ID: {e}")
-    
-    return redirect(url_for('admin.admin_panel', tab='settings'))
+# POS PINs and badge IDs: users.pin_hash and users.badge_id (and their data)
+# are kept, but nothing reads them in 3.0 and there is no admin UI to set them.
+# PIN/badge sign-in and approvals will be rebuilt from scratch.
 
 
 @admin_bp.route('/set_user_email/<username>', methods=['POST'])
 def set_user_email(username):
-    """Set or clear the email that SSO and Cloudflare Access sign-in match on.
+    """Set or clear the email that Cloudflare Access sign-in matches on.
 
     Whoever controls this address can sign in as the account, so the same
     rule as password resets applies: not on another admin's account."""

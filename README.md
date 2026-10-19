@@ -190,6 +190,42 @@ you're happy, remove the old directories yourself. Old 2.x DB backups in
 
 Downtime is only the data copy plus one restart.
 
+### Sign-in changes in 3.0
+
+RSCP 3.0 has two ways in: **username + password** at `/login`, and
+**Cloudflare Access** (see below; with Google as the Access login method,
+that is how staff "sign in with Google"). Removed:
+
+- RSCP's own **"Sign in with Google" (SSO / OIDC)**, with its settings
+  (client ID and secret, discovery URL, allowed domains, auto-provisioning)
+  and the `RSCP_SSO_*` environment variables. Schema migration 22 deletes the
+  stored SSO settings. If SSO was configured, every administrator gets a
+  one-time notification (the bell) pointing here.
+- The **POS PIN/badge sign-in page** (`/pos/login`). POS staff use `/login`;
+  `/pos/logout` still works (it is the normal logout).
+- **PIN and badge manager approvals.** Voids, discounts over the limit and
+  refund access now take the manager's **username and password**. PINs and
+  badge IDs already stored are kept for a future PIN feature, but nothing
+  uses them and the admin page no longer sets them.
+
+If staff used Google sign-in, after the upgrade:
+
+1. In **Admin > Settings > Cloudflare Access Sign-in**, enter the team domain
+   and AUD tag, tick the switch and save (details below). If the SSO allowed
+   domains were set and Access had no domain list of its own, migration 22
+   copied them into *Allowed email domains*; check that it is what you want.
+2. In **Admin > Settings > User Management**, each user shows their sign-in
+   email ("No sign-in email" when none). For each person who signs in through
+   Access, press **Edit** and set *Sign-in email* to the Google address they
+   use in Access. Emails that SSO already matched on are kept. Each admin
+   sets their own (an admin can't change another admin's).
+3. Accounts that SSO created automatically have no password. Set one under
+   **Edit > New Password** if the person should also be able to sign in
+   without Cloudflare Access (e.g. on the LAN).
+4. Open Admin through the tunnel and press **Test this browser's Access
+   token** to check the mapping. Remove any `RSCP_SSO_*` lines from
+   `/etc/default/rscp`; they are ignored now.
+
 ### Scheduled jobs
 
 Periodic work runs as short systemd jobs, not inside the web service, so a
@@ -370,7 +406,8 @@ If the tunnel's hostname is protected by a Cloudflare Access application,
 RSCP can sign staff in from their Access login, so they don't log in twice.
 It is off by default. Cloudflare adds a signed token (`Cf-Access-Jwt-Assertion`)
 to every request it proxies. RSCP checks its RS256 signature against your
-team's public keys, plus its audience, issuer and expiry, then signs in the
+team's public keys (only RS256 is accepted), plus its audience, issuer and
+expiry (exp/nbf/iat, 60 s clock skew), then signs in the
 RSCP account whose **email** matches the token's email. Anyone can fake the
 header on the LAN, but not the signature.
 
@@ -381,10 +418,10 @@ header on the LAN, but not the signature.
    64-character string).
 3. In RSCP, open **Admin > Settings > Cloudflare Access Sign-in**, enter both,
    tick the switch and save. *Allowed email domains* is optional (when blank,
-   the SSO allowed domains apply if set; otherwise your Access policy decides).
+   your Access policy decides who gets through).
 4. **Set each staff member's Workspace email on their RSCP account** (Admin >
-   Settings > user list > Edit > *Sign-in email*; SSO matches on the same
-   field). Matching uses that email only, never the username, and no
+   Settings > User Management > Edit > *Sign-in email*; the user list shows
+   who has one). Matching uses that email only, never the username, and no
    accounts are created automatically. An admin can't set another admin's
    email; each admin sets their own. If someone has no linked account, they
    get the normal login page with an explanation.
@@ -395,7 +432,7 @@ header on the LAN, but not the signature.
 **Logout:** the Access token is sent with every request, so without a pause
 the next page load would sign the user straight back in. After **Log out**,
 RSCP sets a `rscp_cf_logged_out` cookie that turns off automatic sign-in for
-that browser until the user signs in again (password, SSO or the login page's
+that browser until the user signs in again (password or the login page's
 **Sign in with Cloudflare Access** button) or 12 hours pass. Logging out of
 RSCP doesn't end the Cloudflare session. To end that too (e.g. on a shared
 PC), visit `https://<your RSCP hostname>/cdn-cgi/access/logout`.

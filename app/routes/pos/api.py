@@ -5,12 +5,10 @@ AJAX endpoints for cart operations and item search.
 import logging
 from flask import request, jsonify, session
 from flask_login import current_user, login_required
-from werkzeug.security import check_password_hash
 
 from app.routes.pos import pos_bp
 from app.routes.pos.core import search_inventory, get_inventory_item
 from app.services import money
-from app.services.auth import load_users
 
 logger = logging.getLogger(__name__)
 
@@ -63,53 +61,37 @@ def api_item(sku):
 
 @pos_bp.route('/api/validate-manager', methods=['POST'])
 def api_validate_manager():
-    """Validate manager credentials for void/refund operations."""
-    from app.services.auth import User
-    from app.utils.permissions import has_permission
-    
-    from app.utils.permissions import (manager_auth_throttled, record_manager_auth_failure,
-                                       record_manager_auth_success)
+    """Approve voids: a manager's username + password (JSON). On success the
+    approval is kept in the session for cart_remove."""
+    from app.utils.permissions import (check_manager_password, manager_auth_throttled,
+                                       record_manager_auth_failure, record_manager_auth_success)
 
-    data = request.get_json() or {}
-    username = data.get('username', '')
-    password = data.get('password', '')
-    pin = data.get('pin', '')
+    data = request.get_json(silent=True) or {}
+    username = data.get('username') if isinstance(data.get('username'), str) else ''
+    password = data.get('password') if isinstance(data.get('password'), str) else ''
+    username = username.strip()
+    if not username or not password:
+        return jsonify({'valid': False, 'error': 'Manager username and password required'}), 400
 
     if manager_auth_throttled(username):
         return jsonify({'valid': False, 'error': 'Too many failed attempts. Wait 5 minutes.'}), 429
 
     # One generic error for every failure, so the endpoint does not reveal
     # which usernames are managers.
-    user_obj = User.get_by_username(username)
-    if not user_obj or not has_permission(user_obj, 'pos.manage'):
+    manager = check_manager_password(username, password)
+    if manager is None:
         record_manager_auth_failure(username)
         return jsonify({'valid': False, 'error': 'Invalid credentials'})
-    
-    # Check credentials
-    from app.services.db import get_request_db
-    conn = get_request_db()
-    pwd_row = conn.execute("SELECT password_hash, pin_hash FROM users WHERE id = ?", (user_obj.id,)).fetchone()
-    
-    authenticated = False
-    if pwd_row:
-        if password and check_password_hash(pwd_row['password_hash'], password):
-            authenticated = True
-        elif pin and pwd_row['pin_hash'] and check_password_hash(pwd_row['pin_hash'], pin):
-            authenticated = True
-    
-    if authenticated:
-        record_manager_auth_success(username)
-        # Set temporary manager auth for void operations
-        from datetime import datetime
-        session['pos_manager_auth'] = {
-            'username': username,
-            'timestamp': datetime.now().timestamp()
-        }
-        session.modified = True
-        return jsonify({'valid': True})
 
-    record_manager_auth_failure(username)
-    return jsonify({'valid': False, 'error': 'Invalid credentials'})
+    record_manager_auth_success(username)
+    # Set temporary manager auth for void operations
+    from datetime import datetime
+    session['pos_manager_auth'] = {
+        'username': manager.username,
+        'timestamp': datetime.now().timestamp()
+    }
+    session.modified = True
+    return jsonify({'valid': True})
 
 
 @pos_bp.route('/api/cart')

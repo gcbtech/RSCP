@@ -16,12 +16,14 @@ On top of that the token must be:
     key would otherwise be forgeable),
   - for this Access application (aud contains CF_ACCESS_AUD, which is required),
   - issued by this team (iss == https://<team domain>),
-  - current (exp / nbf, with LEEWAY seconds of clock skew).
+  - current (exp required; exp / nbf / iat checked with LEEWAY seconds of
+    clock skew).
+The checks are done here with the `cryptography` package (RSASSA-PKCS1-v1_5
+with SHA-256); no JOSE library is involved.
 
 The `email` claim is mapped to an existing account whose email matches
-(case-insensitive), with the same rules as OIDC SSO: no fallback to the
-username, no auto-provisioning. An optional domain allowlist applies
-(CF_ACCESS_ALLOWED_DOMAINS, else SSO_ALLOWED_DOMAINS if set).
+(case-insensitive): no fallback to the username, no auto-provisioning. An
+optional domain allowlist applies (CF_ACCESS_ALLOWED_DOMAINS).
 
 Tokens are never logged; failures log a short reason only.
 
@@ -36,24 +38,19 @@ import logging
 import re
 import threading
 import time
-import warnings
 
 import requests
-
-# authlib.jose is deprecated in favour of joserfc but stays supported for all
-# Authlib 1.x (requirements pin <2). It warns loudly on import; keep that
-# out of the logs. Imported at module load on purpose (see app/__init__.py).
-with warnings.catch_warnings(record=True):
-    warnings.simplefilter('ignore')
-    from authlib.jose import JsonWebKey, JsonWebToken
-    from authlib.jose.errors import JoseError
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 logger = logging.getLogger(__name__)
 
 HEADER = 'Cf-Access-Jwt-Assertion'
 TEAM_DOMAIN_SUFFIX = '.cloudflareaccess.com'
 
-ALGORITHMS = ['RS256']
+ALGORITHMS = ['RS256']      # the only one accepted; see verify_token()
+MIN_KEY_BITS = 2048         # smaller RSA keys in the JWKS are ignored
 LEEWAY = 60                 # seconds of clock skew allowed on exp/nbf/iat
 MAX_TOKEN_BYTES = 16384     # anything bigger is not an Access token
 FETCH_TIMEOUT = 5           # seconds, for the JWKS request
@@ -62,14 +59,13 @@ JWKS_MIN_REFRESH = 30       # seconds between fetches (unknown kid / failures)
 
 # After an explicit logout this cookie stops the header from signing the
 # browser straight back in. It is cleared by the next explicit sign-in
-# (password, SSO, or the "Sign in with Cloudflare Access" button) and expires
+# (password, or the "Sign in with Cloudflare Access" button) and expires
 # on its own after LOGOUT_SUPPRESS_SECONDS. Forging it only *prevents*
 # automatic sign-in, so it needs no signature.
 SUPPRESS_COOKIE = 'rscp_cf_logged_out'
 LOGOUT_SUPPRESS_SECONDS = 12 * 3600
 
-_jwt = JsonWebToken(ALGORITHMS)
-_jwks_cache = {}            # team domain -> {'keys': {kid: RSAKey}, 'fetched': t, 'attempted': t}
+_jwks_cache = {}            # team domain -> {'keys': {kid: RSAPublicKey}, 'fetched': t, 'attempted': t}
 _jwks_lock = threading.Lock()
 
 
@@ -117,7 +113,7 @@ def validate_aud(value):
 
 def get_config():
     from app.services import settings as store
-    domains = store.get('CF_ACCESS_ALLOWED_DOMAINS') or store.get('SSO_ALLOWED_DOMAINS') or []
+    domains = store.get('CF_ACCESS_ALLOWED_DOMAINS') or []
     return {
         'enabled': bool(store.get('CF_ACCESS_ENABLED')),
         'team_domain': store.get('CF_ACCESS_TEAM_DOMAIN') or '',
@@ -147,16 +143,42 @@ def _fetch_jwks(team_domain):
     return resp.json()
 
 
+def _b64url_decode(segment):
+    """Strict base64url (RFC 7515, unpadded) -> bytes. Raises ValueError."""
+    if not isinstance(segment, str) or not re.fullmatch(r'[A-Za-z0-9_-]*', segment) \
+            or len(segment) % 4 == 1:
+        raise ValueError('not base64url')
+    return base64.urlsafe_b64decode(segment + '=' * (-len(segment) % 4))
+
+
+def _b64url_uint(segment):
+    value = _b64url_decode(segment)
+    if not value:
+        raise ValueError('empty integer')
+    return int.from_bytes(value, 'big')
+
+
+def _rsa_public_key(jwk):
+    """An RSAPublicKey from a JWK's n and e (any private members are ignored)."""
+    n = _b64url_uint(jwk.get('n'))
+    e = _b64url_uint(jwk.get('e'))
+    if n.bit_length() < MIN_KEY_BITS:
+        raise ValueError('RSA key too small')
+    return rsa.RSAPublicNumbers(e, n).public_key()
+
+
 def _parse_jwks(data):
+    """{kid: RSAPublicKey} of the RS256 signing keys in a JWKS document."""
     keys = {}
     for jwk in (data or {}).get('keys') or []:
-        if not isinstance(jwk, dict) or jwk.get('kty') != 'RSA' or not jwk.get('kid'):
+        if not isinstance(jwk, dict) or jwk.get('kty') != 'RSA' or not isinstance(jwk.get('kid'), str):
+            continue
+        if not jwk['kid']:
             continue
         if jwk.get('use') not in (None, 'sig') or jwk.get('alg') not in (None, 'RS256'):
             continue
-        public = {k: jwk[k] for k in ('kty', 'kid', 'n', 'e') if k in jwk}
         try:
-            keys[jwk['kid']] = JsonWebKey.import_key(public)
+            keys[jwk['kid']] = _rsa_public_key(jwk)
         except Exception:
             continue
     return keys
@@ -205,53 +227,89 @@ def clear_cache():
 
 # --- verification -------------------------------------------------------------
 
-def _unverified_header(token):
+def _json_segment(segment):
+    """A token segment decoded to a JSON object (dict). Raises CfAccessError."""
     try:
-        segment = token.split('.')[0]
-        segment += '=' * (-len(segment) % 4)
-        header = json.loads(base64.urlsafe_b64decode(segment.encode('ascii')))
+        value = json.loads(_b64url_decode(segment))
     except Exception:
         raise CfAccessError('malformed token') from None
-    if not isinstance(header, dict):
+    if not isinstance(value, dict):
         raise CfAccessError('malformed token')
-    return header
+    return value
+
+
+def _numeric_claim(claims, name, required=False):
+    """claims[name] as a number (a JWT NumericDate), None when absent. Raises CfAccessError."""
+    value = claims.get(name)
+    if value is None:
+        if required:
+            raise CfAccessError(f'token rejected (missing {name})')
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise CfAccessError(f'token rejected (invalid {name})')
+    return value
 
 
 def verify_token(token, team_domain, aud, now=None):
-    """Verified claims (dict) of an Access JWT. Raises CfAccessError."""
+    """Verified claims (dict) of an Access JWT. Raises CfAccessError.
+
+    In order: shape; header (alg exactly RS256, a kid, no 'crit' extensions);
+    the RS256 signature with the team's cached key for that kid; then the
+    claims: exp (required), nbf and iat (when present) with LEEWAY seconds of
+    skew, iss == https://<team domain>, aud contains `aud`.
+    """
     if not team_domain or not aud:
         raise CfAccessError('Cloudflare Access is not configured (team domain and AUD tag are required)')
-    if not token or len(token) > MAX_TOKEN_BYTES or token.count('.') != 2:
+    if not isinstance(token, str) or not token or len(token) > MAX_TOKEN_BYTES or token.count('.') != 2:
         raise CfAccessError('malformed token')
-    header = _unverified_header(token)
-    if header.get('alg') not in ALGORITHMS:
-        raise CfAccessError(f"unsupported algorithm {str(header.get('alg'))[:20]!r}")
+    header_b64, payload_b64, signature_b64 = token.split('.')
+    header = _json_segment(header_b64)
+    # Only RS256: never 'none' (no signature) or HS* (an HMAC keyed with the
+    # public key, which anyone can compute), nor any other variant.
+    alg = header.get('alg')
+    if not isinstance(alg, str) or alg not in ALGORITHMS:
+        raise CfAccessError(f"unsupported algorithm {str(alg)[:20]!r}")
+    if 'crit' in header:
+        raise CfAccessError('token rejected (unsupported critical header)')
     kid = header.get('kid')
     if not kid or not isinstance(kid, str):
         raise CfAccessError('token has no key id')
+    try:
+        signature = _b64url_decode(signature_b64)
+    except ValueError:
+        raise CfAccessError('malformed token') from None
+    if not signature:
+        raise CfAccessError('malformed token')
 
     key = _signing_key(team_domain, kid)
-    issuer = f'https://{team_domain}'
     try:
-        claims = _jwt.decode(token, key, claims_options={
-            'iss': {'essential': True, 'value': issuer},
-            'aud': {'essential': True, 'value': aud},
-            'exp': {'essential': True},
-        })
-        claims.validate(now=now, leeway=LEEWAY)
-    except JoseError as e:
-        raise CfAccessError(f'token rejected ({e.error})') from None
+        key.verify(signature, f'{header_b64}.{payload_b64}'.encode('ascii'),
+                   padding.PKCS1v15(), hashes.SHA256())
+    except InvalidSignature:
+        raise CfAccessError('token rejected (bad signature)') from None
     except Exception as e:
         raise CfAccessError(f'token rejected ({type(e).__name__})') from None
 
-    # Belt and braces: re-check the claims that bind the token to this app.
-    claims = dict(claims)
+    # The signature is good, so the claims are Cloudflare's. Check they are
+    # current and meant for this team and this Access application.
+    claims = _json_segment(payload_b64)
+    now = time.time() if now is None else now
+    exp = _numeric_claim(claims, 'exp', required=True)
+    if now > exp + LEEWAY:
+        raise CfAccessError('token rejected (expired)')
+    nbf = _numeric_claim(claims, 'nbf')
+    if nbf is not None and now + LEEWAY < nbf:
+        raise CfAccessError('token rejected (not yet valid)')
+    iat = _numeric_claim(claims, 'iat')
+    if iat is not None and now + LEEWAY < iat:
+        raise CfAccessError('token rejected (issued in the future)')
+
+    if claims.get('iss') != f'https://{team_domain}':
+        raise CfAccessError('token rejected (iss)')
     token_aud = claims.get('aud')
     token_aud = token_aud if isinstance(token_aud, list) else [token_aud]
-    if aud not in token_aud:
+    if aud not in [a for a in token_aud if isinstance(a, str)]:
         raise CfAccessError('token rejected (aud)')
-    if claims.get('iss') != issuer:
-        raise CfAccessError('token rejected (iss)')
     return claims
 
 

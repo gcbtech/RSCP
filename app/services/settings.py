@@ -46,9 +46,6 @@ BOOTSTRAP_KEYS = frozenset({'SECRET_KEY'})
 ENV_OVERRIDES = {
     'WEBHOOK_URL': 'RSCP_WEBHOOK_URL',
     'SECRET_KEY': 'RSCP_SECRET_KEY',
-    'SSO_CLIENT_ID': 'RSCP_SSO_CLIENT_ID',
-    'SSO_CLIENT_SECRET': 'RSCP_SSO_CLIENT_SECRET',
-    'SSO_DISCOVERY_URL': 'RSCP_SSO_DISCOVERY_URL',
 }
 
 # Unregistered keys whose name contains one of these are treated as secret.
@@ -362,7 +359,6 @@ GROUPS = {
     'pos': ('POS', 'pos'),
     'security': ('Security', 'settings'),
     'notifications': ('Notifications', 'settings'),
-    'sso': ('SSO / OIDC', 'settings'),
     'network': ('Reverse proxy', 'settings'),
     'cf_access': ('Cloudflare Access', 'settings'),
     'timeclock': ('Timeclock', None),
@@ -474,15 +470,6 @@ SETTINGS = {
     'ALERT_DISPLAY_OFFLINE': S(bool, True, 'notifications', 'Email when a customer display goes quiet'),
     'ALERT_DISPLAY_OFFLINE_MINUTES': S(int, 10, 'notifications', 'Customer display quiet for (minutes)',
                                        min=2, max=240),
-
-    # SSO
-    'SSO_ENABLED': S(bool, False, 'sso', 'SSO'),
-    'SSO_CLIENT_ID': S(str, '', 'sso', 'SSO client ID', restart=True),
-    'SSO_CLIENT_SECRET': S(str, '', 'sso', 'SSO client secret', secret=True, restart=True),
-    'SSO_DISCOVERY_URL': S(str, 'https://accounts.google.com/.well-known/openid-configuration', 'sso',
-                           'SSO discovery URL', validator=_validate_url, restart=True),
-    'SSO_ALLOWED_DOMAINS': S(list, [], 'sso', 'SSO allowed domains', validator=_normalize_domains),
-    'SSO_ALLOW_NEW_USERS': S(bool, False, 'sso', 'Auto-provision SSO users'),
 
     # Network
     'TRUSTED_PROXIES': S(list, ['127.0.0.1', '::1'], 'network', 'Trusted proxies',
@@ -741,13 +728,6 @@ def all():  # noqa: A001 - module-level API name
 
 def _cross_check(updates):
     """Rules that involve more than one setting."""
-    if any(k.startswith('SSO_') for k in updates):
-        enabled = updates.get('SSO_ENABLED', get('SSO_ENABLED'))
-        domains = updates.get('SSO_ALLOWED_DOMAINS', get('SSO_ALLOWED_DOMAINS'))
-        # SSO without a domain allowlist would admit any account the identity
-        # provider vouches for (e.g. any Google account).
-        if enabled and not domains:
-            raise SettingsError('SSO needs at least one allowed domain before it can be enabled.')
     if any(k.startswith('CF_ACCESS_') for k in updates):
         enabled = updates.get('CF_ACCESS_ENABLED', get('CF_ACCESS_ENABLED'))
         team = updates.get('CF_ACCESS_TEAM_DOMAIN', get('CF_ACCESS_TEAM_DOMAIN'))

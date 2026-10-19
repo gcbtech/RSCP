@@ -129,15 +129,15 @@ def test_cashier_cannot_change_tax_rate(fresh_app, fresh_client):
     assert _tax_rate(fresh_app) == pytest.approx(0.07)
 
 
-# --- manager PIN brute force ------------------------------------------------
+# --- manager approval brute force -------------------------------------------
 
-def test_manager_pin_check_is_throttled(fresh_client):
+def test_manager_approval_is_throttled(fresh_client):
     from app.utils.permissions import MANAGER_AUTH_FAIL_LIMIT
     login(fresh_client, 2)
-    for _ in range(MANAGER_AUTH_FAIL_LIMIT):
-        r = fresh_client.post('/pos/verify-manager', json={'pin': '0000'})
+    for i in range(MANAGER_AUTH_FAIL_LIMIT):
+        r = fresh_client.post('/pos/verify-manager', json={'username': 'manager', 'password': f'guess-{i}'})
         assert r.status_code == 401
-    r = fresh_client.post('/pos/verify-manager', json={'pin': '1234'})
+    r = fresh_client.post('/pos/verify-manager', json={'username': 'manager', 'password': 'Correct-Horse-1'})
     assert r.status_code == 429
 
 
@@ -146,11 +146,11 @@ def test_manager_pin_check_is_throttled(fresh_client):
 def test_template_config_strips_secrets():
     from app import _template_config
     safe = _template_config({'ORG_NAME': 'GCB', 'SECRET_KEY': 'k', 'EMAIL_PASS': 'p',
-                             'SSO_CLIENT_SECRET': '', 'POS_EMAIL_PASSWORD': 'x'})
+                             'PUBLIC_API_KEY': '', 'POS_EMAIL_PASSWORD': 'x'})
     assert safe['ORG_NAME'] == 'GCB'
-    for key in ('SECRET_KEY', 'EMAIL_PASS', 'SSO_CLIENT_SECRET', 'POS_EMAIL_PASSWORD'):
+    for key in ('SECRET_KEY', 'EMAIL_PASS', 'PUBLIC_API_KEY', 'POS_EMAIL_PASSWORD'):
         assert key not in safe
-    assert safe['SECRET_KEY_SET'] is True and safe['SSO_CLIENT_SECRET_SET'] is False
+    assert safe['SECRET_KEY_SET'] is True and safe['PUBLIC_API_KEY_SET'] is False
 
 
 # --- federation is gone -----------------------------------------------------
