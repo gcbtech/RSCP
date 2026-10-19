@@ -68,7 +68,7 @@ The POS is where you monetize your inventory. It is optimized for speed and work
     *   **Quick Add (Misc)**: Selling an untracked service? Add a custom line item on the fly.
 *   **Discounts & Taxes**:
     *   Apply percentage or fixed-amount discounts.
-    *   Manager Override: High-value discounts require a manager PIN.
+    *   Manager Override: High-value discounts require a manager's username and password.
     *   Automatic Sales Tax calculation based on your settings.
 *   **Money Management**:
     *   **End of Day**: reconcile cash, card, and other payments. The system generates a "Z-Report" ensuring your drawer balances perfectly.

@@ -19,7 +19,7 @@ All error codes follow the pattern: `RSCP-XXX`
 | Code | Constant | Description |
 |------|----------|-------------|
 | RSCP-200 | ERR_AUTH_MISSING | Authentication required but not provided |
-| RSCP-201 | ERR_AUTH_INVALID | Invalid credentials (wrong password/PIN) |
+| RSCP-201 | ERR_AUTH_INVALID | Invalid credentials (wrong username or password) |
 | RSCP-202 | ERR_AUTH_EXPIRED | Session expired |
 | RSCP-203 | ERR_PERM_DENIED | User lacks permission for this action |
 

@@ -7,16 +7,11 @@ so no test talks to Cloudflare.
 import base64
 import json
 import time
-import warnings
 from unittest.mock import patch
 
 import pytest
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
-
-with warnings.catch_warnings(record=True):
-    warnings.simplefilter('ignore')
-    from authlib.jose import JsonWebKey, JsonWebToken
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 from app.services import cf_access
 from tests.conftest import login
@@ -27,10 +22,8 @@ AUD = 'a' * 64
 CASHIER_EMAIL = 'cashier@gcbcomputers.com'
 
 
-def _rsa_key():
-    pem = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
-        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
-    return JsonWebKey.import_key(pem, {'kty': 'RSA'})
+def _rsa_key(bits=2048):
+    return rsa.generate_private_key(public_exponent=65537, key_size=bits)
 
 
 KEY1 = _rsa_key()
@@ -38,27 +31,43 @@ KEY2 = _rsa_key()
 EVIL = _rsa_key()
 
 
+def _b64u(data):
+    return base64.urlsafe_b64encode(data).rstrip(b'=').decode()
+
+
+def _b64(obj):
+    return _b64u(json.dumps(obj).encode())
+
+
+def _uint(i):
+    return _b64u(i.to_bytes((i.bit_length() + 7) // 8, 'big'))
+
+
 def _jwk(key, kid):
-    d = key.as_dict(is_private=False)
-    d.update(kid=kid, alg='RS256', use='sig')
-    return d
+    pub = key.public_key().public_numbers()
+    return {'kty': 'RSA', 'kid': kid, 'alg': 'RS256', 'use': 'sig', 'n': _uint(pub.n), 'e': _uint(pub.e)}
 
 
 def jwks(*pairs):
     return {'keys': [_jwk(k, kid) for k, kid in pairs]}
 
 
-def make_token(key=KEY1, kid='k1', **overrides):
+def sign(header, claims, key=KEY1):
+    """A compact JWS of `claims`, RS256-signed with `key` whatever `header` says."""
+    signing_input = _b64(header) + '.' + _b64(claims)
+    sig = key.sign(signing_input.encode(), padding.PKCS1v15(), hashes.SHA256())
+    return signing_input + '.' + _b64u(sig)
+
+
+def make_token(key=KEY1, kid='k1', header=None, **overrides):
     now = int(time.time())
     claims = {'aud': [AUD], 'iss': ISS, 'email': CASHIER_EMAIL, 'iat': now, 'nbf': now,
               'exp': now + 600, 'sub': 'abc', 'type': 'app'}
     claims.update(overrides)
     claims = {k: v for k, v in claims.items() if v is not None}
-    return JsonWebToken(['RS256']).encode({'alg': 'RS256', 'kid': kid, 'typ': 'JWT'}, claims, key).decode()
-
-
-def _b64(obj):
-    return base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b'=').decode()
+    head = {'alg': 'RS256', 'kid': kid, 'typ': 'JWT'}
+    head.update(header or {})
+    return sign({k: v for k, v in head.items() if v is not None}, claims, key)
 
 
 def hdr(token):
@@ -162,7 +171,8 @@ def _hs256_token():
     # algorithm-confusion forgery.
     import hashlib
     import hmac
-    pub_pem = KEY1.as_pem(is_private=False)
+    pub_pem = KEY1.public_key().public_bytes(serialization.Encoding.PEM,
+                                             serialization.PublicFormat.SubjectPublicKeyInfo)
     now = int(time.time())
     signing_input = _b64({'alg': 'HS256', 'kid': 'k1'}) + '.' + _b64(
         {'aud': [AUD], 'iss': ISS, 'email': CASHIER_EMAIL, 'exp': now + 600})
@@ -231,10 +241,12 @@ def test_domain_allowlist(cf_app, client):
     assert _uid(client) == '2'
 
 
-def test_domain_allowlist_defaults_to_sso_domains(cf_app, client):
-    _set(cf_app, SSO_ALLOWED_DOMAINS=['@other.com'])
-    assert _to_login(client.get('/', headers=hdr(make_token())))
-    _set(cf_app, CF_ACCESS_ALLOWED_DOMAINS=['@gcbcomputers.com'])
+def test_domain_allowlist_ignores_retired_sso_setting(cf_app, client):
+    # SSO_ALLOWED_DOMAINS was the fallback while RSCP had its own Google
+    # sign-in; migration 22 copies it into CF_ACCESS_ALLOWED_DOMAINS.
+    from app.services.settings import write_raw
+    with cf_app.app_context():
+        write_raw({'SSO_ALLOWED_DOMAINS': ['@other.com']})
     client.get('/', headers=hdr(make_token()))
     assert _uid(client) == '2'
 
@@ -346,8 +358,169 @@ def test_parse_jwks_skips_non_rsa_and_private_parts():
     data = jwks((KEY1, 'k1'))
     data['keys'].append({'kty': 'oct', 'kid': 'h', 'k': 'c2VjcmV0'})
     data['keys'].append({'kty': 'RSA', 'kid': 'enc', 'use': 'enc', 'n': 'x', 'e': 'AQAB'})
+    data['keys'].append(dict(_jwk(KEY2, 'rs384'), alg='RS384'))
+    data['keys'].append(_jwk(_rsa_key(1024), 'small'))
+    data['keys'].append({'kty': 'RSA', 'kid': 'junk', 'n': 'not base64!', 'e': 'AQAB'})
+    data['keys'].append(dict(_jwk(KEY2, 'nokid'), kid=7))
     keys = cf_access._parse_jwks(data)
     assert list(keys) == ['k1']
+    assert keys['k1'].public_numbers() == KEY1.public_key().public_numbers()
+
+
+def test_parse_jwks_ignores_private_members():
+    priv = KEY2.private_numbers()
+    jwk = dict(_jwk(KEY2, 'k2'), d=_uint(priv.d), p=_uint(priv.p), q=_uint(priv.q))
+    key = cf_access._parse_jwks({'keys': [jwk]})['k2']
+    assert not hasattr(key, 'sign')  # a public key only
+
+
+# --- verify_token directly ------------------------------------------------------
+
+def _verify(token, now=None):
+    with patch.object(cf_access, '_fetch_jwks', return_value=jwks((KEY1, 'k1'), (KEY2, 'k2'))):
+        cf_access.clear_cache()
+        try:
+            return cf_access.verify_token(token, TEAM, AUD, now=now)
+        finally:
+            cf_access.clear_cache()
+
+
+def _rejected(token, now=None):
+    with pytest.raises(cf_access.CfAccessError) as info:
+        _verify(token, now=now)
+    return info.value.reason
+
+
+def test_verify_returns_claims():
+    claims = _verify(make_token(key=KEY2, kid='k2'))
+    assert claims['email'] == CASHIER_EMAIL and claims['iss'] == ISS and claims['aud'] == [AUD]
+
+
+@pytest.mark.parametrize('alg', ['none', 'None', 'HS256', 'HS512', 'RS384', 'RS512', 'PS256', 'ES256', '', None, 7])
+def test_verify_rejects_other_algorithms(alg):
+    # Signed with the right key, but the header names another algorithm.
+    assert 'unsupported algorithm' in _rejected(make_token(header={'alg': alg}))
+
+
+def test_verify_rejects_missing_alg():
+    head = {'kid': 'k1', 'typ': 'JWT'}
+    token = sign(head, {'aud': [AUD], 'iss': ISS, 'exp': int(time.time()) + 600})
+    assert 'unsupported algorithm' in _rejected(token)
+
+
+def test_verify_rejects_hmac_with_public_key():
+    assert 'unsupported algorithm' in _rejected(_hs256_token())
+
+
+def test_verify_rejects_none_algorithm_without_signature():
+    assert 'unsupported algorithm' in _rejected(_none_token())
+
+
+def test_verify_rejects_unknown_kid():
+    assert _rejected(make_token(key=EVIL, kid='evil')) == 'token signed with an unknown key'
+
+
+def test_verify_rejects_wrong_kid_for_key():
+    # Signed by KEY2 but claiming KEY1's kid: KEY1 is used, signature fails.
+    assert _rejected(make_token(key=KEY2, kid='k1')) == 'token rejected (bad signature)'
+
+
+@pytest.mark.parametrize('kid', [None, '', 5, ['k1']])
+def test_verify_requires_string_kid(kid):
+    assert _rejected(make_token(header={'kid': kid})) == 'token has no key id'
+
+
+def test_verify_rejects_expired():
+    now = time.time()
+    assert _rejected(make_token(exp=int(now) - 3600)) == 'token rejected (expired)'
+
+
+def test_verify_exp_leeway():
+    now = time.time()
+    token = make_token(exp=int(now) - 30, iat=int(now) - 600, nbf=int(now) - 600)
+    assert _verify(token, now=now)['email'] == CASHIER_EMAIL     # within LEEWAY
+    assert _rejected(token, now=now + cf_access.LEEWAY + 60) == 'token rejected (expired)'
+
+
+@pytest.mark.parametrize('exp', [None, 'soon', True, [1]])
+def test_verify_requires_numeric_exp(exp):
+    assert 'exp' in _rejected(make_token(exp=exp))
+
+
+def test_verify_rejects_not_yet_valid():
+    now = time.time()
+    assert _rejected(make_token(nbf=int(now) + 3600)) == 'token rejected (not yet valid)'
+    assert _verify(make_token(nbf=int(now) + 30))   # within LEEWAY
+
+
+def test_verify_rejects_iat_in_future():
+    now = time.time()
+    assert _rejected(make_token(iat=int(now) + 3600)) == 'token rejected (issued in the future)'
+    assert _rejected(make_token(iat='yesterday')) == 'token rejected (invalid iat)'
+
+
+@pytest.mark.parametrize('aud', [['b' * 64], 'b' * 64, [], None, [AUD.upper()], [[AUD]], {'aud': AUD}])
+def test_verify_rejects_wrong_aud(aud):
+    assert _rejected(make_token(aud=aud)) == 'token rejected (aud)'
+
+
+def test_verify_accepts_aud_among_several():
+    assert _verify(make_token(aud=['b' * 64, AUD]))
+
+
+@pytest.mark.parametrize('iss', ['https://other.cloudflareaccess.com', f'http://{TEAM}', f'https://{TEAM}/',
+                                 TEAM, None, ISS.upper()])
+def test_verify_rejects_wrong_iss(iss):
+    assert _rejected(make_token(iss=iss)) == 'token rejected (iss)'
+
+
+def test_verify_rejects_tampered_payload():
+    assert _rejected(_tampered_token()) == 'token rejected (bad signature)'
+
+
+def test_verify_rejects_tampered_header():
+    head, payload, sig = make_token(key=KEY1, kid='k1').split('.')
+    forged_head = _b64({'alg': 'RS256', 'kid': 'k1', 'typ': 'JWT', 'x': 1})
+    assert _rejected('.'.join((forged_head, payload, sig))) == 'token rejected (bad signature)'
+
+
+def test_verify_rejects_tampered_signature():
+    head, payload, sig = make_token().split('.')
+    raw = bytearray(base64.urlsafe_b64decode(sig + '=' * (-len(sig) % 4)))
+    raw[10] ^= 0x01
+    assert _rejected('.'.join((head, payload, _b64u(bytes(raw))))) == 'token rejected (bad signature)'
+    assert _rejected('.'.join((head, payload, _b64u(bytes(raw[:-1]))))) == 'token rejected (bad signature)'
+
+
+def test_verify_rejects_critical_header():
+    assert 'critical' in _rejected(make_token(header={'crit': ['exp'], 'exp': 1}))
+
+
+@pytest.mark.parametrize('token', [
+    '', 'not-a-jwt', 'a.b', 'a.b.c', 'a.b.c.d', '...', 'x' * (cf_access.MAX_TOKEN_BYTES + 1),
+    _b64(['alg', 'RS256']) + '.' + _b64({}) + '.' + _b64u(b'sig'),         # header not an object
+    _b64({'alg': 'RS256', 'kid': 'k1'}) + '.' + _b64({}) + '.',            # empty signature
+    _b64({'alg': 'RS256', 'kid': 'k1'}) + '.' + _b64({}) + '.sig+/=',     # not base64url
+    'eyJhbGciOiJSUzI1NiJ9=.e30.c2ln',                                     # padded
+    _b64u(b'\xff\xfe') + '.' + _b64({}) + '.' + _b64u(b'sig'),           # not JSON
+    None, 12345, b'a.b.c',
+])
+def test_verify_rejects_malformed(token):
+    assert _rejected(token) == 'malformed token'
+
+
+def test_verify_rejects_signed_non_object_payload():
+    head = _b64({'alg': 'RS256', 'kid': 'k1'})
+    payload = _b64u(b'[1, 2]')
+    sig = KEY1.sign(f'{head}.{payload}'.encode(), padding.PKCS1v15(), hashes.SHA256())
+    assert _rejected(f'{head}.{payload}.{_b64u(sig)}') == 'malformed token'
+
+
+def test_verify_needs_configuration():
+    with pytest.raises(cf_access.CfAccessError):
+        cf_access.verify_token(make_token(), TEAM, '')
+    with pytest.raises(cf_access.CfAccessError):
+        cf_access.verify_token(make_token(), '', AUD)
 
 
 # --- logout ---------------------------------------------------------------------

@@ -81,57 +81,28 @@ def refunds():
 
 @pos_bp.route('/refunds/auth', methods=['GET', 'POST'])
 def refund_auth():
-    """Manager authentication for refunds."""
+    """Manager authentication for refunds: username + password."""
     if request.method == 'POST':
-        from werkzeug.security import check_password_hash
-        from app.services.auth import User
-        from app.utils.permissions import (has_permission, manager_auth_throttled,
+        from app.utils.permissions import (check_manager_password, manager_auth_throttled,
                                            record_manager_auth_failure, record_manager_auth_success)
 
-        username = request.form.get('username', '')
+        username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        pin = request.form.get('pin', '')
-        badge_id = request.form.get('badge_id', '')
 
         if manager_auth_throttled(username):
             flash('Too many failed attempts. Wait 5 minutes and try again.')
             return render_template('pos/refund_auth.html'), 429
-        
-        # If badge_id provided, find user by badge
-        user_obj = None
-        if badge_id and not username:
-            from app.services.db import get_request_db
-            conn = get_request_db()
-            row = conn.execute("SELECT id FROM users WHERE badge_id = ?", (badge_id,)).fetchone()
-            if row:
-                user_obj = User.get(row['id'])
-        elif username:
-            user_obj = User.get_by_username(username)
-            
-        if user_obj and has_permission(user_obj, 'pos.manage'):
-            # Check password, PIN, or Badge
-            from app.services.db import get_request_db
-            conn = get_request_db()
-            pwd_row = conn.execute("SELECT password_hash, pin_hash, badge_id FROM users WHERE id = ?", (user_obj.id,)).fetchone()
-            
-            authenticated = False
-            if pwd_row:
-                if password and check_password_hash(pwd_row['password_hash'], password):
-                    authenticated = True
-                elif pin and pwd_row['pin_hash'] and check_password_hash(pwd_row['pin_hash'], pin):
-                    authenticated = True
-                elif badge_id and pwd_row['badge_id'] == badge_id:
-                    authenticated = True
-            
-            if authenticated:
-                record_manager_auth_success(username or user_obj.username)
-                session['pos_refund_manager_auth'] = {
-                    'username': user_obj.username,
-                    'timestamp': datetime.now().timestamp()
-                }
-                flash(f'Manager {user_obj.username} authenticated.')
-                return redirect(url_for('pos.refunds'))
-        
+
+        manager = check_manager_password(username, password)
+        if manager is not None:
+            record_manager_auth_success(username)
+            session['pos_refund_manager_auth'] = {
+                'username': manager.username,
+                'timestamp': datetime.now().timestamp()
+            }
+            flash(f'Manager {manager.username} authenticated.')
+            return redirect(url_for('pos.refunds'))
+
         record_manager_auth_failure(username)
         flash('Invalid manager credentials.')
 
@@ -140,63 +111,37 @@ def refund_auth():
 
 @pos_bp.route('/verify-manager', methods=['POST'])
 def verify_manager():
-    """API endpoint to verify manager PIN/Badge for discount approval.
-    
-    Returns JSON with success status and manager username.
+    """Approve a discount over the limit: a manager's username + password (JSON).
+
+    Returns JSON with success status and manager username; the approval is
+    kept in the session for the discount route.
     """
-    from werkzeug.security import check_password_hash
-    from app.services.auth import User
-    from app.utils.permissions import has_permission
     from flask import jsonify
-    
-    from app.utils.permissions import (manager_auth_throttled, record_manager_auth_failure,
-                                       record_manager_auth_success)
+    from app.utils.permissions import (check_manager_password, manager_auth_throttled,
+                                       record_manager_auth_failure, record_manager_auth_success)
 
-    data = request.get_json() or {}
-    pin = data.get('pin', '')
-    badge_id = data.get('badge_id', '')
+    data = request.get_json(silent=True) or {}
+    username = data.get('username') if isinstance(data.get('username'), str) else ''
+    password = data.get('password') if isinstance(data.get('password'), str) else ''
+    username = username.strip()
+    if not username or not password:
+        return jsonify({'success': False, 'error': 'Manager username and password required'}), 400
 
-    if not pin and not badge_id:
-        return jsonify({'success': False, 'error': 'PIN or Badge ID required'}), 400
-
-    if manager_auth_throttled():
+    if manager_auth_throttled(username):
         return jsonify({'success': False, 'error': 'Too many failed attempts. Wait 5 minutes.'}), 429
-    
-    # Get all users from database to check their credentials
-    from app.services.db import get_request_db
-    conn = get_request_db()
-    rows = conn.execute("SELECT id, username, password_hash, pin_hash, badge_id FROM users").fetchall()
-    
-    for r in rows:
-        user_obj = User.get(r['id'])
-        if not user_obj or not has_permission(user_obj, 'pos.manage'):
-            continue
-        
-        authenticated = False
-        
-        # Check PIN
-        if pin and r['pin_hash']:
-            if check_password_hash(r['pin_hash'], pin):
-                authenticated = True
-        
-        # Check Badge ID
-        if badge_id and r['badge_id'] == badge_id:
-            authenticated = True
-        
-        if authenticated:
-            record_manager_auth_success(r['username'])
-            # Store manager approval in session for this discount
-            session['pos_discount_manager_auth'] = {
-                'username': r['username'],
-                'timestamp': datetime.now().timestamp()
-            }
-            return jsonify({
-                'success': True,
-                'manager': r['username']
-            })
-    
-    record_manager_auth_failure()
-    return jsonify({'success': False, 'error': 'Invalid manager credentials'}), 401
+
+    manager = check_manager_password(username, password)
+    if manager is None:
+        record_manager_auth_failure(username)
+        return jsonify({'success': False, 'error': 'Invalid manager credentials'}), 401
+
+    record_manager_auth_success(username)
+    # Store manager approval in session for this discount
+    session['pos_discount_manager_auth'] = {
+        'username': manager.username,
+        'timestamp': datetime.now().timestamp()
+    }
+    return jsonify({'success': True, 'manager': manager.username})
 
 
 @pos_bp.route('/refunds/search')

@@ -15,15 +15,14 @@ from app.services.data_manager import load_config, BASE_DIR
 from app import paths
 from app.services.migration import run_migrations
 from app.services.logger import log_exception, configure_logging
-# Imported eagerly so authlib.jose is loaded before anything (e.g. a test that
-# stubs out `authlib`) can shadow it.
-from app.services import cf_access  # noqa: F401
+# Cloudflare Access sign-in, used by the login guard below.
+from app.services import cf_access
 
 def _template_config(conf):
     """Settings minus credentials, for templates. Secrets are the registry's
     secret settings plus any key named like one (SECRET/PASS/TOKEN/...).
     Templates can still ask whether a secret is set via <KEY>_SET
-    (e.g. config.SSO_CLIENT_SECRET_SET)."""
+    (e.g. config.PUBLIC_API_KEY_SET)."""
     from app.services.settings import template_view
     return template_view(conf)
 
@@ -85,7 +84,7 @@ def create_app(test_config=None):
     # Static file caching (1 week for images, CSS, JS)
     app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 604800  # 7 days in seconds
     
-    # Login, POS PIN/badge, manager-override and pairing-code throttling use
+    # Login, manager-approval and pairing-code throttling use
     # app/services/throttle.py (shared across workers via SQLite);
     # Flask-Limiter's memory:// store is per-process.
 
@@ -93,29 +92,10 @@ def create_app(test_config=None):
     from app.services.db import init_app as init_db_app
     init_db_app(app)
 
-    # Initialize Authlib (SSO)
-    from authlib.integrations.flask_client import OAuth
-    oauth = OAuth(app)
-    
-    # Register OIDC Provider if configured
-    # We use a try/except block to avoid crashing if config is missing (will just disable SSO)
-    try:
-        # load_config is already imported globally
-        conf = load_config()
-        if conf.get('SSO_CLIENT_ID') and conf.get('SSO_CLIENT_SECRET'):
-            oauth.register(
-                name='rscp_sso',
-                client_id=conf.get('SSO_CLIENT_ID'),
-                client_secret=conf.get('SSO_CLIENT_SECRET'),
-                server_metadata_url=conf.get('SSO_DISCOVERY_URL', 'https://accounts.google.com/.well-known/openid-configuration'),
-                client_kwargs={'scope': 'openid email profile'}
-            )
-    except Exception as e:
-        app.logger.warning(f"SSO Registration Failed: {e}")
+    # Sign-in is local username/password (/login) or Cloudflare Access
+    # (app/services/cf_access.py). RSCP's own Google/OIDC sign-in was removed
+    # in 3.0; schema migration 22 retired its settings.
 
-    # Make oauth available to blueprints
-    app.oauth = oauth
-    
     # Uploaded files live in the data directory but keep their historical
     # /static/uploads/... URLs. This rule is more specific than Flask's
     # /static/<path> rule, so it wins for those paths.
@@ -239,10 +219,10 @@ def create_app(test_config=None):
             import time
 
             # Public paths that must match EXACTLY. The index page renders or
-            # redirects for itself. (Historically '/' was matched with
-            # startswith, which — since every path starts with '/' — silently
-            # disabled this entire guard.)
-            public_exact = {'/', '/favicon.ico', '/healthz'}
+            # redirects for itself; /pos/logout only redirects to /logout.
+            # (Historically '/' was matched with startswith, which — since
+            # every path starts with '/' — silently disabled this entire guard.)
+            public_exact = {'/', '/favicon.ico', '/healthz', '/pos/logout'}
 
             # Public path PREFIXES: truly public pages, plus endpoints that
             # authenticate themselves (API key / pairing token) and therefore
