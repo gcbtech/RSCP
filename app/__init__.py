@@ -81,8 +81,27 @@ def create_app(test_config=None):
     # File Upload Size Limit (32MB)
     app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
     
-    # Static file caching (1 week for images, CSS, JS)
+    # Static file caching (1 week for images, CSS, JS). Browsers and the
+    # Cloudflare edge reuse a cached copy without asking for that long, so
+    # every url_for('static', ...) carries ?v=<the file's mtime>: a file that
+    # changes in a release gets a new URL and is fetched at once. (3.0.1's
+    # stock buttons were dead on Prod for browsers still holding last week's
+    # inventory-common.js.)
     app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 604800  # 7 days in seconds
+    static_versions = {}
+
+    @app.url_defaults
+    def static_cache_bust(endpoint, values):
+        if endpoint != 'static' or 'v' in values or not values.get('filename'):
+            return
+        filename = values['filename']
+        if filename not in static_versions:
+            try:
+                static_versions[filename] = int(os.stat(os.path.join(app.static_folder, filename)).st_mtime)
+            except OSError:
+                static_versions[filename] = None   # not a file under static/ (e.g. an upload)
+        if static_versions[filename]:
+            values['v'] = static_versions[filename]
     
     # Login, manager-approval and pairing-code throttling use
     # app/services/throttle.py (shared across workers via SQLite);

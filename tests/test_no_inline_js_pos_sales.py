@@ -235,7 +235,7 @@ def test_register_page_wiring(pos_world):
     html = _get(reg, '/pos/', hdr)
     assert _page_data(html) == {'cartAddUrl': '/pos/cart/add'}
     scan = _scan(html)
-    assert any(src.endswith('/js/pages/pos-sales.js') for src in scan.script_srcs)
+    assert any(src.split('?')[0].endswith('/js/pages/pos-sales.js') for src in scan.script_srcs)
     # Cart controls (also in every hot-swapped fragment)
     for marker in ('data-confirm="Clear entire cart?"', 'data-change="submitForm"',
                    'data-action="holdOrder"', 'data-action="applyCouponFromModal"',
