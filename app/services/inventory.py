@@ -1168,7 +1168,7 @@ def overview_data(conn, low_threshold, now=None):
 
     now_str = now.strftime('%Y-%m-%d %H:%M:%S')
     attention_items = conn.execute(f'''
-        SELECT id, name, quantity
+        SELECT id, name, quantity, alert_threshold
         FROM inventory_items
         {_ATTENTION_WHERE}
         AND (attention_snoozed_until IS NULL OR attention_snoozed_until <= ?)

@@ -81,7 +81,7 @@ def overview():
     try:
         stats = inventory.inventory_stats(conn, low_threshold)
         data = inventory.overview_data(conn, low_threshold)
-        return render_template('inventory/overview.html', stats=stats, **data)
+        return render_template('inventory/overview.html', stats=stats, low_threshold=low_threshold, **data)
     finally:
         conn.close()
 

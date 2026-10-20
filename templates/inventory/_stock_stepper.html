@@ -1,0 +1,20 @@
+{# Stock +/- control for one item, wired up by inventory-common.js (data-action
+   "stockStep" -> POST /inventory/api/quick_adjust). `source` names the page in
+   the stock history ("overview" or "low_stock"); `threshold` decides when the
+   badge reads Low vs OK after a change. #}
+{% macro stock_stepper(item, source, threshold, labels=false) -%}
+{%- set qty = item.quantity or 0 -%}
+<div class="stock-stepper d-inline-flex align-items-center gap-1 text-nowrap"
+     data-item-id="{{ item.id }}" data-source="{{ source }}" data-threshold="{{ threshold }}"
+     data-labels="{{ 'true' if labels else 'false' }}">
+    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" data-action="stockStep" data-delta="-1"
+            title="Remove one from stock" aria-label="Remove one {{ item.name }}" {% if qty <= 0 %}disabled{% endif %}>&minus;</button>
+    <span class="badge stock-qty {% if qty <= 0 %}bg-danger{% elif qty <= threshold %}bg-warning text-dark{% else %}bg-success{% endif %}">
+        {%- if labels -%}
+            {%- if qty <= 0 %}Out of Stock ({{ qty }}){% elif qty <= threshold %}Low ({{ qty }}){% else %}OK ({{ qty }}){% endif -%}
+        {%- else -%}{{ qty }}{%- endif -%}
+    </span>
+    <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-2" data-action="stockStep" data-delta="1"
+            title="Add one to stock" aria-label="Add one {{ item.name }}">+</button>
+</div>
+{%- endmacro %}

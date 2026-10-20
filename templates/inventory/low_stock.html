@@ -1,4 +1,5 @@
 {% extends 'base.html' %}
+{% from 'inventory/_stock_stepper.html' import stock_stepper %}
 {% block title %}Low Stock Report{% endblock %}
 
 {% block head %}
@@ -85,13 +86,7 @@
                                 <a href="{{ url_for('inventory.edit_item', item_id=item.id) }}"
                                     class="text-decoration-none fw-bold">{{ item.name }}</a>
                             </td>
-                            <td>
-                                {% if item.quantity <= 0 %} <span class="badge bg-danger">Out of Stock ({{ item.quantity
-                                    }})</span>
-                                    {% else %}
-                                    <span class="badge bg-warning text-dark">Low ({{ item.quantity }})</span>
-                                    {% endif %}
-                            </td>
+                            <td>{{ stock_stepper(item, 'low_stock', item.alert_threshold or 0, labels=true) }}</td>
                             <td>{{ item.alert_threshold }}</td>
                             <td>{{ item.supplier or '-' }}</td>
                             <td class="text-end">

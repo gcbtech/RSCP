@@ -149,15 +149,31 @@ def lookup_sku(sku):
         conn.close()
 
 
+# Pages that send quick adjustments, and the note their ledger rows carry.
+QUICK_ADJUST_SOURCES = {
+    'scan': 'Scan screen',
+    'overview': 'Inventory overview',
+    'low_stock': 'Low stock report',
+}
+QUICK_ADJUST_MAX = 1000
+
+
 @inventory_bp.route('/api/quick_adjust/<int:item_id>', methods=['POST'])
 def quick_adjust(item_id):
-    """Quick quantity adjustment from scan page (supports -1, +1, custom, OOS)."""
+    """Quick quantity adjustment (supports -1, +1, custom, OOS) from the scan
+    screen, the overview's "Items Needing Attention" and the low stock report."""
     if not is_inventory_enabled():
         return jsonify({"error": "Inventory not enabled"}), 400
-    
-    data = request.get_json() or {}
-    change = int(data.get('change', 0))
+
+    data = request.get_json(silent=True) or {}
     action = data.get('action', '')  # 'oos' for mark out of stock
+    try:
+        change = int(data.get('change', 0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "Change must be a whole number"}), 400
+    if action != 'oos' and (change == 0 or abs(change) > QUICK_ADJUST_MAX):
+        return jsonify({"error": f"Change must be between -{QUICK_ADJUST_MAX} and {QUICK_ADJUST_MAX}, not 0"}), 400
+    note = QUICK_ADJUST_SOURCES.get(data.get('source') or 'scan', QUICK_ADJUST_SOURCES['scan'])
 
     conn = get_db_connection()
     try:
@@ -167,7 +183,7 @@ def quick_adjust(item_id):
             result = inventory.mark_out_of_stock(conn, item_id, user)
         else:
             reason = inventory.REASON_CONSUMED if change < 0 else inventory.REASON_RECEIVE
-            result = inventory.adjust_stock(conn, item_id, change, reason, user, 'Scan screen')
+            result = inventory.adjust_stock(conn, item_id, change, reason, user, note)
         return jsonify({
             "success": True,
             "new_quantity": result.new_quantity,
