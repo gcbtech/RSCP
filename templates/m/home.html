@@ -1,0 +1,110 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}Home{% endblock %}
+{% block content %}
+{#- static/m/home.js swaps #mHome for a fresh copy every minute -#}
+<div class="m-stack" id="mHome">
+{% set actions = [] %}
+{% if 'receive' in modules %}{% set _ = actions.append(('Scan in', 'scan', url_for('mobile.receive'))) %}{% endif %}
+{% if 'stock' in modules %}{% set _ = actions.append(('Look up', 'search', url_for('mobile.stock'))) %}{% endif %}
+{% if 'pos' in modules %}{% set _ = actions.append(('New sale', 'pos', url_for('mobile.pos'))) %}{% endif %}
+
+{% if not modules %}
+<div class="m-card m-pad">
+    <p class="m-strong">No modules yet</p>
+    <p class="m-muted">Your account can't open any part of RSCP. Ask an admin to give you a role.</p>
+</div>
+{% else %}
+
+{% if actions %}
+<div class="m-qa" style="grid-template-columns: repeat({{ actions|length }}, minmax(0, 1fr))">
+    {% for label, ic, url in actions %}
+    <a class="m-tile{% if loop.first %} m-tile-hi{% endif %}" href="{{ url }}">{{ icon(ic) }}<span>{{ label }}</span></a>
+    {% endfor %}
+</div>
+{% endif %}
+
+<h2 class="m-lbl">Today · {{ today.strftime('%a, %b %d').replace(' 0', ' ') }}</h2>
+<div class="m-card">
+    {% if receiving %}
+    {% set e = receiving.expected %}
+    <a class="m-row" href="{{ url_for('mobile.receive_expected') }}">
+        <span class="m-lead m-tone-ac">{{ icon('receive') }}</span>
+        <span class="m-t">
+            <span class="m-t1">Expected today</span>
+            {% if e.total %}
+            <span class="m-t2">{{ e.scanned }} of {{ e.total }} scanned</span>
+            <span class="m-bar" role="progressbar" aria-label="Expected packages scanned" aria-valuemin="0"
+                aria-valuemax="{{ e.total }}" aria-valuenow="{{ e.scanned }}"><span style="width: {{ (100 * e.scanned / e.total)|round|int }}%"></span></span>
+            {% else %}
+            <span class="m-t2">Nothing expected today</span>
+            {% endif %}
+        </span>
+        {{ icon('chev', 'm-chev') }}
+    </a>
+    <a class="m-row" href="{{ url_for('mobile.receive_past_due') }}">
+        <span class="m-lead {{ 'm-tone-wn' if receiving.past_due.count else 'm-tone-nu' }}">{{ icon('alert') }}</span>
+        <span class="m-t"><span class="m-t1">Past due</span><span class="m-t2">Packages not received yet</span></span>
+        <span class="m-pill {{ 'm-tone-wn' if receiving.past_due.count else 'm-tone-nu' }}">{{ receiving.past_due.count }}</span>
+        {{ icon('chev', 'm-chev') }}
+    </a>
+    <a class="m-row" href="{{ url_for('mobile.receive_returns') }}">
+        <span class="m-lead m-tone-nu">{{ icon('returns') }}</span>
+        <span class="m-t"><span class="m-t1">Open returns</span><span class="m-t2">{{ receiving.refunded.count }} refunded in the last 30 days</span></span>
+        <span class="m-pill m-tone-nu">{{ receiving.returns.open }}</span>
+        {{ icon('chev', 'm-chev') }}
+    </a>
+    {% endif %}
+
+    {% if stock %}
+    {% set attention = stock.low_stock + stock.out_of_stock %}
+    <a class="m-row" href="{{ url_for('mobile.stock_low') }}">
+        <span class="m-lead {{ 'm-tone-bd' if attention else 'm-tone-nu' }}">{{ icon('low') }}</span>
+        <span class="m-t"><span class="m-t1">Low stock</span><span class="m-t2">{{ stock.low_stock }} low · {{ stock.out_of_stock }} out of stock</span></span>
+        <span class="m-pill {{ 'm-tone-bd' if attention else 'm-tone-nu' }}">{{ attention }}</span>
+        {{ icon('chev', 'm-chev') }}
+    </a>
+    {% if audit %}
+    <a class="m-row" href="{{ url_for('mobile.stock_audit_live', session_id=audit.id) }}">
+        <span class="m-lead m-tone-ac">{{ icon('audit') }}</span>
+        <span class="m-t"><span class="m-t1">{{ audit.mode|capitalize }} audit in progress</span><span class="m-t2">{{ audit.counted }} counted · tap to resume</span></span>
+        {{ icon('chev', 'm-chev') }}
+    </a>
+    {% endif %}
+    {% endif %}
+
+    {% if clock %}
+    <a class="m-row" href="{{ url_for('mobile.time') }}">
+        {% if clock.state == 'shift' %}
+        <span class="m-lead m-tone-ok">{{ icon('time') }}</span>
+        <span class="m-t"><span class="m-t1">Clocked in</span><span class="m-t2">{% if clock.since %}Since {{ clock.since }} · {{ clock.duration }}{% else %}On the clock{% endif %}</span></span>
+        {% elif clock.state == 'break' %}
+        <span class="m-lead m-tone-wn">{{ icon('coffee') }}</span>
+        <span class="m-t"><span class="m-t1">On break</span><span class="m-t2">{% if clock.since %}Since {{ clock.since }} · {{ clock.duration }}{% else %}On break{% endif %}</span></span>
+        {% elif clock.state == 'unknown' %}
+        <span class="m-lead m-tone-nu">{{ icon('time') }}</span>
+        <span class="m-t"><span class="m-t1">Timeclock</span><span class="m-t2">Open the Time tab</span></span>
+        {% else %}
+        <span class="m-lead m-tone-nu">{{ icon('time') }}</span>
+        <span class="m-t"><span class="m-t1">Clocked out</span><span class="m-t2">Tap to clock in</span></span>
+        {% endif %}
+        {{ icon('chev', 'm-chev') }}
+    </a>
+    {% endif %}
+
+    {% if team %}
+    <a class="m-row" href="{{ url_for('mobile.time_team') }}">
+        <span class="m-lead {{ 'm-tone-wn' if team.pending else 'm-tone-nu' }}">{{ icon('users') }}</span>
+        <span class="m-t"><span class="m-t1">Team</span>
+            <span class="m-t2 m-wrap">{{ team.on_clock }} on the clock · {{ team.pending }} time-off request{{ '' if team.pending == 1 else 's' }} waiting</span></span>
+        {% if team.pending %}<span class="m-pill m-tone-wn">{{ team.pending }}</span>{% endif %}
+        {{ icon('chev', 'm-chev') }}
+    </a>
+    {% endif %}
+</div>
+{% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='m/home.js') }}"></script>
+{% endblock %}

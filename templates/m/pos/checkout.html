@@ -1,0 +1,93 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{#
+  Checkout. Posts the desktop checkout's fields to /m/pos/checkout, which runs
+  the desktop's checkout_process (pos_checkout.complete_sale): one-time token,
+  expected total and cart version guard against double taps and a cart that
+  changed meanwhile. static/m/checkout.js handles the tender and the change.
+#}
+{% block title %}Checkout{% endblock %}
+{% block top_left %}<a class="m-ib" href="{{ url_for('mobile.pos') }}" aria-label="Back to the cart">{{ icon('back') }}</a>{% endblock %}
+{% block top_actions %}{% set units = cart['items']|sum(attribute='quantity') %}<span class="m-top-note">{{ units }} item{{ '' if units == 1 else 's' }}</span>{% endblock %}
+{% block tabs %}{% endblock %}
+{% block body_class %}m-has-actionbar{% endblock %}
+{% block content %}
+{% set cash_on = totals.cash_discount_enabled and totals.cash_discount_cents %}
+<section class="m-card m-pad" aria-live="polite">
+    <div class="m-lbl-inline">Due</div>
+    <div class="m-due" id="mDue">${{ totals.card_total_cents|dollars }}</div>
+    <div class="m-t2" id="mDueNote">{% if cash_on %}Card price · cash price ${{ totals.cash_total_cents|dollars }}{% else %}Including tax ${{ totals.tax_amount_cents|dollars }}{% endif %}</div>
+</section>
+
+<details class="m-card m-summary">
+    <summary class="m-row">
+        <span class="m-t"><span class="m-t1">Order summary</span></span>{{ icon('chev', 'm-chev') }}
+    </summary>
+    {% for it in cart['items'] %}
+    <div class="m-sumline"><span>{{ it.name }} ×{{ it.quantity }}</span><span>${{ it.line_total_cents|dollars }}</span></div>
+    {% endfor %}
+    <div class="m-sumline"><span>Subtotal</span><span>${{ totals.subtotal_cents|dollars }}</span></div>
+    {% if totals.order_discount_cents %}<div class="m-sumline"><span>Discount</span><span>−${{ totals.order_discount_cents|dollars }}</span></div>{% endif %}
+    {% if totals.coupon_discount_cents %}<div class="m-sumline"><span>Coupon</span><span>−${{ totals.coupon_discount_cents|dollars }}</span></div>{% endif %}
+    <div class="m-sumline"><span>Tax ({{ '%.2f'|format(totals.tax_rate_pct) }}%)</span><span>${{ totals.tax_amount_cents|dollars }}</span></div>
+    <div class="m-sumline m-sumtotal"><span>Total</span><span>${{ totals.card_total_cents|dollars }}</span></div>
+</details>
+
+<form id="mCheckoutForm" method="post" action="{{ url_for('mobile.pos_checkout') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="checkout_token" value="{{ checkout_token }}">
+    <input type="hidden" name="expected_total" value="{{ totals.card_total_cents|dollars }}">
+    {% if cart_version is not none %}<input type="hidden" name="cart_version" value="{{ cart_version }}">{% endif %}
+    <input type="hidden" name="payment_method" id="mPayMethod" value="cash">
+
+    <fieldset class="m-fieldset">
+        <legend class="m-sr">Payment method</legend>
+        <div class="m-seg" role="radiogroup">
+            <label><input type="radio" name="tender" value="cash" checked data-change="mTender"><span>Cash</span></label>
+            <label><input type="radio" name="tender" value="card" data-change="mTender"><span>Card</span></label>
+            <label><input type="radio" name="tender" value="split" data-change="mTender"><span>Split</span></label>
+        </div>
+    </fieldset>
+
+    <div class="m-pay" data-pay="cash">
+        <label class="m-label" for="mTendered">Amount tendered</label>
+        <input class="m-input m-money" id="mTendered" name="tendered" type="text" inputmode="decimal" value="0.00" data-input="mCalc">
+        <div class="m-change" id="mChangeRow" aria-live="polite"><span>Change due</span><span id="mChange">$0.00</span></div>
+        <div class="m-quickcash">
+            {% for amount in (1, 5, 10, 20, 50, 100) %}
+            <button class="m-btn m-btn-s" type="button" data-action="mAddCash" data-amount="{{ amount }}">${{ amount }}</button>
+            {% endfor %}
+            <button class="m-btn m-btn-s" type="button" data-action="mExactCash">Exact</button>
+            <button class="m-btn m-btn-s" type="button" data-action="mClearCash">Clear</button>
+        </div>
+    </div>
+
+    <div class="m-pay" data-pay="card" hidden>
+        <div class="m-card m-pad">
+            <p class="m-strong">Enter <span id="mCardDue">${{ totals.card_total_cents|dollars }}</span> on the card terminal.</p>
+            <p class="m-muted">Press Complete sale once the payment is approved.</p>
+        </div>
+    </div>
+
+    <div class="m-pay" data-pay="split" hidden>
+        <div class="m-grid2">
+            <div><label class="m-label" for="mSplitCash">Cash</label><input class="m-input m-money" id="mSplitCash" name="cash_amount" type="text" inputmode="decimal" value="0.00" data-input="mCalc" disabled></div>
+            <div><label class="m-label" for="mSplitCard">Card</label><input class="m-input m-money" id="mSplitCard" name="card_amount" type="text" inputmode="decimal" value="0.00" data-input="mCalc" disabled></div>
+        </div>
+        <div class="m-change" id="mRemainRow"><span>Still to pay</span><span id="mRemain">${{ totals.card_total_cents|dollars }}</span></div>
+    </div>
+</form>
+
+<div class="m-actionbar">
+    <button class="m-btn m-btn-p m-block m-btn-tall" type="submit" form="mCheckoutForm" id="mComplete">{{ icon('check') }}Complete sale</button>
+</div>
+{% endblock %}
+{% block page_data %}
+<script type="application/json" id="page-data">{{ {
+    'cardCents': totals.card_total_cents,
+    'cashCents': totals.cash_total_cents if cash_on else totals.card_total_cents,
+}|tojson }}</script>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='m/checkout.js') }}"></script>
+{% endblock %}

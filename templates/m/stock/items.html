@@ -1,0 +1,28 @@
+{% extends 'm/base.html' %}
+{% block title %}Stock{% endblock %}
+{% block chips %}{% include 'm/stock/_chips.html' %}{% endblock %}
+{% block content %}
+<form method="get" action="{{ url_for('mobile.stock_items') }}" role="search">
+    <label class="m-label" for="mItemsQuery">Search name, SKU, UPC, area or keywords</label>
+    <div class="m-inline">
+        <input class="m-input" id="mItemsQuery" name="q" type="search" value="{{ query }}" autocomplete="off" spellcheck="false" enterkeyhint="search">
+        <button class="m-btn m-btn-s" type="submit">Search</button>
+    </div>
+</form>
+<h2 class="m-lbl">{{ total }} item{{ '' if total == 1 else 's' }}{% if pages > 1 %} · page {{ page }} of {{ pages }}{% endif %}</h2>
+{% if rows %}
+<div class="m-card">
+    {% for r in rows %}
+    {% include 'm/stock/_item_row.html' %}
+    {% endfor %}
+</div>
+{% if pages > 1 %}
+<nav class="m-grid2" aria-label="Pages">
+    {% if page > 1 %}<a class="m-btn m-btn-s" href="{{ url_for('mobile.stock_items', q=query or None, page=page - 1) }}">Previous</a>{% else %}<span></span>{% endif %}
+    {% if page < pages %}<a class="m-btn m-btn-s" href="{{ url_for('mobile.stock_items', q=query or None, page=page + 1) }}">Next</a>{% endif %}
+</nav>
+{% endif %}
+{% else %}
+<div class="m-card m-pad"><p class="m-strong">No items found</p><p class="m-muted">Try fewer or different words.</p></div>
+{% endif %}
+{% endblock %}

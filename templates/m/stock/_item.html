@@ -1,0 +1,60 @@
+{#
+  An item card with its stock buttons (static/m/stockcard.js). Rendered by the
+  lookup (POST /m/stock/find) and the item page. item: _card_item() in
+  app/routes/mobile/stock.py; movements: inventory.item_movements() rows.
+#}
+{% from 'm/_icons.html' import icon %}
+<article class="m-card m-pad" data-stock-item="{{ item.id }}">
+    <div class="m-item">
+        {% if item.image_url %}<img class="m-thumb" src="{{ item.image_url }}" alt="">{% else %}<span class="m-thumb">{{ icon('image') }}</span>{% endif %}
+        <span class="m-t">
+            <span class="m-item-name">{{ item.name }}</span>
+            <span class="m-t2 m-mono">{{ item.sku }}</span>
+            {% if item.is_legacy %}<span class="m-tag m-tone-nu">Legacy</span>{% endif %}
+        </span>
+    </div>
+
+    <div class="m-stepper m-gap">
+        <button class="m-step" type="button" data-action="mAdjust" data-change="-1" aria-label="Remove one from stock">{{ icon('minus') }}</button>
+        <div class="m-stepper-val" aria-live="polite">
+            <span class="m-stepper-num" data-qty>{{ item.quantity or 0 }}</span>
+            <span class="m-t2">in stock{% if item.alert_threshold %} · low at {{ item.alert_threshold }}{% endif %}</span>
+        </div>
+        <button class="m-step" type="button" data-action="mAdjust" data-change="1" aria-label="Add one to stock">{{ icon('plus') }}</button>
+    </div>
+
+    <dl class="m-facts m-gap">
+        <div><dt>Price</dt><dd>
+            {%- if item.current_price_cents -%}
+            ${{ item.current_price_cents|dollars }}{% if item.is_on_sale %} <s class="m-was">${{ item.regular_price_cents|dollars }}</s> <span class="m-tag m-tone-bd">Sale</span>{% endif %}
+            {%- else -%}<span class="m-muted-inline">Not set</span>{%- endif -%}
+        </dd></div>
+        <div><dt>Location</dt><dd>{{ item.location or '—' }}</dd></div>
+        {% if item.upc %}<div><dt>UPC</dt><dd class="m-mono">{{ item.upc }}</dd></div>{% endif %}
+        {% if item.part_number %}<div><dt>Part no.</dt><dd class="m-mono">{{ item.part_number }}</dd></div>{% endif %}
+        {% if item.incoming_count %}<div><dt>On the way</dt><dd>{{ item.incoming_count }}</dd></div>{% endif %}
+    </dl>
+
+    <div class="m-grid2 m-gap">
+        <button class="m-btn m-btn-s" type="button" data-action="mOpenCount">Set count</button>
+        <button class="m-btn m-btn-s" type="button" data-action="mMarkOOS" data-confirm="Mark {{ item.name }} out of stock?">Out of stock</button>
+    </div>
+    {% if can_manage %}
+    <a class="m-btn m-btn-s m-block m-gap" href="{{ url_for('inventory.edit_item', item_id=item.id) }}">{{ icon('pencil') }}Edit on the desktop page</a>
+    {% endif %}
+
+    {% if movements %}
+    <h3 class="m-sub-lbl">Recent activity</h3>
+    <ul class="m-moves">
+        {% for m in movements %}
+        <li>
+            <span class="m-move-delta {{ 'm-up' if m.delta > 0 else 'm-down' if m.delta < 0 else '' }}">{{ '%+d'|format(m.delta) }}</span>
+            <span class="m-t">
+                <span class="m-t1">{{ m.label }}{% if m.order_number %} · {{ m.order_number }}{% elif m.tracking %} · <span class="m-mono">{{ m.tracking }}</span>{% elif m.audit_id %} · audit #{{ m.audit_id }}{% endif %}</span>
+                <span class="m-t2">{{ m.created_at|local_time('%b %d, %I:%M %p') }}{% if m.user_name %} · {{ m.user_name }}{% endif %}</span>
+            </span>
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+</article>

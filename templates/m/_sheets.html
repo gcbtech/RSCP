@@ -1,0 +1,44 @@
+{# Bottom sheets shared by every phone page: account (theme, desktop view, sign out) and notifications. #}
+{% from 'm/_icons.html' import icon %}
+<dialog class="m-sheet" id="mAccount" aria-labelledby="mAccountTitle">
+    <div class="m-grab" aria-hidden="true"></div>
+    <h2 class="m-sheet-title" id="mAccountTitle">{{ current_user.username }}</h2>
+    {% if has_permission(current_user, 'admin.manage') %}<p class="m-sheet-sub">Administrator</p>{% endif %}
+
+    <fieldset class="m-fieldset">
+        <legend>Theme on this device</legend>
+        <div class="m-seg">
+            <label><input type="radio" name="mTheme" value="light" data-change="mSetTheme"><span>Light</span></label>
+            <label><input type="radio" name="mTheme" value="dark" data-change="mSetTheme"><span>Dark</span></label>
+            <label><input type="radio" name="mTheme" value="auto" data-change="mSetTheme"><span>Match device</span></label>
+        </div>
+    </fieldset>
+
+    <nav class="m-card" aria-label="Account">
+        {% if has_permission(current_user, 'admin.manage') %}
+        <a class="m-row" href="{{ url_for('admin.admin_panel') }}">{{ icon('shield', 'm-row-ic') }}<span class="m-t"><span class="m-t1">Admin panel</span><span class="m-t2">Opens the desktop page</span></span>{{ icon('chev', 'm-chev') }}</a>
+        {% endif %}
+        <a class="m-row" href="{{ url_for('main.index') }}">{{ icon('monitor', 'm-row-ic') }}<span class="m-t"><span class="m-t1">Desktop view</span><span class="m-t2">Opens the full desktop site</span></span>{{ icon('chev', 'm-chev') }}</a>
+        <a class="m-row m-row-danger" href="{{ url_for('auth.logout') }}">{{ icon('logout', 'm-row-ic') }}<span class="m-t"><span class="m-t1">Sign out</span></span></a>
+    </nav>
+    <button class="m-btn m-btn-s m-block" type="button" data-action="mCloseSheet">Close</button>
+</dialog>
+
+<dialog class="m-sheet" id="mNotifications" aria-labelledby="mNotifTitle">
+    <div class="m-grab" aria-hidden="true"></div>
+    <div class="m-sheet-head">
+        <h2 class="m-sheet-title" id="mNotifTitle">Notifications</h2>
+        <button class="m-tbtn" type="button" id="mReadAll" data-action="mMarkAllRead" disabled>Mark all read</button>
+    </div>
+    <div class="m-card m-sheet-list" id="mNotifList" aria-live="polite">
+        <p class="m-empty">Loading…</p>
+    </div>
+    <button class="m-btn m-btn-s m-block" type="button" data-action="mCloseSheet">Close</button>
+    <template id="mNotifIcons">
+        <span data-icon="info">{{ icon('bell') }}</span>
+        <span data-icon="warning">{{ icon('alert') }}</span>
+        <span data-icon="error">{{ icon('alert') }}</span>
+        <span data-icon="success">{{ icon('check') }}</span>
+        <span data-icon="desktop">{{ icon('external', 'm-chev') }}</span>
+    </template>
+</dialog>

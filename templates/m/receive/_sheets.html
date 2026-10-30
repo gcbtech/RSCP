@@ -1,0 +1,18 @@
+{# Link a package to a stock item (the count sheet is shared: templates/m/_count_sheet.html). #}
+<dialog class="m-sheet" id="mLinkSheet" aria-labelledby="mLinkTitle">
+    <div class="m-grab" aria-hidden="true"></div>
+    <h2 class="m-sheet-title" id="mLinkTitle">Link to a stock item</h2>
+    <p class="m-sheet-sub" id="mLinkPackage"></p>
+    <form data-submit="mLinkSearch">
+        <label class="m-label" for="mLinkQuery">Scan or search by SKU, UPC or name</label>
+        <input class="m-input" id="mLinkQuery" type="search" autocomplete="off" spellcheck="false" enterkeyhint="search" data-scan-into>
+    </form>
+    <div class="m-card m-sheet-list" id="mLinkResults" aria-live="polite">
+        <p class="m-empty">Type at least 2 characters.</p>
+    </div>
+    <label class="m-check"><input type="checkbox" id="mLinkRemember" checked><span>Use this item for this product name from now on</span></label>
+    <div class="m-grid2">
+        <button class="m-btn m-btn-s" type="button" data-action="mCloseSheet">Cancel</button>
+        <button class="m-btn m-btn-p" type="button" data-action="mLinkSave" id="mLinkSave" disabled>Link</button>
+    </div>
+</dialog>

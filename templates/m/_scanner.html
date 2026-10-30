@@ -1,0 +1,34 @@
+{#
+  The scanner status card (static/m/scanner.js drives it). Include with:
+    {% with scan_label='Or type a tracking number', scan_placeholder='1Z…', scan_form=True %}
+      {% include 'm/_scanner.html' %}
+    {% endwith %}
+  scan_form=False leaves out the typed-entry field (data-submit="mManualScan" on it otherwise).
+  data-state: listening | paused (a sheet or another field has the keys) | lost (a tap reloads the page)
+#}
+{% from 'm/_icons.html' import icon %}
+<section class="m-card m-scanner" id="mScanStatus" data-state="listening" aria-live="polite">
+    {# Holds the focus so the scanner's text lands here. No inputmode in the markup: scanner.js
+       focuses it as the page loads and only then sets inputmode="none" (the order matters on the FZ-N1). #}
+    <input class="m-capture" id="mScanCapture" type="text" aria-label="Scanner input">
+    <div class="m-scanner-head">
+        <span class="m-scanner-ico" aria-hidden="true">{{ icon('scan') }}<span class="m-scanner-ico-paused">{{ icon('pause') }}</span></span>
+        <span class="m-t">
+            <span class="m-scanner-title m-when-lost">Scanner stopped</span>
+            <span class="m-scanner-sub m-when-lost">Tap here to restart it</span>
+            <span class="m-scanner-title m-when-listening">Ready to scan</span>
+            <span class="m-scanner-title m-when-paused">Scanning paused</span>
+            <span class="m-scanner-sub m-when-listening"><span class="m-dot"></span>Listening for the scanner</span>
+            <span class="m-scanner-sub m-when-paused">Tap here to resume</span>
+        </span>
+    </div>
+    {% if scan_form %}
+    <form class="m-scanner-form" data-submit="mManualScan">
+        <label class="m-label" for="mScanManual">{{ scan_label }}</label>
+        <div class="m-inline">
+            <input class="m-input" id="mScanManual" type="text" enterkeyhint="go" placeholder="{{ scan_placeholder }}">
+            <button class="m-btn m-btn-s" type="submit">{{ scan_button or 'Enter' }}</button>
+        </div>
+    </form>
+    {% endif %}
+</section>

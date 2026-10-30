@@ -1,0 +1,17 @@
+{# "Set count" sheet: stock cards (static/m/stockcard.js) and audits (static/m/audit.js) fill and save it. #}
+{% from 'm/_icons.html' import icon %}
+<dialog class="m-sheet" id="mCountSheet" aria-labelledby="mCountTitle">
+    <div class="m-grab" aria-hidden="true"></div>
+    <h2 class="m-sheet-title" id="mCountTitle">{{ count_title or 'How many are in stock?' }}</h2>
+    <p class="m-sheet-sub" id="mCountItem"></p>
+    <label class="m-label" for="mCountInput">Count</label>
+    <div class="m-stepper">
+        <button class="m-step" type="button" data-action="mCountStep" data-change="-1" aria-label="One fewer">{{ icon('minus') }}</button>
+        <input class="m-input m-count-input" id="mCountInput" type="text" inputmode="numeric" pattern="[0-9]*">
+        <button class="m-step" type="button" data-action="mCountStep" data-change="1" aria-label="One more">{{ icon('plus') }}</button>
+    </div>
+    <div class="m-grid2">
+        <button class="m-btn m-btn-s" type="button" data-action="mCloseSheet">Cancel</button>
+        <button class="m-btn m-btn-p" type="button" data-action="mCountSave">Save count</button>
+    </div>
+</dialog>

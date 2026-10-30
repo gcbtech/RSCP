@@ -1,0 +1,31 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}Audit report{% endblock %}
+{% block top_left %}<a class="m-ib" href="{{ url_for('mobile.stock_audit') }}" aria-label="Back to audits">{{ icon('back') }}</a>{% endblock %}
+{% block content %}
+<section class="m-card m-pad">
+    <p class="m-strong">{{ mode[0] }}{% if sess.status != 'completed' %} · still in progress{% endif %}</p>
+    <p class="m-muted">{{ sess.user_id }} · {{ sess.start_time|local_time('%b %d, %I:%M %p') }}{% if sess.end_time %} to {{ sess.end_time|local_time('%I:%M %p') }}{% endif %}</p>
+    <dl class="m-facts m-gap m-facts-3">
+        <div><dt>Counted</dt><dd>{{ records|length }}</dd></div>
+        <div><dt>Matched</dt><dd>{{ records|length - off|length }}</dd></div>
+        <div><dt>Off</dt><dd>{{ off|length }}</dd></div>
+    </dl>
+</section>
+
+<h2 class="m-lbl">Didn't match · {{ off|length }}</h2>
+{% if off %}
+<div class="m-card">
+    {% for r in off %}
+    <a class="m-row" href="{{ url_for('mobile.stock_item', item_id=r.item_id) }}">
+        <span class="m-t"><span class="m-t1">{{ r.name }}</span><span class="m-t2"><span class="m-mono">{{ r.sku }}</span> · system {{ r.expected_qty }}, counted {{ r.counted_qty }}</span></span>
+        <span class="m-pill {{ 'm-tone-bd' if r.diff < 0 else 'm-tone-wn' }}">{{ '%+d'|format(r.diff) }}</span>
+        {{ icon('chev', 'm-chev') }}
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+<div class="m-card m-pad"><p class="m-strong">Every count matched</p></div>
+{% endif %}
+<p class="m-note">Stock was updated as each count was saved. The full report and CSV export are on the desktop audit page.</p>
+{% endblock %}

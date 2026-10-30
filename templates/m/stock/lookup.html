@@ -1,0 +1,28 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}Stock{% endblock %}
+{% block top_actions %}
+<button class="m-ib" type="button" data-action="mTypeCode" aria-label="Type a search">{{ icon('keyboard') }}</button>
+{{ super() }}
+{% endblock %}
+{% block chips %}{% include 'm/stock/_chips.html' %}{% endblock %}
+{% block content %}
+<div id="mResult" class="m-result" hidden></div>
+
+{% with scan_form=True, scan_label='Or search by SKU, UPC or name', scan_placeholder='SKU, UPC or name', scan_button='Find' %}
+{% include 'm/_scanner.html' %}
+{% endwith %}
+
+{% include 'm/_count_sheet.html' %}
+{% endblock %}
+{% block page_data %}
+<script type="application/json" id="page-data">{{ {
+    'findUrl': url_for('mobile.stock_find'),
+    'adjustUrl': url_for('inventory.quick_adjust', item_id=0),
+}|tojson }}</script>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='m/scanner.js') }}"></script>
+<script src="{{ url_for('static', filename='m/stockcard.js') }}"></script>
+<script src="{{ url_for('static', filename='m/stock.js') }}"></script>
+{% endblock %}

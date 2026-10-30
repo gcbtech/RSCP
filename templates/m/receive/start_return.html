@@ -1,0 +1,50 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}Start a return{% endblock %}
+{% block top_left %}<a class="m-ib" href="{{ url_for('mobile.receive_returns') if not picked else url_for('mobile.receive_start_return') }}" aria-label="Back">{{ icon('back') }}</a>{% endblock %}
+{% block content %}
+{% if picked %}
+<section class="m-card m-pad">
+    <p class="m-strong">{{ picked.item_name or 'Unnamed item' }}</p>
+    <p class="m-muted m-mono">{{ picked.tracking_number }}</p>
+</section>
+<form class="m-form" method="post" action="{{ url_for('mobile.receive_start_return') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="original_tracking" value="{{ picked.tracking_number }}">
+    <fieldset class="m-fieldset">
+        <legend>Reason</legend>
+        <div class="m-card">
+            {% for value, label in reasons %}
+            <label class="m-row m-radio-row"><input type="radio" name="reason" value="{{ value }}"{% if loop.first %} checked{% endif %}><span class="m-t1">{{ label }}</span></label>
+            {% endfor %}
+        </div>
+    </fieldset>
+    <div>
+        <label class="m-label" for="mReturnTracking">Return label tracking (optional)</label>
+        <input class="m-input" id="mReturnTracking" name="return_tracking" type="text" autocomplete="off" spellcheck="false" autocapitalize="characters">
+    </div>
+    <button class="m-btn m-btn-p m-block" type="submit">Start return</button>
+</form>
+{% else %}
+<form method="get" action="{{ url_for('mobile.receive_start_return') }}" role="search">
+    <label class="m-label" for="mReturnQuery">Find the package: scan, or search tracking or name</label>
+    <div class="m-inline">
+        <input class="m-input" id="mReturnQuery" name="q" type="search" value="{{ query }}" autocomplete="off" spellcheck="false" enterkeyhint="search">
+        <button class="m-btn m-btn-s" type="submit">Find</button>
+    </div>
+</form>
+<h2 class="m-lbl">{{ ('Matches · ' ~ rows|length) if query else 'Recent packages' }}</h2>
+{% if rows %}
+<div class="m-card">
+    {% for r in rows %}
+    <a class="m-row" href="{{ url_for('mobile.receive_start_return', track=r.tracking_number) }}">
+        <span class="m-t"><span class="m-t1">{{ r.item_name or 'Unnamed item' }}</span><span class="m-t2"><span class="m-mono">{{ r.tracking_number }}</span>{% if r.date_expected %} · {{ r.date_expected }}{% endif %}</span></span>
+        {{ icon('chev', 'm-chev') }}
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+<div class="m-card m-pad"><p class="m-strong">No packages found</p><p class="m-muted">Packages already returned or refunded aren't listed.</p></div>
+{% endif %}
+{% endif %}
+{% endblock %}

@@ -1,0 +1,29 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}Receive{% endblock %}
+{% block chips %}{% include 'm/receive/_chips.html' %}{% endblock %}
+{% block content %}
+{% set e = counts.expected %}
+<section class="m-card m-pad">
+    <p class="m-strong">{{ e.scanned }} of {{ e.total }} scanned today</p>
+    {% if e.total %}
+    <span class="m-bar" role="progressbar" aria-label="Expected packages scanned" aria-valuemin="0"
+        aria-valuemax="{{ e.total }}" aria-valuenow="{{ e.scanned }}"><span style="width: {{ (100 * e.scanned / e.total)|round|int }}%"></span></span>
+    {% endif %}
+    <a class="m-btn m-btn-p m-block m-gap" href="{{ url_for('mobile.receive') }}">{{ icon('scan') }}Scan packages</a>
+</section>
+
+{% if not total %}
+<p class="m-note">{{ 'Everything expected today has been scanned.' if e.total else 'Nothing is expected today.' }}</p>
+{% endif %}
+{% for shipper, rows in groups %}
+<h2 class="m-lbl">{{ shipper }} · {{ rows|length }} to go</h2>
+<div class="m-card">
+    {% for r in rows %}
+    <div class="m-row">
+        <span class="m-t"><span class="m-t1">{{ r.item_name or 'Unnamed item' }}</span><span class="m-t2 m-mono">{{ r.tracking_number }}</span></span>
+    </div>
+    {% endfor %}
+</div>
+{% endfor %}
+{% endblock %}

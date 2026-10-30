@@ -1,0 +1,49 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}POS{% endblock %}
+{% block body_class %}m-has-cartfoot{% endblock %}
+{% block top_actions %}
+<button class="m-reg-pill{% if linked %} on{% endif %}" type="button" id="mRegPill" data-action="mOpenSheet" data-sheet="mRegisterSheet"
+    aria-label="{{ ('Ringing into ' ~ linked) if linked else 'This phone' }}: change">{{ icon('monitor') }}<span>{{ linked or 'This phone' }}</span></button>
+<button class="m-ib" type="button" data-action="mOpenSheet" data-sheet="mPosMenu" aria-label="More: custom item, discount, held orders, clear cart">{{ icon('more') }}</button>
+{% endblock %}
+{% block content %}
+{% with scan_form=True, scan_label='Or search for an item', scan_placeholder='SKU, UPC or name', scan_button='Find' %}
+{% include 'm/_scanner.html' %}
+{% endwith %}
+
+{# Filled again by static/m/pos.js after every change (and when another device changes this cart) #}
+<div id="mCart">
+    {% if cart %}{% include 'm/pos/_cart.html' %}{% else %}<p class="m-empty">Loading the cart…</p>{% endif %}
+</div>
+
+{% include 'm/pos/_sheets.html' %}
+{% endblock %}
+{% block tabs %}
+<div class="m-cartfoot" id="mCartFoot">{% if cart %}{% include 'm/pos/_cart_foot.html' %}{% endif %}</div>
+{{ super() }}
+{% endblock %}
+{% block page_data %}
+<script type="application/json" id="page-data">{{ {
+    'cartUrl': url_for('mobile.pos_cart'),
+    'actionUrl': url_for('mobile.pos_cart_action', action='ACTION'),
+    'searchUrl': url_for('pos.api_search'),
+    'helloUrl': url_for('pos.register_hello'),
+    'registerPollUrl': url_for('pos.register_poll'),
+    'peripheralPollUrl': url_for('pos.peripheral_poll'),
+    'enterSlaveUrl': url_for('pos.scanner_enter_slave'),
+    'exitSlaveUrl': url_for('pos.scanner_exit_slave'),
+    'requestCodeUrl': url_for('pos.pairing_request_code'),
+    'pairingStatusUrl': url_for('pos.pairing_status'),
+    'pairingAckUrl': url_for('pos.pairing_ack'),
+    'voidApproveUrl': url_for('pos.api_validate_manager'),
+    'discountApproveUrl': url_for('pos.verify_manager'),
+    'couponApplyUrl': url_for('pos.apply_coupon'),
+    'couponRemoveUrl': url_for('pos.remove_coupon'),
+    'version': cart_version if cart else None,
+}|tojson }}</script>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='m/scanner.js') }}"></script>
+<script src="{{ url_for('static', filename='m/pos.js') }}"></script>
+{% endblock %}

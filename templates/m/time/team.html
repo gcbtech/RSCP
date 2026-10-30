@@ -1,0 +1,34 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}Timeclock{% endblock %}
+{% block chips %}{% include 'm/time/_chips.html' %}{% endblock %}
+{% block content %}
+<p class="m-lbl" id="mTeamNow">On the clock now · {{ on_clock|length }}</p>
+{% if on_clock %}
+<div class="m-card" role="list" aria-labelledby="mTeamNow">
+    {% for p in on_clock %}
+    <div class="m-row" role="listitem">
+        <span class="m-lead {{ 'm-tone-wn' if p.state == 'break' else 'm-tone-ok' }}">{{ icon('coffee' if p.state == 'break' else 'time') }}</span>
+        <span class="m-t"><span class="m-t1">{{ p.name }}</span>
+            <span class="m-t2">{{ 'On break' if p.state == 'break' else 'Working' }} · since {{ p.since }} · {{ p.duration }}</span></span>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="m-card m-pad"><p class="m-muted">Nobody is clocked in.</p></div>
+{% endif %}
+<p class="m-note">{{ today }} {{ 'person has' if today == 1 else 'people have' }} clocked in today.</p>
+
+<nav class="m-card" aria-label="Manager pages">
+    <a class="m-row" href="{{ url_for('timeclock.manager_pto') }}">
+        {{ icon('sun', 'm-row-ic') }}
+        <span class="m-t"><span class="m-t1">Time-off requests</span><span class="m-t2">{{ pending }} waiting · Opens the desktop page</span></span>
+        {{ icon('external', 'm-chev') }}
+    </a>
+    <a class="m-row" href="{{ url_for('timeclock.manager_dashboard') }}">
+        {{ icon('users', 'm-row-ic') }}
+        <span class="m-t"><span class="m-t1">Manager portal</span><span class="m-t2">Schedules, timesheets, clock fixes · Opens the desktop page</span></span>
+        {{ icon('external', 'm-chev') }}
+    </a>
+</nav>
+{% endblock %}

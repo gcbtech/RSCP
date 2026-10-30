@@ -1,0 +1,15 @@
+{# Receive section chips; `section` and `counts` (get_dashboard_stats) come from app/routes/mobile/receive.py #}
+<nav class="m-chips" aria-label="Receiving sections">
+    {% set chips = [
+        ('scan', 'Scan', url_for('mobile.receive'), None),
+        ('expected', 'Expected', url_for('mobile.receive_expected'), counts.expected.scanned ~ '/' ~ counts.expected.total),
+        ('past_due', 'Past due', url_for('mobile.receive_past_due'), counts.past_due.count),
+        ('returns', 'Returns', url_for('mobile.receive_returns'), counts.returns.open),
+        ('history', 'History', url_for('mobile.receive_history'), None),
+    ] %}
+    {% for key, label, url, count in chips %}
+    <a class="m-chip{% if section == key %} on{% endif %}" href="{{ url }}" data-chip="{{ key }}"{% if section == key %} aria-current="page"{% endif %}>
+        {{- label }}{% if count is not none %} <b>{{ count }}</b>{% endif -%}
+    </a>
+    {% endfor %}
+</nav>

@@ -1,0 +1,125 @@
+{# Sheets for the POS register (static/m/pos.js). #}
+{% from 'm/_icons.html' import icon %}
+<dialog class="m-sheet" id="mPosMenu" aria-labelledby="mPosMenuTitle">
+    <div class="m-grab" aria-hidden="true"></div>
+    <h2 class="m-sheet-title" id="mPosMenuTitle">Sale</h2>
+    <div class="m-card">
+        <button class="m-row" type="button" data-action="mOpenSheet" data-sheet="mCustomSheet">{{ icon('plus', 'm-row-ic') }}<span class="m-t"><span class="m-t1">Custom item</span><span class="m-t2">Not in inventory</span></span></button>
+        <button class="m-row" type="button" data-action="mOpenSheet" data-sheet="mDiscountSheet">{{ icon('percent', 'm-row-ic') }}<span class="m-t"><span class="m-t1">Discount or coupon</span><span class="m-t2">For the whole order</span></span></button>
+        {% if allow_hold %}
+        <button class="m-row" type="button" data-action="mOpenSheet" data-sheet="mHeldSheet">{{ icon('list', 'm-row-ic') }}<span class="m-t"><span class="m-t1">Held orders</span><span class="m-t2">Recall one into this cart</span></span></button>
+        {% endif %}
+        <button class="m-row m-row-danger" type="button" data-action="mClearCart">{{ icon('trash', 'm-row-ic') }}<span class="m-t"><span class="m-t1">Clear the cart</span></span></button>
+        <a class="m-row" href="{{ url_for('pos.sales') }}">{{ icon('external', 'm-row-ic') }}<span class="m-t"><span class="m-t1">Desktop POS</span><span class="m-t2">Refunds, reports and settings</span></span></a>
+    </div>
+    <button class="m-btn m-btn-s m-block" type="button" data-action="mCloseSheet">Close</button>
+</dialog>
+
+<dialog class="m-sheet" id="mCustomSheet" aria-labelledby="mCustomTitle">
+    <div class="m-grab" aria-hidden="true"></div>
+    <h2 class="m-sheet-title" id="mCustomTitle">Custom item</h2>
+    <form class="m-form" data-submit="mCustomAdd">
+        <div><label class="m-label" for="mCustomName">Name</label><input class="m-input" id="mCustomName" name="name" type="text" required></div>
+        <div class="m-grid2">
+            <div><label class="m-label" for="mCustomPrice">Price ($)</label><input class="m-input" id="mCustomPrice" name="price" type="text" inputmode="decimal" placeholder="0.00" required></div>
+            <div><label class="m-label" for="mCustomQty">Quantity</label><input class="m-input" id="mCustomQty" name="quantity" type="text" inputmode="numeric" pattern="[0-9]*" value="1"></div>
+        </div>
+        <div class="m-grid2">
+            <button class="m-btn m-btn-s" type="button" data-action="mCloseSheet">Cancel</button>
+            <button class="m-btn m-btn-p" type="submit">Add to cart</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog class="m-sheet" id="mDiscountSheet" aria-labelledby="mDiscountTitle">
+    <div class="m-grab" aria-hidden="true"></div>
+    <h2 class="m-sheet-title" id="mDiscountTitle">Order discount</h2>
+    <form class="m-form" data-submit="mDiscountApply">
+        <fieldset class="m-fieldset">
+            <legend>Discount as</legend>
+            <div class="m-seg">
+                <label><input type="radio" name="discount_type" value="percent" checked><span>Percent</span></label>
+                <label><input type="radio" name="discount_type" value="fixed"><span>Dollars</span></label>
+            </div>
+        </fieldset>
+        <div class="m-grid2">
+            <div><label class="m-label" for="mDiscountAmount">Amount</label><input class="m-input" id="mDiscountAmount" name="discount_amount" type="text" inputmode="decimal" placeholder="0"></div>
+            <div><label class="m-label" for="mDiscountReason">Reason</label><input class="m-input" id="mDiscountReason" name="discount_reason" type="text"></div>
+        </div>
+        <p class="m-muted">0 removes the discount. Over the store's limit, a manager approves it.</p>
+        <button class="m-btn m-btn-p m-block" type="submit">Apply discount</button>
+    </form>
+    <form class="m-form" data-submit="mCouponApply">
+        <div>
+            <label class="m-label" for="mCouponCode">Coupon code</label>
+            <div class="m-inline">
+                <input class="m-input" id="mCouponCode" name="code" type="text" autocapitalize="characters" autocomplete="off" spellcheck="false">
+                <button class="m-btn m-btn-s" type="submit">Apply</button>
+            </div>
+        </div>
+        <button class="m-tbtn" type="button" data-action="mCouponRemove">Remove the coupon</button>
+    </form>
+    <button class="m-btn m-btn-s m-block" type="button" data-action="mCloseSheet">Close</button>
+</dialog>
+
+<dialog class="m-sheet" id="mHoldSheet" aria-labelledby="mHoldTitle">
+    <div class="m-grab" aria-hidden="true"></div>
+    <h2 class="m-sheet-title" id="mHoldTitle">Hold this order</h2>
+    <p class="m-sheet-sub">Any register can recall it later.</p>
+    <form class="m-form" data-submit="mHold">
+        <div><label class="m-label" for="mHoldNote">Note (optional)</label><input class="m-input" id="mHoldNote" name="note" type="text" placeholder="Customer name…"></div>
+        <div class="m-grid2">
+            <button class="m-btn m-btn-s" type="button" data-action="mCloseSheet">Cancel</button>
+            <button class="m-btn m-btn-p" type="submit">Hold order</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog class="m-sheet" id="mHeldSheet" aria-labelledby="mHeldTitle">
+    <div class="m-grab" aria-hidden="true"></div>
+    <h2 class="m-sheet-title" id="mHeldTitle">Held orders</h2>
+    <div class="m-card m-sheet-list" id="mHeld">{% include 'm/pos/_held.html' %}</div>
+    <button class="m-btn m-btn-s m-block" type="button" data-action="mCloseSheet">Close</button>
+</dialog>
+
+<dialog class="m-sheet" id="mPickSheet" aria-labelledby="mPickTitle">
+    <div class="m-grab" aria-hidden="true"></div>
+    <h2 class="m-sheet-title" id="mPickTitle">Pick the item</h2>
+    <div class="m-card m-sheet-list" id="mPickList" aria-live="polite"></div>
+    <button class="m-btn m-btn-s m-block" type="button" data-action="mCloseSheet">Cancel</button>
+</dialog>
+
+<dialog class="m-sheet" id="mManagerSheet" aria-labelledby="mManagerTitle">
+    <div class="m-grab" aria-hidden="true"></div>
+    <h2 class="m-sheet-title" id="mManagerTitle">Manager approval</h2>
+    <p class="m-sheet-sub" id="mManagerWhy"></p>
+    <form class="m-form" data-submit="mManagerApprove">
+        <div><label class="m-label" for="mManagerUser">Manager username</label><input class="m-input" id="mManagerUser" name="username" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" required></div>
+        <div><label class="m-label" for="mManagerPass">Password</label><input class="m-input" id="mManagerPass" name="password" type="password" autocomplete="off" required></div>
+        <p class="m-field-error" id="mManagerError" hidden></p>
+        <div class="m-grid2">
+            <button class="m-btn m-btn-s" type="button" data-action="mCloseSheet">Cancel</button>
+            <button class="m-btn m-btn-p" type="submit">Approve</button>
+        </div>
+    </form>
+</dialog>
+
+<dialog class="m-sheet" id="mRegisterSheet" aria-labelledby="mRegisterTitle">
+    <div class="m-grab" aria-hidden="true"></div>
+    <h2 class="m-sheet-title" id="mRegisterTitle">Register</h2>
+    {% if linked %}
+    <p class="m-sheet-sub">This phone rings into <b>{{ linked }}</b>: items you scan land in that register's cart, and either device can take payment.</p>
+    <button class="m-btn m-btn-s m-block" type="button" data-action="mUnlink" data-confirm="Stop ringing into {{ linked }}? This phone goes back to its own cart.">Stop ringing into {{ linked }}</button>
+    {% else %}
+    <p class="m-sheet-sub">This phone has its own cart. Link it to a register to ring items into that register's cart instead (line-busting).</p>
+    <div id="mLinkIdle">
+        <button class="m-btn m-btn-p m-block" type="button" data-action="mLinkStart">{{ icon('link') }}Link to a register</button>
+    </div>
+    <div id="mLinkActive" hidden>
+        <p class="m-link-code" id="mLinkCode" aria-live="polite">--- ---</p>
+        <p class="m-muted">On the register, open Customer Display → Pair a Device and type this code.</p>
+        <button class="m-btn m-btn-s m-block" type="button" data-action="mLinkCancel">Cancel</button>
+    </div>
+    {% endif %}
+    <button class="m-btn m-btn-s m-block" type="button" data-action="mCloseSheet">Close</button>
+</dialog>

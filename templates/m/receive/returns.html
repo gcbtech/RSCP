@@ -1,0 +1,29 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}Receive{% endblock %}
+{% block chips %}{% include 'm/receive/_chips.html' %}{% endblock %}
+{% block content %}
+<a class="m-btn m-btn-p m-block" href="{{ url_for('mobile.receive_start_return') }}">{{ icon('returns') }}Start a return</a>
+
+<h2 class="m-lbl">Open returns · {{ returns|length }}</h2>
+{% if returns %}
+<div class="m-card">
+    {% for r in returns %}
+    <div class="m-row m-row-action">
+        <span class="m-t">
+            <span class="m-t1">{{ r.name or 'Unnamed item' }}</span>
+            <span class="m-t2"><span class="m-mono">{{ r.tracking }}</span>{% if r.reason %} · {{ r.reason }}{% endif %}</span>
+            {% if r.return_tracking %}<span class="m-t2">Return label <span class="m-mono">{{ r.return_tracking }}</span></span>{% endif %}
+        </span>
+        <form method="post" action="{{ url_for('mobile.receive_mark_refunded') }}" data-confirm="Mark {{ r.name or r.tracking }} refunded?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <input type="hidden" name="tracking" value="{{ r.tracking }}">
+            <button class="m-btn m-btn-s m-btn-sm" type="submit">Refunded</button>
+        </form>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="m-card m-pad"><p class="m-strong">No open returns</p></div>
+{% endif %}
+{% endblock %}

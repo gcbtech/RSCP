@@ -1,0 +1,14 @@
+{# Held orders (store-wide, so one held on any device can be recalled here). #}
+{% if held %}
+{% for h in held %}
+<div class="m-row m-row-action">
+    <span class="m-t">
+        <span class="m-t1">{{ h.note or ('Order ' ~ h.id) }}</span>
+        <span class="m-t2">{{ h.created_at|local_time('%b %d, %I:%M %p') }}{% if h.held_by %} · {{ h.held_by }}{% endif %}</span>
+    </span>
+    <button class="m-btn m-btn-s m-btn-sm" type="button" data-action="mRecall" data-id="{{ h.id }}">Recall</button>
+</div>
+{% endfor %}
+{% else %}
+<p class="m-empty">No held orders.</p>
+{% endif %}

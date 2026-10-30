@@ -1,0 +1,10 @@
+{# Bottom tab bar: Home plus the modules this user can open (m_tabs, app/routes/mobile.py). #}
+{% from 'm/_icons.html' import icon %}
+<nav class="m-tabs" aria-label="Modules">
+    <a class="m-tab{% if active_tab == 'home' %} on{% endif %}" href="{{ url_for('mobile.home') }}"
+        {%- if active_tab == 'home' %} aria-current="page"{% endif %}>{{ icon('home') }}<span>Home</span></a>
+    {% for key, label, endpoint, _permission, _flag in m_tabs %}
+    <a class="m-tab{% if active_tab == key %} on{% endif %}" href="{{ url_for(endpoint) }}"
+        {%- if active_tab == key %} aria-current="page"{% endif %}>{{ icon(key) }}<span>{{ label }}</span></a>
+    {% endfor %}
+</nav>

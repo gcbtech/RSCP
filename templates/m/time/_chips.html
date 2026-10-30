@@ -1,0 +1,14 @@
+{# Time section chips; `section` and `can_manage` come from app/routes/mobile/timeclock.py #}
+<nav class="m-chips" aria-label="Timeclock sections">
+    {% set chips = [
+        ('clock', 'Clock', url_for('mobile.time')),
+        ('schedule', 'Schedule', url_for('mobile.time_schedule')),
+        ('off', 'Time off', url_for('mobile.time_off')),
+    ] %}
+    {% if can_manage %}{% set _ = chips.append(('team', 'Team', url_for('mobile.time_team'))) %}{% endif %}
+    {% for key, label, url in chips %}
+    <a class="m-chip{% if section == key %} on{% endif %}" href="{{ url }}" data-chip="{{ key }}"{% if section == key %} aria-current="page"{% endif %}>
+        {{- label -}}
+    </a>
+    {% endfor %}
+</nav>

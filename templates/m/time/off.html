@@ -1,0 +1,53 @@
+{% extends 'm/base.html' %}
+{% block title %}Timeclock{% endblock %}
+{% block chips %}{% include 'm/time/_chips.html' %}{% endblock %}
+{% block content %}
+<section class="m-card m-pad">
+    <p class="m-lbl">Time off available</p>
+    <p class="m-clock-state">{{ balance }} hrs</p>
+</section>
+
+<form class="m-card m-pad m-form" method="post" action="{{ url_for('mobile.time_off') }}" id="mPtoForm" aria-labelledby="mPtoTitle">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <h2 class="m-sheet-title" id="mPtoTitle">Request time off</h2>
+    <fieldset class="m-fieldset">
+        <legend>How much</legend>
+        <div class="m-seg">
+            <label><input type="radio" name="request_type" value="full" checked data-change="mPtoType"><span>Whole shift</span></label>
+            <label><input type="radio" name="request_type" value="partial" data-change="mPtoType"><span>Part of a shift</span></label>
+        </div>
+    </fieldset>
+    <div>
+        <label class="m-label" for="mPtoDate">Date</label>
+        <input class="m-input" id="mPtoDate" name="date" type="date" min="{{ today }}" required>
+        <p class="m-muted" id="mPtoFullHint">You need a scheduled shift that day.</p>
+    </div>
+    <div class="m-grid2" id="mPtoTimes">
+        <div><label class="m-label" for="mPtoStart">Off from</label><input class="m-input" id="mPtoStart" name="start_time" type="time"></div>
+        <div><label class="m-label" for="mPtoEnd">Until</label><input class="m-input" id="mPtoEnd" name="end_time" type="time"></div>
+    </div>
+    <div>
+        <label class="m-label" for="mPtoNotes">Note (optional)</label>
+        <textarea class="m-input" id="mPtoNotes" name="notes" rows="2" placeholder="Reason"></textarea>
+    </div>
+    <button class="m-btn m-btn-p m-block" type="submit">Send request</button>
+</form>
+
+<p class="m-lbl" id="mPtoPast">Your requests</p>
+{% if history %}
+<div class="m-card" role="list" aria-labelledby="mPtoPast">
+    {% for r in history %}
+    <div class="m-row" role="listitem">
+        <span class="m-t"><span class="m-t1">{{ r.day }} · {{ r.hours }} hrs</span>
+            <span class="m-t2">{{ r.what }}{% if r.notes %} · {{ r.notes }}{% endif %}</span></span>
+        <span class="m-pill m-tone-{{ r.tone }}">{{ r.status }}</span>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="m-card m-pad"><p class="m-muted">No requests yet.</p></div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='m/time.js') }}"></script>
+{% endblock %}

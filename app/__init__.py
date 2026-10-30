@@ -139,7 +139,11 @@ def create_app(test_config=None):
     # Notifications API
     from app.routes.notifications import notifications_bp
     app.register_blueprint(notifications_bp)
-    
+
+    # Phone UI under /m (separate templates/m/ and static/m/; desktop pages untouched)
+    from app.routes.mobile import mobile_bp
+    app.register_blueprint(mobile_bp)
+
     # POS pairing endpoints are rate-limited in app/routes/pos/pairing.py
     # (shared across workers via services/throttle).
 

@@ -1,0 +1,21 @@
+{# The audit's latest counts (audit_records rows), newest first. #}
+{% from 'm/_icons.html' import icon %}
+{% if recent %}
+{% for r in recent %}
+{% set diff = r.counted_qty - r.expected_qty %}
+<div class="m-row">
+    {% if diff == 0 %}
+    <span class="m-lead m-lead-round m-tone-ok">{{ icon('check') }}</span>
+    {% else %}
+    <span class="m-lead m-lead-round m-tone-wn">{{ icon('alert') }}</span>
+    {% endif %}
+    <span class="m-t">
+        <span class="m-t1">{{ r.name }}</span>
+        <span class="m-t2">{% if diff == 0 %}Matched · {{ r.counted_qty }}{% else %}Counted {{ r.counted_qty }} · system had {{ r.expected_qty }}{% endif %}</span>
+    </span>
+    {% if diff %}<span class="m-pill m-tone-wn">{{ '%+d'|format(diff) }}</span>{% endif %}
+</div>
+{% endfor %}
+{% else %}
+<p class="m-empty">Counts you save show up here.</p>
+{% endif %}

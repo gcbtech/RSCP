@@ -1,0 +1,39 @@
+{#
+  The cart's lines (POS register). cart: a register/session cart (app/routes/pos/core.py);
+  money in cents. Buttons go to static/m/pos.js, which posts to /m/pos/cart/<action>.
+#}
+{% from 'm/_icons.html' import icon %}
+{% set units = cart['items']|sum(attribute='quantity') %}
+<h2 class="m-lbl">Cart{% if units %} · {{ units }} item{{ '' if units == 1 else 's' }}{% endif %}</h2>
+{% if cart['items'] %}
+<div class="m-card">
+    {% for it in cart['items'] %}
+    {% set no_price = not it.unit_price_cents %}
+    {% set short = it.stock_quantity is defined and it.stock_quantity is not none and it.quantity > it.stock_quantity %}
+    <div class="m-line">
+        <div class="m-t">
+            <span class="m-t1">{{ it.name }}</span>
+            <span class="m-t2">${{ it.unit_price_cents|dollars }} ea{% if it.is_on_sale %} <span class="m-tag m-tone-bd">Sale</span>{% endif %} · <b class="m-line-total">${{ it.line_total_cents|dollars }}</b></span>
+            {% if it.discount_type == 'percent' and it.discount_percent %}<span class="m-line-note">{{ it.discount_percent }}% off</span>
+            {% elif it.discount_type == 'fixed' and it.discount_cents %}<span class="m-line-note">${{ it.discount_cents|dollars }} off</span>{% endif %}
+            {% if no_price %}<span class="m-line-warn">No price set</span>
+            {% elif short %}<span class="m-line-warn">Only {{ it.stock_quantity }} in stock</span>{% endif %}
+        </div>
+        <div class="m-qty" role="group" aria-label="Quantity of {{ it.name }}">
+            {% if it.quantity > 1 %}
+            <button class="m-qb" type="button" data-action="mLineStep" data-line="{{ it.line_id }}" data-change="-1" aria-label="One fewer {{ it.name }}">{{ icon('minus') }}</button>
+            {% else %}
+            <button class="m-qb m-qb-del" type="button" data-action="mLineRemove" data-line="{{ it.line_id }}" aria-label="Remove {{ it.name }}">{{ icon('trash') }}</button>
+            {% endif %}
+            <span class="m-qn">{{ it.quantity }}</span>
+            <button class="m-qb" type="button" data-action="mLineStep" data-line="{{ it.line_id }}" data-change="1" aria-label="One more {{ it.name }}">{{ icon('plus') }}</button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="m-card m-pad m-center">
+    <p class="m-strong">Cart is empty</p>
+    <p class="m-muted">Scan an item to start a sale.</p>
+</div>
+{% endif %}

@@ -1,0 +1,13 @@
+{# One item in a list (r: an inventory_items row), linking to its phone item page.
+   low_list: every row is low or out (the low stock page), so the count is always flagged. #}
+{% from 'm/_icons.html' import icon %}
+{% set q = r.quantity or 0 %}
+{% set tone = 'm-tone-bd' if q <= 0 else 'm-tone-wn' if (low_list or (r.alert_threshold and q <= r.alert_threshold)) else 'm-tone-nu' %}
+<a class="m-row" href="{{ url_for('mobile.stock_item', item_id=r.id) }}">
+    <span class="m-t">
+        <span class="m-t1">{{ r.name }}</span>
+        <span class="m-t2"><span class="m-mono">{{ r.sku }}</span>{% if r.location_area or r.location_shelf %} · {{ [r.location_area, r.location_aisle, r.location_shelf, r.location_bin]|select|join(' / ') }}{% endif %}</span>
+    </span>
+    <span class="m-pill {{ tone }}">{{ q }}</span>
+    {{ icon('chev', 'm-chev') }}
+</a>

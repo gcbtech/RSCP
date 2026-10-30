@@ -1,0 +1,44 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}Stock{% endblock %}
+{% block chips %}{% include 'm/stock/_chips.html' %}{% endblock %}
+{% block content %}
+{% if active %}
+<section class="m-card m-pad">
+    <p class="m-strong">{{ modes[active.mode][0] }} in progress</p>
+    <p class="m-muted">Started by {{ active.user_id }} · {{ active.start_time|local_time('%b %d, %I:%M %p') }} · {{ summary.counted }} counted · {{ summary.off }} off</p>
+    <a class="m-btn m-btn-p m-block m-gap" href="{{ url_for('mobile.stock_audit_live', session_id=active.id) }}">{{ icon('audit') }}Resume</a>
+    <form class="m-gap" method="post" action="{{ url_for('mobile.stock_audit_finish', session_id=active.id) }}" data-confirm="Finish this audit? Every count is already saved.">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="m-btn m-btn-s m-block" type="submit">Finish and see the report</button>
+    </form>
+</section>
+{% else %}
+<h2 class="m-lbl">Start an audit</h2>
+{% for key, (title, hint) in modes.items() %}
+<form method="post" action="{{ url_for('mobile.stock_audit_start') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="mode" value="{{ key }}">
+    <button class="m-card m-row m-choice" type="submit">
+        <span class="m-lead m-tone-ac">{{ icon('audit' if key == 'shelf' else 'scan') }}</span>
+        <span class="m-t"><span class="m-t1">{{ title }}</span><span class="m-t2 m-wrap">{{ hint }}</span></span>
+        {{ icon('chev', 'm-chev') }}
+    </button>
+</form>
+{% endfor %}
+{% endif %}
+
+<h2 class="m-lbl">Finished audits</h2>
+{% if past %}
+<div class="m-card">
+    {% for s in past %}
+    <a class="m-row" href="{{ url_for('mobile.stock_audit_report', session_id=s.id) }}">
+        <span class="m-t"><span class="m-t1">{{ modes[s.mode][0] if s.mode in modes else s.mode }} · {{ s.counted }} counted</span><span class="m-t2">{{ s.end_time|local_time('%b %d, %I:%M %p') }} · {{ s.user_id }}</span></span>
+        {{ icon('chev', 'm-chev') }}
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+<div class="m-card m-pad"><p class="m-muted">None yet.</p></div>
+{% endif %}
+{% endblock %}

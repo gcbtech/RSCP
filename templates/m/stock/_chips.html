@@ -1,0 +1,15 @@
+{# Stock section chips; `section`, `low_count` and `can_manage` come from app/routes/mobile/stock.py #}
+<nav class="m-chips" aria-label="Stock sections">
+    {% set chips = [
+        ('lookup', 'Look up', url_for('mobile.stock'), None),
+        ('items', 'Items', url_for('mobile.stock_items'), None),
+        ('low', 'Low stock', url_for('mobile.stock_low'), low_count),
+        ('audit', 'Audit', url_for('mobile.stock_audit'), None),
+    ] %}
+    {% if can_manage %}{% set _ = chips.append(('add', 'Add item', url_for('mobile.stock_add'), None)) %}{% endif %}
+    {% for key, label, url, count in chips %}
+    <a class="m-chip{% if section == key %} on{% endif %}" href="{{ url }}" data-chip="{{ key }}"{% if section == key %} aria-current="page"{% endif %}>
+        {{- label }}{% if count %} <b>{{ count }}</b>{% endif -%}
+    </a>
+    {% endfor %}
+</nav>

@@ -1,0 +1,24 @@
+{# Totals and the Hold / Checkout buttons, fixed above the tab bar. totals: compute_cart_totals(). #}
+{% from 'm/_icons.html' import icon %}
+{% set empty = not cart['items'] %}
+{% set discounts = totals.order_discount_cents + totals.coupon_discount_cents %}
+<div class="m-cartfoot-sum">
+    <span class="m-t2">Subtotal ${{ totals.subtotal_cents|dollars }}{% if discounts %} · Off ${{ discounts|dollars }}{% endif %} · Tax ${{ totals.tax_amount_cents|dollars }}</span>
+    <span class="m-cartfoot-total" aria-label="Total">${{ totals.card_total_cents|dollars }}</span>
+</div>
+{% if totals.cash_discount_enabled and totals.cash_discount_cents and not empty %}
+<div class="m-t2 m-cartfoot-cash">Cash price ${{ totals.cash_total_cents|dollars }}</div>
+{% endif %}
+{% if totals.applied_coupon %}
+<div class="m-t2 m-cartfoot-cash">Coupon {{ totals.applied_coupon.code }}{% if totals.coupon_discount_cents %} · ${{ totals.coupon_discount_cents|dollars }} off{% endif %}</div>
+{% endif %}
+<div class="m-cartfoot-btns">
+    {% if allow_hold %}
+    <button class="m-btn m-btn-s" type="button" data-action="mOpenSheet" data-sheet="mHoldSheet"{% if empty %} disabled{% endif %}>{{ icon('pause') }}Hold</button>
+    {% endif %}
+    {% if empty %}
+    <button class="m-btn m-btn-p m-grow" type="button" disabled>Checkout</button>
+    {% else %}
+    <a class="m-btn m-btn-p m-grow" href="{{ url_for('mobile.pos_checkout') }}">Checkout</a>
+    {% endif %}
+</div>

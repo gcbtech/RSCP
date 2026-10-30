@@ -1,0 +1,99 @@
+{#
+  One scan's result, rendered by POST /m/receive/scan and swapped into #mResult.
+  kind: received | priority | duplicate | unknown | inventory | error
+  The banner keeps the same colours in both themes, so a result never changes meaning.
+#}
+{% from 'm/_icons.html' import icon %}
+{% set banners = {
+    'received': ('m-banner-ok', 'check', 'Received'),
+    'priority': ('m-banner-priority', 'star', 'Priority package'),
+    'duplicate': ('m-banner-dup', 'copy', 'Already scanned'),
+    'unknown': ('m-banner-bad', 'x', 'Not in manifest'),
+    'error': ('m-banner-bad', 'x', 'Scan failed'),
+    'inventory': ('m-banner-info', 'stock', 'Stock item'),
+} %}
+{% set cls, ic, title = banners[kind] %}
+{% if kind in ('received', 'priority', 'duplicate') %}
+{% set n = result.items|length %}
+{% set sub = n ~ (' item · ' if n == 1 else ' items · ') ~ code %}
+{% else %}
+{% set sub = code %}
+{% endif %}
+<section class="m-banner {{ cls }}">
+    <span class="m-banner-ico">{{ icon(ic) }}</span>
+    <span class="m-t">
+        <span class="m-banner-title">{{ title }}</span>
+        <span class="m-banner-sub">{{ sub }}</span>
+    </span>
+</section>
+
+{% if kind in ('received', 'priority', 'duplicate') %}
+<div class="m-card m-pad">
+    {% for item in result['items'] %}
+    <div class="m-item{% if not loop.first %} m-item-next{% endif %}">
+        {% if item.image %}<img class="m-thumb" src="{{ item.image }}" alt="">{% else %}<span class="m-thumb">{{ icon('image') }}</span>{% endif %}
+        <span class="m-t">
+            <span class="m-item-name">{{ item.name or 'Unnamed item' }}</span>
+            <span class="m-t2">Qty {{ item.qty }} on the manifest</span>
+        </span>
+    </div>
+    {% endfor %}
+
+    {% if kind == 'duplicate' %}
+    <p class="m-muted">Nothing changed: this package was already received.</p>
+    {% elif kind == 'received' and inventory_on and result['items'] %}
+    {% set first = result['items'][0] %}
+    {% set match = result.inventory_match %}
+    {% if match %}
+    <p class="m-match">Matches <b>{{ match.name }}</b> · <span data-match-qty>{{ match.quantity }}</span> in stock</p>
+    <button class="m-btn m-btn-p m-block m-gap" type="button" data-action="mAddStock"
+        data-item-id="{{ match.id }}" data-qty="{{ first.qty }}" data-tracking="{{ code }}">{{ icon('plus') }}Add {{ first.qty }} to stock</button>
+    {% else %}
+    <p class="m-muted">No stock item matches this package yet.</p>
+    {% endif %}
+    <div class="m-grid2 m-gap">
+        {% if can_add_item %}
+        <a class="m-btn m-btn-s" data-new-item href="{{ url_for('mobile.stock_add', tracking=code, qty=first.qty, name=first.name, image_url=first.image_url or None, asin=first.asin or None, source_url=first.source_url or None, next=url_for('mobile.receive')) }}">New item</a>
+        {% endif %}
+        <button class="m-btn m-btn-s" type="button" data-action="mOpenLink" data-tracking="{{ code }}" data-name="{{ first.name or '' }}">{{ icon('link') }}Link item</button>
+    </div>
+    {% endif %}
+</div>
+
+{% elif kind == 'unknown' %}
+<div class="m-card m-pad">
+    <p class="m-strong">This tracking number isn't on any manifest.</p>
+    <p class="m-muted">Check that you scanned the shipping label, then scan again, or type the number in.</p>
+    <button class="m-btn m-btn-s m-block m-gap" type="button" data-action="mTypeCode">Type it in</button>
+</div>
+
+{% elif kind == 'error' %}
+<div class="m-card m-pad">
+    <p class="m-strong">The scan couldn't be saved.</p>
+    <p class="m-muted">{{ error }}</p>
+</div>
+
+{% elif kind == 'inventory' %}
+{% set item = result.inventory_item %}
+<div class="m-card m-pad" data-stock-item="{{ item.id }}">
+    <div class="m-item">
+        {% if item.image_url %}<img class="m-thumb" src="{{ item.image_url }}" alt="">{% else %}<span class="m-thumb">{{ icon('image') }}</span>{% endif %}
+        <span class="m-t">
+            <span class="m-item-name">{{ item.name }}</span>
+            <span class="m-t2">{{ item.sku }}{% if item.location %} · {{ item.location }}{% endif %}{% if item.sell_price_cents %} · ${{ item.sell_price_cents|dollars }}{% endif %}</span>
+        </span>
+    </div>
+    <div class="m-stepper m-gap">
+        <button class="m-step" type="button" data-action="mAdjust" data-change="-1" aria-label="Remove one from stock">{{ icon('minus') }}</button>
+        <div class="m-stepper-val" aria-live="polite"><span class="m-stepper-num" data-qty>{{ item.quantity }}</span><span class="m-t2">in stock</span></div>
+        <button class="m-step" type="button" data-action="mAdjust" data-change="1" aria-label="Add one to stock">{{ icon('plus') }}</button>
+    </div>
+    <div class="m-grid2 m-gap">
+        <button class="m-btn m-btn-s" type="button" data-action="mOpenCount">Set count</button>
+        <button class="m-btn m-btn-s" type="button" data-action="mMarkOOS" data-confirm="Mark {{ item.name }} out of stock?">Out of stock</button>
+    </div>
+    {% if has_permission(current_user, 'inventory.manage') %}
+    <a class="m-btn m-btn-s m-block m-gap" href="{{ url_for('inventory.edit_item', item_id=item.id) }}">{{ icon('pencil') }}Edit item</a>
+    {% endif %}
+</div>
+{% endif %}

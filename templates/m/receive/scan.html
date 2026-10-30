@@ -1,0 +1,42 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}Receive{% endblock %}
+{% block top_actions %}
+<button class="m-ib" type="button" data-action="mTypeCode" aria-label="Type a tracking number">{{ icon('keyboard') }}</button>
+{{ super() }}
+{% endblock %}
+{% block chips %}{% include 'm/receive/_chips.html' %}{% endblock %}
+{% block content %}
+{# The latest result sits on top; after the first scan the scanner card shrinks to its status line #}
+<div id="mResult" class="m-result" hidden></div>
+
+{% with scan_form=True, scan_label='Or type a tracking number', scan_placeholder='1Z…, 9400…' %}
+{% include 'm/_scanner.html' %}
+{% endwith %}
+
+<div class="m-lbl-row">
+    <h2 class="m-lbl">This session <span id="mSessionCount"></span></h2>
+    <button class="m-tbtn" type="button" data-action="mClearSession" id="mSessionClear" hidden>Clear</button>
+</div>
+<div class="m-card" id="mSession">
+    <p class="m-empty">Scans you make here show up in this list.</p>
+</div>
+
+{% include 'm/receive/_sheets.html' %}
+{% include 'm/_count_sheet.html' %}
+{% endblock %}
+{% block page_data %}
+{# main.link_item also answers GET /search, so linkUrl picks its POST rule (/receiving/link_item) #}
+<script type="application/json" id="page-data">{{ {
+    'scanUrl': url_for('mobile.receive_scan'),
+    'addStockUrl': url_for('mobile.receive_add_stock'),
+    'searchUrl': url_for('inventory.search_items') if inventory_on else '',
+    'linkUrl': url_for('main.link_item', _method='POST'),
+    'adjustUrl': url_for('inventory.quick_adjust', item_id=0) if inventory_on else '',
+}|tojson }}</script>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='m/scanner.js') }}"></script>
+<script src="{{ url_for('static', filename='m/stockcard.js') }}"></script>
+<script src="{{ url_for('static', filename='m/receive.js') }}"></script>
+{% endblock %}

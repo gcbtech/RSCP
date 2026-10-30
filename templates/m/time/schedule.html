@@ -1,0 +1,21 @@
+{% extends 'm/base.html' %}
+{% block title %}Timeclock{% endblock %}
+{% block chips %}{% include 'm/time/_chips.html' %}{% endblock %}
+{% block content %}
+{% if days %}
+<p class="m-note">Your shifts for the next {{ span }} days.</p>
+{% for d in days %}
+<p class="m-lbl" id="mDay{{ loop.index }}">{{ d.day }}</p>
+<div class="m-card" role="list" aria-labelledby="mDay{{ loop.index }}">
+    {% for s in d.shifts %}
+    <div class="m-row" role="listitem">
+        <span class="m-t"><span class="m-t1">{{ s.range }}</span><span class="m-t2">{{ s.hours }} hrs</span></span>
+        {% if s.now %}<span class="m-pill m-tone-ok">Now</span>{% endif %}
+    </div>
+    {% endfor %}
+</div>
+{% endfor %}
+{% else %}
+<div class="m-card m-pad"><p class="m-strong">Nothing scheduled</p><p class="m-muted">No shifts in the next {{ span }} days.</p></div>
+{% endif %}
+{% endblock %}

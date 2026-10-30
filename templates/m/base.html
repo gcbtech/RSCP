@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+{#
+  Phone UI shell (FZ-N1 + Fully Kiosk, about 360x600 CSS px). Deliberately
+  separate from templates/base.html: desktop pages never load anything from
+  templates/m/ or static/m/, and nothing here loads Bootstrap.
+
+    {% extends 'm/base.html' %}
+    {% block title %}Receive{% endblock %}
+    {% block chips %} section chips, optional {% endblock %}
+    {% block content %} ... {% endblock %}
+    {% block scripts %}<script src="{{ url_for('static', filename='m/<page>.js') }}"></script>{% endblock %}
+
+  Optional blocks: top_left (a back button), top_actions (replaces bell +
+  account; {{ super() }} keeps them), tabs (empty it for flows that must be
+  finished or cancelled), page_data (a <script type="application/json"
+  id="page-data"> block, read with RSCP.pageData()).
+  Same no-inline-JavaScript rules as the desktop: see static/js/rscp-common.js.
+  Theme is per device (light / dark / match device), set before first paint by
+  static/m/theme.js.
+#}
+{% from 'm/_icons.html' import icon %}
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>{% block title %}{% endblock %} · RSCP</title>
+    <link rel="icon" href="{{ favicon }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='m/m.css') }}">
+    <script src="{{ url_for('static', filename='m/theme.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/rscp-common.js') }}"></script>
+</head>
+<body class="{% block body_class %}{% endblock %}">
+    <header class="m-top">
+        {% block top_left %}{% endblock %}
+        <h1 class="m-title">{% block heading %}{{ self.title() }}{% endblock %}</h1>
+        {% block top_actions %}
+        <button class="m-ib" type="button" id="mBell" data-action="mOpenNotifications"
+            data-count-url="{{ url_for('notifications.count_notifications') }}"
+            data-list-url="{{ url_for('notifications.list_notifications') }}"
+            data-read-all-url="{{ url_for('notifications.mark_all_read') }}"
+            aria-label="Notifications">{{ icon('bell') }}<span class="m-badge" id="mBellBadge" hidden></span></button>
+        <button class="m-ib" type="button" data-action="mOpenSheet" data-sheet="mAccount"
+            aria-label="Account, theme and sign out">{{ icon('user') }}</button>
+        {% endblock %}
+    </header>
+    <div class="m-offline" id="mOffline" role="alert" hidden>No connection. Nothing will save until it’s back.</div>
+    {% block chips %}{% endblock %}
+    <main class="m-main" id="mMain">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+        <div class="m-flash{% if category in ('danger', 'error') %} m-flash-bad{% endif %}" role="status">{{ message }}</div>
+        {% endfor %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </main>
+    {% block tabs %}{% include 'm/_tabs.html' %}{% endblock %}
+    {% include 'm/_sheets.html' %}
+    <div class="m-toast" id="mToast" role="status" aria-live="polite" hidden></div>
+    {% block page_data %}{% endblock %}
+    <script src="{{ url_for('static', filename='m/m.js') }}"></script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

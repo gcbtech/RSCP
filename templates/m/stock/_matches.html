@@ -1,0 +1,18 @@
+{# Search results for the lookup (no exact code match): rows link to the item page. #}
+{% from 'm/_icons.html' import icon %}
+{% if rows %}
+<h2 class="m-lbl">{{ total }} item{{ '' if total == 1 else 's' }} match “{{ query }}”</h2>
+<div class="m-card">
+    {% for r in rows %}
+    {% include 'm/stock/_item_row.html' %}
+    {% endfor %}
+</div>
+{% if total > rows|length %}
+<a class="m-btn m-btn-s m-block" href="{{ url_for('mobile.stock_items', q=query) }}">See all {{ total }}</a>
+{% endif %}
+{% else %}
+<div class="m-card m-pad">
+    <p class="m-strong">Nothing matches “{{ query }}”</p>
+    <p class="m-muted">Check the code, or search by part of the name.</p>
+</div>
+{% endif %}

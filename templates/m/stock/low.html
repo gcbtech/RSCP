@@ -1,0 +1,16 @@
+{% extends 'm/base.html' %}
+{% block title %}Stock{% endblock %}
+{% block chips %}{% include 'm/stock/_chips.html' %}{% endblock %}
+{% block content %}
+{% if rows %}
+<p class="m-note">Out of stock, or at or below the item's alert level{% if threshold %} (or {{ threshold }} for items without one){% endif %}.</p>
+{% set low_list = True %}
+<div class="m-card">
+    {% for r in rows %}
+    {% include 'm/stock/_item_row.html' %}
+    {% endfor %}
+</div>
+{% else %}
+<div class="m-card m-pad"><p class="m-strong">Nothing is running low</p></div>
+{% endif %}
+{% endblock %}

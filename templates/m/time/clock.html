@@ -1,0 +1,65 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}Timeclock{% endblock %}
+{% block chips %}{% include 'm/time/_chips.html' %}{% endblock %}
+{% block content %}
+<section class="m-card m-pad m-clock m-clock-{{ status.state }}" aria-live="polite">
+    {% if status.state == 'shift' %}
+    <p class="m-clock-state"><span class="m-dot"></span>Working</p>
+    <p class="m-clock-sub">Since {{ status.since }} · <span data-since="{{ status.since_ms }}">{{ status.duration }}</span></p>
+    <div class="m-grid2 m-gap">
+        <form method="post" action="{{ url_for('mobile.time_clock', action='break') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="m-btn m-btn-s m-block" type="submit">{{ icon('coffee') }}<span>Start break</span></button>
+        </form>
+        <form method="post" action="{{ url_for('mobile.time_clock', action='out') }}" data-confirm="Clock out now?">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button class="m-btn m-btn-d m-block" type="submit">{{ icon('logout') }}<span>Clock out</span></button>
+        </form>
+    </div>
+    {% elif status.state == 'break' %}
+    <p class="m-clock-state"><span class="m-dot"></span>On break</p>
+    <p class="m-clock-sub">Since {{ status.since }} · <span data-since="{{ status.since_ms }}">{{ status.duration }}</span></p>
+    <form class="m-gap" method="post" action="{{ url_for('mobile.time_clock', action='back') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="m-btn m-btn-p m-btn-tall m-block" type="submit">{{ icon('play') }}<span>End break</span></button>
+    </form>
+    {% else %}
+    <p class="m-clock-state"><span class="m-dot"></span>Clocked out</p>
+    <p class="m-clock-sub">{% if status.ended %}Last shift ended {{ status.ended }}{% else %}No shifts yet{% endif %}</p>
+    <form class="m-gap" method="post" action="{{ url_for('mobile.time_clock', action='in') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="m-btn m-btn-p m-btn-tall m-block" type="submit">{{ icon('time') }}<span>Clock in</span></button>
+    </form>
+    {% endif %}
+</section>
+
+<section class="m-card m-pad" aria-labelledby="mPeriodTitle">
+    <p class="m-lbl" id="mPeriodTitle">This pay period · {{ period.label }}</p>
+    <dl class="m-facts m-facts-3 m-gap">
+        <div><dt>Regular hrs</dt><dd>{{ period.regular }}</dd></div>
+        <div><dt>Overtime hrs</dt><dd{% if period.has_overtime %} class="m-over"{% endif %}>{{ period.overtime }}</dd></div>
+        <div><dt>Total hrs</dt><dd>{{ period.total }}</dd></div>
+    </dl>
+</section>
+
+<nav class="m-card" aria-label="Schedule and time off">
+    <a class="m-row" href="{{ url_for('mobile.time_schedule') }}">
+        {{ icon('calendar', 'm-row-ic') }}
+        <span class="m-t"><span class="m-t1">{% if next_shift and next_shift.now %}Shift now{% else %}Next shift{% endif %}</span>
+            <span class="m-t2">{% if next_shift %}{{ next_shift.day }} · {{ next_shift.range }}{% else %}Nothing scheduled{% endif %}</span></span>
+        {{ icon('chev', 'm-chev') }}
+    </a>
+    <a class="m-row" href="{{ url_for('mobile.time_off') }}">
+        {{ icon('sun', 'm-row-ic') }}
+        <span class="m-t"><span class="m-t1">Time off</span><span class="m-t2">{{ pto_balance }} hrs available · Request</span></span>
+        {{ icon('chev', 'm-chev') }}
+    </a>
+</nav>
+{% endblock %}
+{% block page_data %}
+<script type="application/json" id="page-data">{{ {'nowMs': now_ms}|tojson }}</script>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='m/time.js') }}"></script>
+{% endblock %}

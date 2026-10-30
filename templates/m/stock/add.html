@@ -1,0 +1,73 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}Stock{% endblock %}
+{% block chips %}{% include 'm/stock/_chips.html' %}{% endblock %}
+{% macro error(key) %}{% if errors.get(key) %}<p class="m-field-error" id="err-{{ key }}">{{ errors[key] }}</p>{% endif %}{% endmacro %}
+{% macro described(key) %}{% if errors.get(key) %} aria-invalid="true" aria-describedby="err-{{ key }}"{% endif %}{% endmacro %}
+{% block content %}
+{% if form.tracking %}
+<p class="m-note">From package <span class="m-mono">{{ form.tracking }}</span>. Pictures, costs and the rest can be added later on the desktop item page.</p>
+{% else %}
+<p class="m-note">The basics, for adding an item at the shelf. Pictures, costs and the rest are on the desktop item page.</p>
+{% endif %}
+<form class="m-form" method="post" action="{{ url_for('mobile.stock_add') }}" novalidate>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    {% for key in ('tracking', 'image_url', 'asin', 'source_url', 'next') %}
+    <input type="hidden" name="{{ key }}" value="{{ form[key] }}">
+    {% endfor %}
+
+    <div>
+        <label class="m-label" for="addName">Name</label>
+        <input class="m-input" id="addName" name="name" type="text" value="{{ form.name }}" required{{ described('name') }}>
+        {{ error('name') }}
+    </div>
+    <div class="m-grid2">
+        <div>
+            <label class="m-label" for="addQty">Quantity</label>
+            <input class="m-input" id="addQty" name="qty" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ form.qty }}"{{ described('qty') }}>
+            {{ error('qty') }}
+        </div>
+        <div>
+            <label class="m-label" for="addPrice">Price ($)</label>
+            <input class="m-input" id="addPrice" name="price" type="text" inputmode="decimal" value="{{ form.price }}" placeholder="0.00"{{ described('price') }}>
+            {{ error('price') }}
+        </div>
+    </div>
+    <div class="m-grid2">
+        <div>
+            <label class="m-label" for="addArea">Area</label>
+            {% if areas %}
+            <select class="m-input" id="addArea" name="area"{{ described('area') }}>
+                <option value="">Choose…</option>
+                {% for a in areas %}<option value="{{ a }}"{% if a == form.area %} selected{% endif %}>{{ a }}</option>{% endfor %}
+            </select>
+            {% else %}
+            <input class="m-input" id="addArea" name="area" type="text" value="{{ form.area }}"{{ described('area') }}>
+            {% endif %}
+        </div>
+        <div>
+            <label class="m-label" for="addShelf">Shelf / bin</label>
+            <input class="m-input" id="addShelf" name="shelf" type="text" value="{{ form.shelf }}">
+        </div>
+    </div>
+    {{ error('area') }}
+    <div>
+        <label class="m-label" for="addUpc">UPC (scan or type, optional)</label>
+        <input class="m-input" id="addUpc" name="upc" type="text" inputmode="numeric" value="{{ form.upc }}" autocomplete="off">
+    </div>
+    <div class="m-grid2">
+        <div>
+            <label class="m-label" for="addCategory">SKU group</label>
+            <select class="m-input" id="addCategory" name="category">
+                {% for code, label in categories.items() %}<option value="{{ code }}"{% if code == form.category %} selected{% endif %}>{{ label }}</option>{% endfor %}
+            </select>
+        </div>
+        <div>
+            <label class="m-label" for="addSku">SKU (optional)</label>
+            <input class="m-input" id="addSku" name="sku" type="text" value="{{ form.sku }}" placeholder="Automatic" autocapitalize="characters"{{ described('sku') }}>
+        </div>
+    </div>
+    {{ error('sku') }}
+    <button class="m-btn m-btn-p m-block" type="submit">{{ icon('plus') }}Add item</button>
+</form>
+{% endblock %}

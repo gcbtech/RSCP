@@ -1,0 +1,17 @@
+{% extends 'm/base.html' %}
+{% block title %}Receive{% endblock %}
+{% block chips %}{% include 'm/receive/_chips.html' %}{% endblock %}
+{% block content %}
+{% if rows %}
+<p class="m-note">Expected but never scanned. Scanning one receives it as usual.</p>
+<div class="m-card">
+    {% for r in rows %}
+    <div class="m-row">
+        <span class="m-t"><span class="m-t1">{{ r.item_name or 'Unnamed item' }}</span><span class="m-t2"><span class="m-mono">{{ r.tracking_number }}</span> · due {{ r.date_expected }}</span></span>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="m-card m-pad"><p class="m-strong">Nothing is past due</p><p class="m-muted">Every expected package has arrived.</p></div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,14 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}Item{% endblock %}
+{% block top_left %}<a class="m-ib" href="{{ request.referrer if request.referrer and '/m/' in request.referrer else url_for('mobile.stock_items') }}" aria-label="Back">{{ icon('back') }}</a>{% endblock %}
+{% block content %}
+{{ card|safe }}{# rendered (and escaped) by m/stock/_item.html #}
+{% include 'm/_count_sheet.html' %}
+{% endblock %}
+{% block page_data %}
+<script type="application/json" id="page-data">{{ {'adjustUrl': url_for('inventory.quick_adjust', item_id=0)}|tojson }}</script>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='m/stockcard.js') }}"></script>
+{% endblock %}

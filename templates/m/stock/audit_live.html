@@ -1,0 +1,77 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}{{ mode[0] }}{% endblock %}
+{% block top_left %}<a class="m-ib" href="{{ url_for('mobile.stock_audit') }}" aria-label="Back to audits">{{ icon('back') }}</a>{% endblock %}
+{% block heading %}<span class="m-title-stack"><span>{{ mode[0] }}</span><small id="mAuditSummary">{{ summary.counted }} counted · {{ summary.off }} off</small></span>{% endblock %}
+{% block top_actions %}
+<form method="post" action="{{ url_for('mobile.stock_audit_finish', session_id=sess.id) }}" data-confirm="Finish this audit? Every count is already saved.">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="m-tbtn" type="submit">Finish</button>
+</form>
+{% endblock %}
+{% block content %}
+{#
+  One item at a time (static/m/audit.js). Shelf audit: confirm the system count
+  or enter what's there. Item audit: every scan of the same item adds one.
+#}
+<section class="m-card m-pad" id="mAuditItem" hidden>
+    <div class="m-item">
+        <img class="m-thumb" id="mAuditImg" alt="" hidden>
+        <span class="m-thumb" id="mAuditNoImg">{{ icon('image') }}</span>
+        <span class="m-t">
+            <span class="m-item-name" id="mAuditName"></span>
+            <span class="m-t2" id="mAuditMeta"></span>
+        </span>
+    </div>
+    <p class="m-match" id="mAuditPrev" hidden></p>
+
+    {% if sess.mode == 'item' %}
+    <div class="m-stepper m-gap">
+        <button class="m-step" type="button" data-action="mAuditStep" data-change="-1" aria-label="One fewer">{{ icon('minus') }}</button>
+        <div class="m-stepper-val" aria-live="polite"><span class="m-stepper-num" id="mAuditCount">1</span><span class="m-t2" id="mAuditSystem"></span></div>
+        <button class="m-step" type="button" data-action="mAuditStep" data-change="1" aria-label="One more">{{ icon('plus') }}</button>
+    </div>
+    <p class="m-muted">Scan each unit; the same item adds one per scan.</p>
+    {# Label in one span: a flex button would drop the space before an inner element #}
+    <button class="m-btn m-btn-ok m-block m-gap m-btn-tall" type="button" data-action="mAuditSave">{{ icon('check') }}<span>Save count <span id="mAuditSaveN">1</span></span></button>
+    <button class="m-btn m-btn-s m-block m-gap" type="button" data-action="mAuditOpenCount">Type the count</button>
+    {% else %}
+    <div class="m-big-count m-gap">
+        <span class="m-stepper-num" id="mAuditSystemNum"></span>
+        <span><span class="m-strong-inline">in the system</span><span class="m-t2">Count the shelf, then confirm</span></span>
+    </div>
+    <button class="m-btn m-btn-ok m-block m-gap m-btn-tall" type="button" data-action="mAuditMatch">{{ icon('check') }}<span>Yes, <span id="mAuditMatchN"></span> on the shelf</span></button>
+    <button class="m-btn m-btn-s m-block m-gap" type="button" data-action="mAuditOpenCount">No, enter the count</button>
+    {% endif %}
+</section>
+
+{% with scan_form=True, scan_label='Or type a SKU, UPC or part number', scan_placeholder='SKU or UPC', scan_button='Find' %}
+{% include 'm/_scanner.html' %}
+{% endwith %}
+
+<h2 class="m-lbl">Last counted</h2>
+<div class="m-card" id="mAuditRecent">{% include 'm/stock/_audit_recent.html' %}</div>
+
+{% with count_title='How many are there?' %}{% include 'm/_count_sheet.html' %}{% endwith %}
+
+<dialog class="m-sheet" id="mAuditSwitch" aria-labelledby="mAuditSwitchTitle">
+    <div class="m-grab" aria-hidden="true"></div>
+    <h2 class="m-sheet-title" id="mAuditSwitchTitle">Save the last item first?</h2>
+    <p class="m-sheet-sub" id="mAuditSwitchText"></p>
+    <div class="m-grid2">
+        <button class="m-btn m-btn-s" type="button" data-action="mCloseSheet">Back</button>
+        <button class="m-btn m-btn-p" type="button" data-action="mAuditSwitchSave">Save, then next</button>
+    </div>
+</dialog>
+{% endblock %}
+{% block page_data %}
+<script type="application/json" id="page-data">{{ {
+    'mode': sess.mode,
+    'scanUrl': url_for('mobile.stock_audit_scan', session_id=sess.id),
+    'countUrl': url_for('mobile.stock_audit_count', session_id=sess.id),
+}|tojson }}</script>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='m/scanner.js') }}"></script>
+<script src="{{ url_for('static', filename='m/audit.js') }}"></script>
+{% endblock %}

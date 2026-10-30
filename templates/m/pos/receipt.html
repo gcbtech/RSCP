@@ -1,0 +1,40 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{# A finished sale, from what was stored (app/routes/pos/checkout.py _prepare_receipt_data). #}
+{% block title %}Sale {{ order.order_number }}{% endblock %}
+{% block top_left %}<a class="m-ib" href="{{ url_for('mobile.pos') }}" aria-label="Back to the register">{{ icon('back') }}</a>{% endblock %}
+{% block content %}
+<section class="m-banner m-banner-ok">
+    <span class="m-banner-ico">{{ icon('check') }}</span>
+    <span class="m-t">
+        <span class="m-banner-title">${{ order.total_cents|dollars }}</span>
+        <span class="m-banner-sub">{{ order.order_number }} · {{ order.created_at|local_time('%b %d, %I:%M %p') }}</span>
+    </span>
+</section>
+{% if state.voided %}<div class="m-flash m-flash-bad">This sale was voided.</div>{% endif %}
+
+<div class="m-card m-pad">
+    {% for it in items %}
+    <div class="m-sumline"><span>{{ it.name }} ×{{ it.quantity }}</span><span>${{ it.line_total_cents|dollars }}</span></div>
+    {% endfor %}
+    {% if total_item_discount_cents %}<div class="m-sumline"><span>Item discounts</span><span>−${{ total_item_discount_cents|dollars }}</span></div>{% endif %}
+    {% if order.discount_amount_cents %}<div class="m-sumline"><span>Order discount</span><span>−${{ order.discount_amount_cents|dollars }}</span></div>{% endif %}
+    {% if coupon_redemption %}<div class="m-sumline"><span>Coupon {{ coupon_redemption.coupon_code }}</span><span>−${{ coupon_redemption.discount_applied_cents|dollars }}</span></div>{% endif %}
+    {% if cash_discount_cents %}<div class="m-sumline"><span>Cash discount</span><span>−${{ cash_discount_cents|dollars }}</span></div>{% endif %}
+    <div class="m-sumline"><span>Tax</span><span>${{ order.tax_amount_cents|dollars }}</span></div>
+    <div class="m-sumline m-sumtotal"><span>Total</span><span>${{ order.total_cents|dollars }}</span></div>
+</div>
+
+<h2 class="m-lbl">Paid</h2>
+<div class="m-card m-pad">
+    {% for p in payments %}
+    <div class="m-sumline"><span>{{ p.method|capitalize }}{% if p.tendered_cents %} · tendered ${{ p.tendered_cents|dollars }}{% endif %}</span><span>${{ p.amount_cents|dollars }}</span></div>
+    {% if p.change_given_cents %}<div class="m-sumline m-sumtotal"><span>Change</span><span>${{ p.change_given_cents|dollars }}</span></div>{% endif %}
+    {% else %}
+    <div class="m-sumline"><span>{{ (order.payment_method or '')|capitalize }}</span><span>${{ order.total_cents|dollars }}</span></div>
+    {% endfor %}
+</div>
+
+<a class="m-btn m-btn-p m-block m-btn-tall" href="{{ url_for('mobile.pos') }}">{{ icon('pos') }}New sale</a>
+<a class="m-btn m-btn-s m-block" href="{{ url_for('pos.receipt', order_number=order.order_number) }}">Full receipt (desktop page, to print)</a>
+{% endblock %}

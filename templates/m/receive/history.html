@@ -1,0 +1,34 @@
+{% extends 'm/base.html' %}
+{% from 'm/_icons.html' import icon %}
+{% block title %}Receive{% endblock %}
+{% block chips %}{% include 'm/receive/_chips.html' %}{% endblock %}
+{% block content %}
+<form method="get" action="{{ url_for('mobile.receive_history') }}" role="search">
+    <input type="hidden" name="period" value="{{ period }}">
+    <label class="m-label" for="mHistoryQuery">Search tracking or item</label>
+    <div class="m-inline">
+        <input class="m-input" id="mHistoryQuery" name="q" type="search" value="{{ query }}" autocomplete="off" spellcheck="false" enterkeyhint="search">
+        <button class="m-btn m-btn-s" type="submit">Search</button>
+    </div>
+</form>
+<nav class="m-seg m-seg-links" aria-label="Period">
+    {% for key, label in (('today', 'Today'), ('week', '7 days'), ('all', 'Recent')) %}
+    <a href="{{ url_for('mobile.receive_history', period=key, q=query or None) }}"{% if period == key %} class="on" aria-current="true"{% endif %}>{{ label }}</a>
+    {% endfor %}
+</nav>
+{% if entries %}
+<div class="m-card">
+    {% for e in entries %}
+    <div class="m-row">
+        <span class="m-t">
+            <span class="m-t1">{{ e.name }}</span>
+            <span class="m-t2"><span class="m-tag m-tone-{{ e.tone }}">{{ e.label }}</span>{% if e.qty %} ×{{ e.qty }}{% endif %} · {{ e.user }}</span>
+            <span class="m-t2"><span class="m-mono">{{ e.tracking }}</span> · {{ e.when|local_time('%b %d, %I:%M %p') }}</span>
+        </span>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="m-card m-pad"><p class="m-strong">Nothing found</p><p class="m-muted">Try another search or a longer period.</p></div>
+{% endif %}
+{% endblock %}
