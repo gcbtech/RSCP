@@ -32,8 +32,18 @@
  *   directly: back to the capture input when typing is done, and before a
  *   sheet closes (static/m/m.js opens sheets non-modally, so the capture
  *   input stays focusable behind them).
- * If the connection is lost anyway, the card says so and a tap on it
- * reloads the page, which starts it fresh.
+ * - Android closes the connection when the screen goes off or the window
+ *   loses focus, and offers it again when the focus comes back. Chrome turns
+ *   that offer down for a field with inputmode="none" (seen on Android 11;
+ *   the Android 8 unit keeps its connection), so the attribute comes off
+ *   when the page is visible or focused again. It can't stay off, because a
+ *   tap anywhere would then bring up the keyboard: it goes back on at the
+ *   first touch, or after RECONNECT_HOLD_MS (the page hears of a wake-up up
+ *   to a second before Android returns the focus).
+ * If a scan still arrives with no text (keys with no value, then Enter), the
+ * connection is offered again the same way and the scan has to be repeated.
+ * If the next one fails too, the card says so and a tap on it reloads the
+ * page, which starts it fresh.
  *
  * A scan ends at Enter or Tab, or after 250 ms of quiet. On a visible field
  * only a burst typed at scanner speed (keys under 40 ms apart) ends on
@@ -46,6 +56,7 @@
     var IDLE_SUBMIT_MS = 250;
     var MIN_BURST = 4;
     var INPUTMODE_DELAY_MS = 300;
+    var RECONNECT_HOLD_MS = 2500;
 
     function isTextEntry(el) {
         if (!el || el === document.body) return false;
@@ -92,6 +103,8 @@
         var fields = (opts.fields || []).filter(Boolean);
         var lost = false;
         var deadKeys = 0;   // keydown "Unidentified" since the last real input: a scan with nowhere to go
+        var retried = false;   // the last scan came with no text and the connection was offered again
+        var inputmodeTimer = null;
 
         function setState(state) {
             if (status) status.setAttribute('data-state', state);
@@ -110,8 +123,21 @@
             try { capture.focus({ preventScroll: true }); } catch (e) { capture.focus(); }
         }
 
+        /** Lets Android's next text connection through (see the rules above). */
+        function liftInputmode(ms) {
+            clearTimeout(inputmodeTimer);
+            capture.removeAttribute('inputmode');
+            inputmodeTimer = setTimeout(restoreInputmode, ms);
+        }
+
+        function restoreInputmode() {
+            clearTimeout(inputmodeTimer);
+            capture.setAttribute('inputmode', 'none');
+        }
+
         /** Back to the capture input, straight from wherever the focus is (never via nothing). */
         function keep() {
+            if (document.activeElement !== capture) restoreInputmode();   // puts the keyboard away
             focusCapture();
             refreshState();
         }
@@ -121,6 +147,18 @@
             lost = true;
             refreshState();
             feedback('bad');
+        }
+
+        /** A scan came as keys with no text: offer the connection again, once. */
+        function droppedScan() {
+            if (retried) {
+                markLost();
+                return;
+            }
+            retried = true;
+            liftInputmode(RECONNECT_HOLD_MS);
+            feedback('bad');
+            if (window.RSCPM && window.RSCPM.toast) window.RSCPM.toast('That scan didn’t go through. Scan again.');
         }
 
         function emit(code, source) {
@@ -165,13 +203,14 @@
                 if (input.value.trim()) {
                     event.preventDefault();
                     submit();
-                } else if (input === capture && deadKeys >= MIN_BURST) {
-                    markLost();   // a whole scan arrived as keys with no text
+                } else if (input === capture && deadKeys > 0) {
+                    droppedScan();
                 }
                 deadKeys = 0;
             });
             input.addEventListener('input', function () {
                 deadKeys = 0;
+                retried = false;
                 burst.add();
                 clearTimeout(timer);
                 if (anySpeed || burst.fast()) timer = setTimeout(submit, IDLE_SUBMIT_MS);
@@ -192,7 +231,9 @@
 
         // A tap that isn't on a text field leaves the focus where it is
         var focusAtTap = null;
+        document.addEventListener('touchstart', restoreInputmode, { capture: true, passive: true });
         document.addEventListener('mousedown', function (event) {
+            restoreInputmode();
             focusAtTap = document.activeElement;
             if (!takesFocus(event.target)) event.preventDefault();
         }, true);
@@ -226,16 +267,19 @@
             if (!event.relatedTarget && document.hasFocus()) keep();
         });
         document.addEventListener('focusout', function () { setTimeout(refreshState, 0); });
-        document.addEventListener('visibilitychange', refreshState);
+        document.addEventListener('visibilitychange', function () {
+            refreshState();
+            if (document.visibilityState === 'visible') liftInputmode(RECONNECT_HOLD_MS);
+        });
+        window.addEventListener('focus', function () { liftInputmode(RECONNECT_HOLD_MS); });
         // A sheet opening or closing: dialogs have no open event, so watch their attribute
         if (window.MutationObserver) {
             new MutationObserver(refreshState).observe(document.body, { subtree: true, attributes: true, attributeFilter: ['open'] });
         }
 
         // Now, while the page loads and before any tap (see the rules above)
-        capture.removeAttribute('inputmode');
+        liftInputmode(INPUTMODE_DELAY_MS);
         focusCapture();
-        setTimeout(function () { capture.setAttribute('inputmode', 'none'); }, INPUTMODE_DELAY_MS);
 
         var api = {
             /** Back to scanning: a focused field lets go (its keyboard goes away). */

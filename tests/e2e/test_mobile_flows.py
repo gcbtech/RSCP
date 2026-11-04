@@ -83,13 +83,53 @@ def test_page_listens_on_load_and_taps_keep_the_focus(phone, e2e_server):
     phone.watcher.assert_clean()
 
 
-def test_scan_with_no_text_marks_the_scanner_lost_and_a_tap_restarts_it(phone):
-    """The FZ-N1's keyboard app sends keys with no text when it has no field to type
-    into: say so, and reload on a tap (a fresh load gets the connection back)."""
-    open_scan_screen(phone)
-    phone.evaluate("""() => { const c = document.getElementById('mScanCapture');
-        for (let i = 0; i < 12; i++) c.dispatchEvent(new KeyboardEvent('keydown', { key: 'Unidentified', bubbles: true }));
+def drop_scan(page):
+    """A scan with no text connection, as the Android 11 FZ-N1 delivers it: keys with no value, then Enter."""
+    page.evaluate("""() => { const c = document.getElementById('mScanCapture');
+        for (let i = 0; i < 2; i++) c.dispatchEvent(new KeyboardEvent('keydown', { key: 'Unidentified', bubbles: true }));
         c.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', keyCode: 13, bubbles: true })); }""")
+
+
+def test_waking_up_offers_the_text_connection_again_until_the_first_touch(phone, e2e_server):
+    """Android 11 FZ-N1: after a lock and unlock Chrome refuses Android's new text connection
+    while the capture input has inputmode="none", and the next scan is lost."""
+    helpers.seed_package(e2e_server, '1ZPHONE00000000011', name='After A Wake Up')
+    open_scan_screen(phone)
+    capture = phone.locator('#mScanCapture')
+
+    phone.evaluate("() => document.dispatchEvent(new Event('visibilitychange'))")   # the screen back on
+    expect(capture).not_to_have_attribute('inputmode', 'none')
+    assert_listening(phone)                                                         # back on by itself
+
+    phone.evaluate("() => window.dispatchEvent(new Event('focus'))")                # Fully's side menu closing
+    expect(capture).not_to_have_attribute('inputmode', 'none')
+    phone.locator('#mScanStatus .m-scanner-head').tap()                             # with it off, a tap brings the keyboard up
+    expect(capture).to_have_attribute('inputmode', 'none', timeout=1000)
+    assert_listening(phone)
+
+    scan(phone, '1ZPHONE00000000011')
+    expect(phone.locator('.m-banner-sub')).to_contain_text('1ZPHONE00000000011')
+
+
+def test_scan_with_no_text_reconnects_then_says_so_and_a_tap_restarts_it(phone, e2e_server):
+    """The FZ-N1's keyboard app sends keys with no text when it has no field to type into.
+    Offer the connection again and ask for the scan again; two in a row, say so, and
+    reload on a tap (a fresh load gets the connection back)."""
+    helpers.seed_package(e2e_server, '1ZPHONE00000000012', name='After A Dropped Scan')
+    open_scan_screen(phone)
+    capture = phone.locator('#mScanCapture')
+
+    drop_scan(phone)
+    expect(phone.locator('#mToast')).to_contain_text('Scan again')
+    expect(capture).not_to_have_attribute('inputmode', 'none')
+    assert_listening(phone)
+
+    scan(phone, '1ZPHONE00000000012')                  # one that gets through starts the count over
+    expect(phone.locator('.m-banner-sub')).to_contain_text('1ZPHONE00000000012')
+    drop_scan(phone)
+    expect(phone.locator('#mScanStatus')).to_have_attribute('data-state', 'listening')
+
+    drop_scan(phone)
     expect(phone.locator('#mScanStatus')).to_have_attribute('data-state', 'lost')
     expect(phone.get_by_text('Scanner stopped')).to_be_visible()
     with phone.expect_navigation():
