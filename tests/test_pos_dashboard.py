@@ -114,6 +114,24 @@ def _seed_day(conn):
     return a, b, c, d
 
 
+def test_split_sale_with_a_cash_discount_shares_tax_by_full_price(fresh_app, conn):
+    """Tax is charged on the full (card) price and the cash discount comes off the cash part
+    after tax, so $55.00 by card on a $100 + 10% sale is $50.00 before tax, a whole amount."""
+    from app.services.pos_reports import build_sales_report
+    dock = _item(conn, 'DOCK', 10000, 4000)
+    sale = _sell(conn, _cart(dock, 'DOCK', 10000), 'split', TAX10_CASH5, cash_amount='55', card_amounts=['55'])
+    assert (sale.total_cents, sale.cash_discount_cents) == (10725, 275)
+    with sales_unlocked(conn):
+        conn.execute('UPDATE pos_orders SET created_at = ?', (_utc_at_local(_today(), 12),))
+    with fresh_app.app_context():
+        r = build_sales_report(_today(), _today())
+    assert [(t['method'], t['collected_cents'], t['tax_cents'], t['net_ex_tax_cents']) for t in r['tenders']] == [
+        ('cash', 5225, 500, 4725),
+        ('card', 5500, 500, 5000),
+    ]
+    assert sum(t['tax_cents'] for t in r['tenders']) == r['tax_net_cents']
+
+
 def _render(app, client, path, template, **params):
     captured = []
 

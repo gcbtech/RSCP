@@ -39,20 +39,27 @@ def _m(value):
 
 
 def _tax_by_tender(rows):
-    """{method: tax cents} from rows of (source, method, amount, total, tax), one
-    row per tender on a sale or correction. A source's tax is shared between its
-    tenders in proportion to what each paid; the last takes the rounding, so the
-    shares add up to the source's tax exactly."""
+    """{method: tax cents} from rows of (source, method, amount, total, tax,
+    cash_discount), one row per tender on a sale or correction.
+
+    Tax is charged on the full (card) price, and the cash discount comes off
+    the cash part after tax (pos_checkout.settle_tender). So a source's tax is
+    shared in proportion to the full price each tender covered: what it paid,
+    plus the cash discount for cash. ($55.00 by card on a $100 + 10% sale is
+    $50.00 + $5.00 tax.) The last tender takes the rounding, so the shares add
+    up to the source's tax exactly."""
     sources = {}
     for row in rows:
         sources.setdefault(row['source'], []).append(row)
     taxes = {}
     for tenders in sources.values():
         tenders.sort(key=lambda t: t['method'] or '')
-        total, left = _m(tenders[0]['total']), _m(tenders[0]['tax'])
-        tax = left
+        cash_discount = _m(tenders[0]['cash_discount'])
+        full_price = _m(tenders[0]['total']) + cash_discount
+        tax = left = _m(tenders[0]['tax'])
         for t in tenders[:-1]:
-            share = round(tax * _m(t['amount']) / total) if total else 0
+            covered = _m(t['amount']) + (cash_discount if t['method'] == 'cash' else 0)
+            share = round(tax * covered / full_price) if full_price else 0
             taxes[t['method']] = taxes.get(t['method'], 0) + share
             left -= share
         last = tenders[-1]['method']
@@ -84,7 +91,7 @@ def build_sales_report(start_date, end_date, conn=None):
       tenders                  [{'method', 'label', 'count', 'collected_cents', 'corrected_cents',
                                  'refunded_cents', 'net_cents', 'tax_cents', 'net_ex_tax_cents'}]
                                tax_cents is the tax in net_cents: a split sale's tax is shared
-                               in proportion to what each tender paid
+                               by the full price each tender covered (see _tax_by_tender)
       tender_net_cents         {method: net cents}
       expected_cash            {'opening_float_cents', 'cash_sales_cents', 'cash_refunds_cents',
                                 'cash_corrections_cents', 'total_cents'}
@@ -151,7 +158,7 @@ def build_sales_report(start_date, end_date, conn=None):
         # Money moved by corrections, by tender, when it moved
         corr_tenders = conn.execute('''
             SELECT p.correction_id AS source, p.method AS method, COALESCE(SUM(p.amount_cents), 0) AS amount,
-                   c.total_delta_cents AS total, c.tax_delta_cents AS tax
+                   c.total_delta_cents AS total, c.tax_delta_cents AS tax, c.cash_discount_delta_cents AS cash_discount
             FROM pos_payments p LEFT JOIN pos_sale_corrections c ON c.id = p.correction_id
             WHERE p.correction_id IS NOT NULL AND p.created_at BETWEEN ? AND ?
             GROUP BY p.correction_id, p.method
@@ -162,12 +169,12 @@ def build_sales_report(start_date, end_date, conn=None):
         # its payment_method.
         tender_rows = conn.execute('''
             SELECT p.order_id AS source, p.method AS method, COALESCE(SUM(p.amount_cents), 0) AS amount,
-                   o.total_cents AS total, o.tax_amount_cents AS tax
+                   o.total_cents AS total, o.tax_amount_cents AS tax, o.cash_discount_cents AS cash_discount
             FROM pos_payments p JOIN pos_orders o ON o.id = p.order_id
             WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held' AND p.correction_id IS NULL
             GROUP BY p.order_id, p.method
             UNION ALL
-            SELECT o.id, o.payment_method, o.total_cents, o.total_cents, o.tax_amount_cents
+            SELECT o.id, o.payment_method, o.total_cents, o.total_cents, o.tax_amount_cents, o.cash_discount_cents
             FROM pos_orders o
             WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held'
               AND NOT EXISTS (SELECT 1 FROM pos_payments p WHERE p.order_id = o.id AND p.correction_id IS NULL)

@@ -335,8 +335,9 @@ def test_tender_tax_follows_what_each_tender_paid(fresh_app, fresh_client):
 def test_tax_shares_add_up_to_the_tax():
     from app.services.pos_reports import _tax_by_tender
 
-    def row(source, method, amount, total, tax):
-        return {'source': source, 'method': method, 'amount': amount, 'total': total, 'tax': tax}
+    def row(source, method, amount, total, tax, cash_discount=0):
+        return {'source': source, 'method': method, 'amount': amount, 'total': total, 'tax': tax,
+                'cash_discount': cash_discount}
     assert _tax_by_tender([row(1, 'card', 1000, 1000, 91)]) == {'card': 91}
     assert _tax_by_tender([row(1, 'cash', 100, 301, 25), row(1, 'card', 201, 301, 25)]) == {'card': 17, 'cash': 8}
     assert _tax_by_tender([row(1, 'card', 500, 1100, 100), row(1, 'cash', 600, 1100, 100),
@@ -344,6 +345,10 @@ def test_tax_shares_add_up_to_the_tax():
     assert _tax_by_tender([row(1, 'card', -500, -1100, -100), row(1, 'cash', -600, -1100, -100)]) == \
         {'card': -45, 'cash': -55}
     assert _tax_by_tender([row(1, 'card', 0, 0, 0)]) == {'card': 0}
+    # Dev, 2026-06-02: $550 + 7.25%, $321.75 by card, $250 cash with a $18.13 cash discount.
+    # The card part is $300.00 + $21.75 tax; sharing by what was paid made it $299.82.
+    assert _tax_by_tender([row(1, 'card', 32175, 57175, 3988, 1813),
+                           row(1, 'cash', 25000, 57175, 3988, 1813)]) == {'card': 2175, 'cash': 1813}
 
 
 def test_daily_report_card_tile_leaves_out_the_tax(fresh_app, fresh_client):
