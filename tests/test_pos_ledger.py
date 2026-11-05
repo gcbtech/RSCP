@@ -317,6 +317,51 @@ def test_engine_numbers_for_a_seeded_day(fresh_app, fresh_client):
     assert r['summary']['gross_sales_cents'] == r['sales_total_cents'] and r['summary']['total_orders'] == 3
 
 
+def test_tender_tax_follows_what_each_tender_paid(fresh_app, fresh_client):
+    from app.services.pos_reports import build_sales_report
+    _seed_day(fresh_app, fresh_client)
+    with fresh_app.app_context():
+        r = build_sales_report(TODAY, TODAY)
+    # Card: sale B's $4.00, plus $1.82 of split sale C's $3.00 ($20 of its $33), less $2.00 refunded.
+    # Cash: sale A's $1.80 and the rest of C's, less C's $3.00 refunded in cash.
+    assert [(t['method'], t['net_cents'], t['tax_cents'], t['net_ex_tax_cents']) for t in r['tenders']] == [
+        ('cash', -110, -2, -108),
+        ('card', 4200, 382, 3818),
+    ]
+    assert sum(t['tax_cents'] for t in r['tenders']) == r['tax_net_cents']
+    assert sum(t['net_ex_tax_cents'] for t in r['tenders']) == r['net_sales_after_refunds_cents']
+
+
+def test_tax_shares_add_up_to_the_tax():
+    from app.services.pos_reports import _tax_by_tender
+
+    def row(source, method, amount, total, tax):
+        return {'source': source, 'method': method, 'amount': amount, 'total': total, 'tax': tax}
+    assert _tax_by_tender([row(1, 'card', 1000, 1000, 91)]) == {'card': 91}
+    assert _tax_by_tender([row(1, 'cash', 100, 301, 25), row(1, 'card', 201, 301, 25)]) == {'card': 17, 'cash': 8}
+    assert _tax_by_tender([row(1, 'card', 500, 1100, 100), row(1, 'cash', 600, 1100, 100),
+                           row(2, 'card', 220, 220, 20)]) == {'card': 65, 'cash': 55}
+    assert _tax_by_tender([row(1, 'card', -500, -1100, -100), row(1, 'cash', -600, -1100, -100)]) == \
+        {'card': -45, 'cash': -55}
+    assert _tax_by_tender([row(1, 'card', 0, 0, 0)]) == {'card': 0}
+
+
+def test_daily_report_card_tile_leaves_out_the_tax(fresh_app, fresh_client):
+    _seed_day(fresh_app, fresh_client)
+    login(fresh_client, 1)
+    daily = fresh_client.get('/pos/management/reports/daily').get_data(as_text=True)
+    tiles = daily.split('Tenders')[0]
+    assert 'Card (net, pre-tax)' in tiles and '$38.18' in tiles and '$3.82 tax' in tiles
+    assert 'Card (net)' not in tiles
+    assert 'Cash (net)' in tiles and '$-1.10' in tiles        # cash stays as it was
+    # The tenders table still shows what was actually taken, tax included
+    assert '$42.00' in daily.split('Tenders')[1]
+
+    custom = fresh_client.get('/pos/management/reports/custom',
+                              query_string={'start': TODAY.isoformat(), 'end': TODAY.isoformat()}).get_data(as_text=True)
+    assert 'Card (net)' in custom and 'pre-tax' not in custom and '$42.00' in custom.split('Tenders')[0]
+
+
 def _captured(app):
     captured = []
 

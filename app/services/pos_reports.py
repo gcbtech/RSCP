@@ -38,6 +38,28 @@ def _m(value):
     return int(value or 0)
 
 
+def _tax_by_tender(rows):
+    """{method: tax cents} from rows of (source, method, amount, total, tax), one
+    row per tender on a sale or correction. A source's tax is shared between its
+    tenders in proportion to what each paid; the last takes the rounding, so the
+    shares add up to the source's tax exactly."""
+    sources = {}
+    for row in rows:
+        sources.setdefault(row['source'], []).append(row)
+    taxes = {}
+    for tenders in sources.values():
+        tenders.sort(key=lambda t: t['method'] or '')
+        total, left = _m(tenders[0]['total']), _m(tenders[0]['tax'])
+        tax = left
+        for t in tenders[:-1]:
+            share = round(tax * _m(t['amount']) / total) if total else 0
+            taxes[t['method']] = taxes.get(t['method'], 0) + share
+            left -= share
+        last = tenders[-1]['method']
+        taxes[last] = taxes.get(last, 0) + left
+    return taxes
+
+
 def build_sales_report(start_date, end_date, conn=None):
     """The money figures (cents) for a local date range (inclusive).
 
@@ -60,7 +82,9 @@ def build_sales_report(start_date, end_date, conn=None):
       net_revenue_cents        sales_total + corrections total - refunds total (incl. tax)
       net_sales_after_refunds_cents   net_sales + corrections net - refunds net (ex. tax)
       tenders                  [{'method', 'label', 'count', 'collected_cents', 'corrected_cents',
-                                 'refunded_cents', 'net_cents'}]
+                                 'refunded_cents', 'net_cents', 'tax_cents', 'net_ex_tax_cents'}]
+                               tax_cents is the tax in net_cents: a split sale's tax is shared
+                               in proportion to what each tender paid
       tender_net_cents         {method: net cents}
       expected_cash            {'opening_float_cents', 'cash_sales_cents', 'cash_refunds_cents',
                                 'cash_corrections_cents', 'total_cents'}
@@ -126,25 +150,27 @@ def build_sales_report(start_date, end_date, conn=None):
 
         # Money moved by corrections, by tender, when it moved
         corr_tenders = conn.execute('''
-            SELECT p.method AS method, COALESCE(SUM(p.amount_cents), 0) AS amount
-            FROM pos_payments p
+            SELECT p.correction_id AS source, p.method AS method, COALESCE(SUM(p.amount_cents), 0) AS amount,
+                   c.total_delta_cents AS total, c.tax_delta_cents AS tax
+            FROM pos_payments p LEFT JOIN pos_sale_corrections c ON c.id = p.correction_id
             WHERE p.correction_id IS NOT NULL AND p.created_at BETWEEN ? AND ?
-            GROUP BY p.method
+            GROUP BY p.correction_id, p.method
         ''', rng).fetchall()
 
-        # Tenders from the ledger; a sale with no ledger rows (recorded by
-        # something other than checkout) counts under its payment_method.
+        # Tenders from the ledger, one row per tender per sale; a sale with no
+        # ledger rows (recorded by something other than checkout) counts under
+        # its payment_method.
         tender_rows = conn.execute('''
-            SELECT p.method AS method, COUNT(DISTINCT p.order_id) AS n, COALESCE(SUM(p.amount_cents), 0) AS amount
+            SELECT p.order_id AS source, p.method AS method, COALESCE(SUM(p.amount_cents), 0) AS amount,
+                   o.total_cents AS total, o.tax_amount_cents AS tax
             FROM pos_payments p JOIN pos_orders o ON o.id = p.order_id
             WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held' AND p.correction_id IS NULL
-            GROUP BY p.method
+            GROUP BY p.order_id, p.method
             UNION ALL
-            SELECT o.payment_method, COUNT(*), COALESCE(SUM(o.total_cents), 0)
+            SELECT o.id, o.payment_method, o.total_cents, o.total_cents, o.tax_amount_cents
             FROM pos_orders o
             WHERE o.created_at BETWEEN ? AND ? AND o.status != 'held'
               AND NOT EXISTS (SELECT 1 FROM pos_payments p WHERE p.order_id = o.id AND p.correction_id IS NULL)
-            GROUP BY o.payment_method
         ''', rng + rng).fetchall()
 
         sessions = sessions_between(conn, start_dt, end_dt)
@@ -166,10 +192,12 @@ def build_sales_report(start_date, end_date, conn=None):
     net_sales = sales_total - tax_collected
 
     refunds_by_method = {}
+    refund_tax_by_method = {}
     refund_count = 0
     refund_tax = 0
     for r in refund_rows:
         refunds_by_method[r['method']] = refunds_by_method.get(r['method'], 0) + _m(r['amount'])
+        refund_tax_by_method[r['method']] = refund_tax_by_method.get(r['method'], 0) + _m(r['tax'])
         refund_count += r['n']
         refund_tax += _m(r['tax'])
     refund_total = sum(refunds_by_method.values())
@@ -191,16 +219,20 @@ def build_sales_report(start_date, end_date, conn=None):
     collected, counts = {}, {}
     for t in tender_rows:
         collected[t['method']] = collected.get(t['method'], 0) + _m(t['amount'])
-        counts[t['method']] = counts.get(t['method'], 0) + t['n']
+        counts[t['method']] = counts.get(t['method'], 0) + 1
+    sale_tax = _tax_by_tender(tender_rows)
+    corrected_tax = _tax_by_tender(corr_tenders)
     seen = set(collected) | set(refunds_by_method) | set(corrected)
     methods = [m for m in _TENDER_ORDER if m in seen]
     methods += sorted(m for m in seen if m not in methods)
     tenders = []
     for m in methods:
         c, cr, rf = collected.get(m, 0), corrected.get(m, 0), refunds_by_method.get(m, 0)
+        tax = sale_tax.get(m, 0) + corrected_tax.get(m, 0) - refund_tax_by_method.get(m, 0)
         tenders.append({'method': m, 'label': TENDER_LABELS.get(m, (m or '').title()),
                         'count': counts.get(m, 0), 'collected_cents': c, 'corrected_cents': cr,
-                        'refunded_cents': rf, 'net_cents': c + cr - rf})
+                        'refunded_cents': rf, 'net_cents': c + cr - rf,
+                        'tax_cents': tax, 'net_ex_tax_cents': c + cr - rf - tax})
     tender_net = {t['method']: t['net_cents'] for t in tenders}
 
     cash_sales = collected.get('cash', 0)

@@ -1,16 +1,20 @@
 {# Money summary for the daily and custom reports. Every figure comes from
-   pos_reports.build_sales_report (passed in as `report`); nothing is computed here. #}
+   pos_reports.build_sales_report (passed in as `report`); nothing is computed here.
+   Optional, set before the include: show_drawer (the cash drawer card),
+   card_pre_tax (the Card tile leaves out the tax). #}
 {% set r = report %}
 <div class="row g-3 mb-4">
     {% for t in r.tenders if t.method in ('card', 'cash') %}
+    {% set pre_tax = card_pre_tax and t.method == 'card' %}
     <div class="col-md-3 col-6">
         <div class="card h-100 border-{{ 'success' if t.method == 'cash' else 'info' }} border-start border-3">
             <div class="card-body">
-                <h6 class="text-muted text-uppercase small">{{ t.label }} (net)</h6>
-                <h3 class="fw-bold text-{{ 'success' if t.method == 'cash' else 'info' }}">${{ t.net_cents|dollars }}</h3>
+                <h6 class="text-muted text-uppercase small">{{ t.label }} ({{ 'net, pre-tax' if pre_tax else 'net' }})</h6>
+                <h3 class="fw-bold text-{{ 'success' if t.method == 'cash' else 'info' }}">${{ (t.net_ex_tax_cents if pre_tax else t.net_cents)|dollars }}</h3>
                 <small class="text-muted d-block">${{ t.collected_cents|dollars }} taken
                     {% if t.corrected_cents %}{{ '+' if t.corrected_cents > 0 else '&minus;'|safe }} ${{ (t.corrected_cents|abs)|dollars }} corrections{% endif %}
-                    {% if t.refunded_cents %}&minus; ${{ t.refunded_cents|dollars }} refunded{% endif %}</small>
+                    {% if t.refunded_cents %}&minus; ${{ t.refunded_cents|dollars }} refunded{% endif %}
+                    {% if pre_tax and t.tax_cents %}{{ '&minus;'|safe if t.tax_cents > 0 else '+' }} ${{ (t.tax_cents|abs)|dollars }} tax{% endif %}</small>
             </div>
         </div>
     </div>

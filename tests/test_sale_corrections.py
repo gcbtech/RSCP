@@ -584,6 +584,7 @@ def test_void_on_a_later_day_and_daily_items(fresh_app, fresh_client, conn):
     assert (y['order_count'], y['sales_total_cents'], y['net_revenue_cents']) == (1, 2200, 2200)
     assert (t['corrections']['count'], t['corrections']['voids'], t['net_revenue_cents']) == (1, 1, -2200)
     assert t['tender_net_cents'] == {'card': -2200}
+    assert [(x['method'], x['tax_cents'], x['net_ex_tax_cents']) for x in t['tenders']] == [('card', -200, -2000)]
     html = login(fresh_client, 3).get('/pos/management/reports/daily-items',
                                       query_string={'date': today.isoformat()}).get_data(as_text=True)
     assert 'WIDGET' in html and '-2' in html
